@@ -2557,44 +2557,6 @@ pub(crate) fn translate_turn_event_to_host_event(
                 None
             }
         }
-
-        async fn dispatch_failed_turn_end_on_exit(
-            app: &mut app::App,
-            current_turn_id: &mut Option<u32>,
-            footer_pending_turn_id: &mut Option<u32>,
-            log_context: &'static str,
-        ) {
-            let (turn_id, synthesize_start) = if let Some(turn_id) = current_turn_id.take() {
-                (turn_id, false)
-            } else if let Some(turn_id) = footer_pending_turn_id.take() {
-                (turn_id, true)
-            } else {
-                return;
-            };
-            if synthesize_start {
-                if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                    app,
-                    savvagent_plugin::HostEvent::TurnStart { turn_id },
-                    0,
-                )
-                .await
-                {
-                    tracing::warn!(error = %err, context = log_context, "TurnStart(exit) dispatch failed");
-                }
-            }
-            if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                app,
-                savvagent_plugin::HostEvent::TurnEnd {
-                    turn_id,
-                    success: false,
-                },
-                0,
-            )
-            .await
-            {
-                tracing::warn!(error = %err, context = log_context, "TurnEnd(exit) dispatch failed");
-            }
-        }
         TurnEvent::ToolCallStarted { name, .. } => {
             *next_tool_call_id = next_tool_call_id.saturating_add(1);
             *last_tool_call_id = Some(*next_tool_call_id);
@@ -2637,10 +2599,12 @@ pub(crate) fn translate_turn_event_to_host_event(
         }
         TurnEvent::Cancelled { .. } | TurnEvent::AbortedAfterGrace { .. } => {
             *last_tool_call_id = None;
-            current_turn_id.take().map(|turn_id| savvagent_plugin::HostEvent::TurnEnd {
-                turn_id,
-                success: false,
-            })
+            current_turn_id
+                .take()
+                .map(|turn_id| savvagent_plugin::HostEvent::TurnEnd {
+                    turn_id,
+                    success: false,
+                })
         }
         TurnEvent::SubagentStop {
             agent_name,
@@ -2660,6 +2624,44 @@ pub(crate) fn translate_turn_event_to_host_event(
         | TurnEvent::HtmlBlockStart { .. }
         | TurnEvent::HtmlBlockDelta { .. }
         | TurnEvent::HtmlBlockStop { .. } => None,
+    }
+}
+
+async fn dispatch_failed_turn_end_on_exit(
+    app: &mut app::App,
+    current_turn_id: &mut Option<u32>,
+    footer_pending_turn_id: &mut Option<u32>,
+    log_context: &'static str,
+) {
+    let (turn_id, synthesize_start) = if let Some(turn_id) = current_turn_id.take() {
+        (turn_id, false)
+    } else if let Some(turn_id) = footer_pending_turn_id.take() {
+        (turn_id, true)
+    } else {
+        return;
+    };
+    if synthesize_start {
+        if let Err(err) = crate::plugin::effects::dispatch_host_event(
+            app,
+            savvagent_plugin::HostEvent::TurnStart { turn_id },
+            0,
+        )
+        .await
+        {
+            tracing::warn!(error = %err, context = log_context, "TurnStart(exit) dispatch failed");
+        }
+    }
+    if let Err(err) = crate::plugin::effects::dispatch_host_event(
+        app,
+        savvagent_plugin::HostEvent::TurnEnd {
+            turn_id,
+            success: false,
+        },
+        0,
+    )
+    .await
+    {
+        tracing::warn!(error = %err, context = log_context, "TurnEnd(exit) dispatch failed");
     }
 }
 
@@ -2930,8 +2932,16 @@ async fn run_app(
 
         let frame_area = terminal.get_frame().area();
         let frame_data = ui::compute_home_frame_data(app, frame_area).await;
-        let footer_turn_id = current_turn_id.or(footer_pending_turn_id);
-        terminal.draw(|f| ui::render(app, f, &frame_data, render_tick, footer_turn_id))?;
+        terminal.draw(|f| {
+            ui::render(
+                app,
+                f,
+                &frame_data,
+                render_tick,
+                current_turn_id,
+                footer_pending_turn_id,
+            )
+        })?;
         render_tick = render_tick.wrapping_add(1);
 
         while let Ok(msg) = worker_rx.try_recv() {
@@ -3081,9 +3091,7 @@ async fn run_app(
                                 next_turn_id = next_turn_id.max(synthetic);
                                 if let Err(err) = crate::plugin::effects::dispatch_host_event(
                                     app,
-                                    savvagent_plugin::HostEvent::TurnStart {
-                                        turn_id: synthetic,
-                                    },
+                                    savvagent_plugin::HostEvent::TurnStart { turn_id: synthetic },
                                     0,
                                 )
                                 .await
