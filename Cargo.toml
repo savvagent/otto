@@ -192,6 +192,7 @@ ratatui = { version = "0.30", features = [
     # can auto-tail to the newest message and scroll back coherently.
     "unstable-rendered-line-info",
 ] }
+tui-spinner = "0.4.17"
 ratatui-themes = "0.2.0"
 # Markdown → ratatui Text renderer used by `internal:changelog`. We turn
 # off `highlight-code` (the default feature) to avoid pulling in syntect

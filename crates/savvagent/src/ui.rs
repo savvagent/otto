@@ -6,15 +6,18 @@ use crate::providers::effective_providers;
 use crate::splash;
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, FrameExt, List, ListItem, Padding, Paragraph, Wrap,
+        Block, BorderType, Borders, Clear, FrameExt, List, ListItem, Padding, Paragraph, Widget,
+        Wrap,
     },
 };
 use savvagent_host::ToolCallStatus;
 use savvagent_plugin::ContentBlockId;
+use tui_spinner::CircleSpinner;
 
 /// Rows reserved in the conversation paragraph for each `Entry::Canvas`
 /// placeholder. The image (or source-code fallback) is overlaid on top of
@@ -305,16 +308,27 @@ pub fn render(app: &mut App, frame: &mut Frame, frame_data: &HomeFrameData) {
         bg: None,
         modifiers: savvagent_plugin::TextMods::default(),
     };
-    let footer_line = crate::plugin::convert::styled_line_to_ratatui(
-        compose_footer_line(
-            [
-                &frame_data.footer_left,
-                &frame_data.footer_center,
-                &frame_data.footer_right,
-            ],
-            &separator,
-        ),
-        &palette,
+    let footer_center = footer_center_lines(
+        &frame_data.footer_center,
+        app.is_loading,
+        footer_spinner_tick(app),
+        palette,
+    );
+    let footer_left: Vec<Line<'static>> = frame_data
+        .footer_left
+        .iter()
+        .cloned()
+        .map(|line| crate::plugin::convert::styled_line_to_ratatui(line, &palette))
+        .collect();
+    let footer_right: Vec<Line<'static>> = frame_data
+        .footer_right
+        .iter()
+        .cloned()
+        .map(|line| crate::plugin::convert::styled_line_to_ratatui(line, &palette))
+        .collect();
+    let footer_line = compose_footer_ratatui_line(
+        [&footer_left, &footer_center, &footer_right],
+        &crate::plugin::convert::styled_span_to_ratatui(separator, &palette),
     );
     frame.render_widget(
         Paragraph::new(footer_line).style(palette.base_style()),
@@ -1303,9 +1317,98 @@ fn compose_footer_line(
     savvagent_plugin::StyledLine { spans }
 }
 
+fn compose_footer_ratatui_line(
+    groups: [&[Line<'static>]; 3],
+    separator: &Span<'static>,
+) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    for group in groups {
+        for line in group {
+            if line.spans.is_empty() {
+                continue;
+            }
+            if !spans.is_empty() {
+                spans.push(separator.clone());
+            }
+            spans.extend(line.spans.iter().cloned());
+        }
+    }
+    Line::from(spans)
+}
+
+fn footer_center_lines(
+    center: &[savvagent_plugin::StyledLine],
+    turn_active: bool,
+    tick: u64,
+    palette: Palette,
+) -> Vec<Line<'static>> {
+    center
+        .iter()
+        .cloned()
+        .map(|line| {
+            let mut line = crate::plugin::convert::styled_line_to_ratatui(line, &palette);
+            if !turn_active || line.spans.is_empty() {
+                return line;
+            }
+
+            let spinner = footer_spinner_spans(tick, palette);
+            if spinner.is_empty() {
+                return line;
+            }
+
+            line.spans.push(Span::raw(" "));
+            line.spans.extend(spinner);
+            line
+        })
+        .collect()
+}
+
+fn footer_spinner_spans(tick: u64, palette: Palette) -> Vec<Span<'static>> {
+    let area = Rect::new(0, 0, 2, 1);
+    let mut buffer = Buffer::empty(area);
+    CircleSpinner::new(tick)
+        .radius(1)
+        .arc_color(palette.accent)
+        .dim_color(palette.muted)
+        .render(area, &mut buffer);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current_text = String::new();
+    let mut current_style: Option<Style> = None;
+
+    for cell in buffer.content().iter().take(area.width as usize) {
+        let symbol = cell.symbol();
+        if symbol == " " {
+            continue;
+        }
+
+        let style = cell.style();
+        if current_style.as_ref() == Some(&style) {
+            current_text.push_str(symbol);
+            continue;
+        }
+
+        if let Some(style) = current_style.replace(style) {
+            spans.push(Span::styled(std::mem::take(&mut current_text), style));
+        }
+        current_text.push_str(symbol);
+    }
+
+    if let Some(style) = current_style {
+        spans.push(Span::styled(current_text, style));
+    }
+
+    spans
+}
+
+fn footer_spinner_tick(app: &App) -> u64 {
+    (app.splash_shown_at.elapsed().as_millis() / 100) as u64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::builtin::themes::catalog::Theme;
     use savvagent_plugin::{StyledLine, StyledSpan, TextMods, ThemeColor};
 
     fn span(text: &str) -> StyledSpan {
@@ -1334,6 +1437,17 @@ mod tests {
 
     fn joined(line: &StyledLine) -> String {
         line.spans.iter().map(|s| s.text.clone()).collect()
+    }
+
+    fn palette() -> Palette {
+        Palette::for_theme(Theme::Dark)
+    }
+
+    fn joined_ratatui(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
     }
 
     #[test]
@@ -1485,6 +1599,131 @@ mod tests {
         let empty: Vec<StyledLine> = vec![];
         let out = compose_footer_line([&empty, &empty, &r], &sep());
         assert_eq!(joined(&out), "cwd · ~22 ctx · $0.00");
+    }
+
+    #[test]
+    fn footer_center_lines_idle_are_unchanged() {
+        let center = vec![one_span_line("idle")];
+        let palette = palette();
+
+        let out = footer_center_lines(&center, false, 0, palette);
+        let expected = vec![crate::plugin::convert::styled_line_to_ratatui(
+            center[0].clone(),
+            &palette,
+        )];
+
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn footer_center_lines_busy_include_working_label() {
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let center = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working.clone(),
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }];
+
+        let out = footer_center_lines(&center, true, 0, palette());
+
+        assert_eq!(out.len(), 1);
+        assert!(
+            joined_ratatui(&out[0]).contains(&working),
+            "busy footer should keep the localized working label"
+        );
+    }
+
+    #[test]
+    fn footer_center_lines_busy_include_spinner_glyph_output() {
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let center = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working.clone(),
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }];
+
+        let out = footer_center_lines(&center, true, 0, palette());
+        let rendered = joined_ratatui(&out[0]);
+        let spinner = rendered
+            .strip_prefix(&format!("{working} "))
+            .unwrap_or_default()
+            .trim();
+
+        assert!(
+            !spinner.is_empty(),
+            "expected spinner glyphs after the working label, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn footer_center_lines_busy_use_accent_and_muted_spinner_colors() {
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let center = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working.clone(),
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }];
+        let palette = palette();
+
+        let out = footer_center_lines(&center, true, 0, palette);
+        let spinner_spans: Vec<_> = out[0]
+            .spans
+            .iter()
+            .filter(|span| {
+                let text = span.content.as_ref();
+                !text.trim().is_empty() && text != working
+            })
+            .collect();
+
+        assert!(
+            spinner_spans
+                .iter()
+                .any(|span| span.style.fg == Some(palette.accent)),
+            "expected an accent-colored spinner arc"
+        );
+        assert!(
+            spinner_spans
+                .iter()
+                .any(|span| span.style.fg == Some(palette.muted)),
+            "expected a muted-colored spinner ring"
+        );
+    }
+
+    #[test]
+    fn footer_center_lines_busy_change_spinner_frame_across_ticks() {
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let center = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working,
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }];
+        let palette = palette();
+
+        let a = footer_center_lines(&center, true, 0, palette);
+        let b = footer_center_lines(&center, true, 1, palette);
+
+        assert_ne!(joined_ratatui(&a[0]), joined_ratatui(&b[0]));
+    }
+
+    #[test]
+    fn footer_center_lines_busy_do_not_invent_text_for_empty_center_slot() {
+        let center: Vec<StyledLine> = vec![];
+
+        let out = footer_center_lines(&center, true, 0, palette());
+
+        assert!(out.is_empty());
     }
 
     // Canvas overlay row math --------------------------------------------

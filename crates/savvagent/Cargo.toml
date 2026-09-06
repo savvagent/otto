@@ -86,6 +86,7 @@ egui-file-dialog.workspace = true
 futures.workspace = true
 crossterm.workspace = true
 ratatui.workspace = true
+tui-spinner.workspace = true
 ratatui-image.workspace = true
 image.workspace = true
 ratatui-themes.workspace = true
