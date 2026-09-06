@@ -307,17 +307,17 @@ recent released heading when the release PR (Task 9's final note) is actually op
 **Files:**
 - Modify: `crates/savvagent/src/creds.rs`
 
-- [ ] Add `const MCP_PREFIX: &str = "mcp:";`, `pub fn delete(account: &str) -> Result<(),
+- [x] Add `const MCP_PREFIX: &str = "mcp:";`, `pub fn delete(account: &str) -> Result<(),
       keyring::Error>` (idempotent: `NoEntry`/`NoStorageAccess` treated as success, mirroring `load`'s
       existing error-mapping style), `pub fn mcp_save`, `pub fn mcp_load`, `pub fn mcp_delete` exactly
       per spec §5 (thin wrappers namespacing the account as `format!("{MCP_PREFIX}{server_name}")`).
-- [ ] Add unit tests: `delete` on a nonexistent account returns `Ok(())`; `mcp_save`/`mcp_load`
+- [x] Add unit tests: `delete` on a nonexistent account returns `Ok(())`; `mcp_save`/`mcp_load`
       round-trip a secret under the namespaced account (skip/ignore gracefully in CI environments with
       no keyring backend, matching however existing `creds.rs`/`save`/`load` tests already handle
       backend-unavailable environments — check for a `#[cfg(...)]` guard or graceful-skip pattern used
       today before writing new tests from scratch).
-- [ ] Run `cargo test -p savvagent creds`. Confirm green.
-- [ ] Commit: `feat(creds): add delete and mcp_* keyring helpers`.
+- [x] Run `cargo test -p savvagent creds`. Confirm green.
+- [x] Commit: `feat(creds): add delete and mcp_* keyring helpers`.
 
 ## Task 6: Bootstrap wiring (`crates/savvagent/src/main.rs`)
 
