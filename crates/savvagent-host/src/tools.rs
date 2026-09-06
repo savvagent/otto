@@ -21,9 +21,10 @@
 //! `allow_net` kills the old child and respawns. Per-call overrides do
 //! **not** mutate the session-cached bash network decision.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -31,14 +32,17 @@ use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{CallToolRequestParams, ResourceUpdatedNotificationParam},
     service::{NotificationContext, RunningService, ServiceError},
-    transport::TokioChildProcess,
+    transport::{
+        StreamableHttpClientTransport, TokioChildProcess,
+        streamable_http_client::StreamableHttpClientTransportConfig,
+    },
 };
 use savvagent_protocol::ToolDef;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::ToolEndpoint;
+use crate::config::{HttpAuth, ToolEndpoint};
 use crate::logging::tool_stderr_log_file;
 use crate::sandbox::{SandboxConfig, SandboxWrapper, apply_sandbox};
 
@@ -285,6 +289,9 @@ pub struct ToolRegistry {
     /// Aggregated tool definitions, in the order they were discovered.
     /// Includes bash's `run` (scraped via a probe spawn at connect time).
     pub(crate) defs: Vec<ToolDef>,
+    /// Connection status for every configured endpoint, whether it connected
+    /// successfully or failed and was skipped.
+    statuses: Vec<ToolServerStatus>,
     /// Optional lazy slot for the configured `tool-bash` endpoint. `None`
     /// when no bash endpoint was supplied (e.g. tests).
     lazy_bash: Option<LazyBash>,
@@ -348,6 +355,7 @@ struct LazyBash {
 struct BashSpawnConfig {
     command: PathBuf,
     args: Vec<String>,
+    env: HashMap<String, String>,
     project_root: PathBuf,
     /// Base sandbox config; the per-spawn `allow_net` is injected as a
     /// `tool_overrides[TOOL_BASH_MARKER]` entry before calling
@@ -378,6 +386,28 @@ struct ActiveBashServer {
     spawn_key: BashSpawnKey,
 }
 
+/// Transport kind for a configured tool server endpoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportKind {
+    Stdio,
+    Http,
+}
+
+/// Outcome of attempting to connect one configured tool server endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectState {
+    Connected,
+    Failed { reason: String },
+}
+
+/// Startup status for one configured tool server endpoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolServerStatus {
+    pub name: String,
+    pub transport: TransportKind,
+    pub state: ConnectState,
+}
+
 impl ToolRegistry {
     /// Spawn each non-bash tool server eagerly, probe-spawn the bash
     /// tool (if configured) just long enough to scrape its tool list,
@@ -400,24 +430,38 @@ impl ToolRegistry {
         endpoints: &[ToolEndpoint],
         project_root: &Path,
         sandbox: &SandboxConfig,
+        connect_timeout: Duration,
         bash_net_resolver: BashNetResolverHandle,
         resource_tx: tokio::sync::mpsc::Sender<ResourceEvent>,
     ) -> Result<Self> {
         let mut eager_servers = Vec::new();
         let mut routes: HashMap<String, usize> = HashMap::new();
         let mut defs = Vec::new();
+        let mut statuses = Vec::new();
         let mut lazy_bash: Option<LazyBash> = None;
+        let mut tool_owners: HashMap<String, String> = HashMap::new();
 
         for ep in endpoints {
             match ep {
                 ToolEndpoint::Stdio {
-                    name: _name,
+                    name,
                     command,
                     args,
-                    env: _env,
+                    env,
                 } => {
                     let is_bash = command.to_string_lossy().contains(TOOL_BASH_MARKER);
                     if is_bash {
+                        let transport_kind = TransportKind::Stdio;
+                        if lazy_bash.is_some() {
+                            statuses.push(ToolServerStatus {
+                                name: name.clone(),
+                                transport: transport_kind,
+                                state: ConnectState::Failed {
+                                    reason: "multiple tool-bash endpoints configured; only one is supported".into(),
+                                },
+                            });
+                            continue;
+                        }
                         // Probe spawn: spawn bash with allow_net=false just
                         // long enough to scrape its tool list, then drop it
                         // before any user command can run. The session's
@@ -428,30 +472,121 @@ impl ToolRegistry {
                             args,
                             project_root,
                             sandbox,
+                            env,
                             /* allow_net = */ false,
                         );
-                        let label = command.display().to_string();
-                        let transport = TokioChildProcess::new(probe_cmd)
-                            .with_context(|| format!("spawn tool-bash probe: {label}"))?;
+                        let label = name.clone();
+                        let transport = match TokioChildProcess::new(probe_cmd)
+                            .with_context(|| format!("spawn tool-bash probe: {label}"))
+                        {
+                            Ok(transport) => transport,
+                            Err(err) => {
+                                statuses.push(ToolServerStatus {
+                                    name: label,
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: err.to_string(),
+                                    },
+                                });
+                                continue;
+                            }
+                        };
                         let handler =
                             ResourceCapturingHandler::new(label.clone(), resource_tx.clone());
-                        let service = handler
-                            .serve(transport)
-                            .await
-                            .with_context(|| format!("init MCP session with {label}"))?;
-                        let tools = service
-                            .list_all_tools()
-                            .await
-                            .with_context(|| format!("list_tools on {label}"))?;
-                        let mut tool_names = std::collections::HashSet::new();
-                        for t in tools {
-                            let name = t.name.to_string();
-                            if routes.contains_key(&name) || tool_names.contains(&name) {
-                                anyhow::bail!("duplicate tool `{name}` advertised by {label}");
+                        let deadline = tokio::time::Instant::now() + connect_timeout;
+                        let service =
+                            match tokio::time::timeout_at(deadline, handler.serve(transport)).await
+                            {
+                                Ok(Ok(service)) => service,
+                                Ok(Err(err)) => {
+                                    statuses.push(ToolServerStatus {
+                                        name: label,
+                                        transport: transport_kind,
+                                        state: ConnectState::Failed {
+                                            reason: format!("init MCP session with {name}: {err}"),
+                                        },
+                                    });
+                                    continue;
+                                }
+                                Err(_) => {
+                                    statuses.push(ToolServerStatus {
+                                        name: label,
+                                        transport: transport_kind,
+                                        state: ConnectState::Failed {
+                                            reason: format!(
+                                                "connect timed out while initializing {name}"
+                                            ),
+                                        },
+                                    });
+                                    continue;
+                                }
+                            };
+                        let tools = match tokio::time::timeout_at(
+                            deadline,
+                            service.list_all_tools(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(tools)) => tools,
+                            Ok(Err(err)) => {
+                                if let Err(cancel_err) = service.cancel().await {
+                                    tracing::warn!(
+                                        server = %name,
+                                        "tool-bash probe shutdown failed after list_all_tools error: {cancel_err}"
+                                    );
+                                }
+                                statuses.push(ToolServerStatus {
+                                    name: label,
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: format!("list_tools on {name}: {err}"),
+                                    },
+                                });
+                                continue;
                             }
-                            tool_names.insert(name.clone());
+                            Err(_) => {
+                                if let Err(cancel_err) = service.cancel().await {
+                                    tracing::warn!(
+                                        server = %name,
+                                        "tool-bash probe shutdown failed after list_all_tools timeout: {cancel_err}"
+                                    );
+                                }
+                                statuses.push(ToolServerStatus {
+                                    name: label,
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: format!(
+                                            "connect timed out while listing tools from {name}"
+                                        ),
+                                    },
+                                });
+                                continue;
+                            }
+                        };
+                        let mut tool_names = HashSet::new();
+                        for t in tools {
+                            let tool_name = t.name.to_string();
+                            if !tool_names.insert(tool_name.clone()) {
+                                tracing::warn!(
+                                    tool = %tool_name,
+                                    server = %name,
+                                    "tool server advertised a duplicate tool name; skipping later occurrence"
+                                );
+                                continue;
+                            }
+                            if let Some(existing_owner) = tool_owners.get(&tool_name) {
+                                tracing::warn!(
+                                    tool = %tool_name,
+                                    server = %name,
+                                    existing_owner = %existing_owner,
+                                    "skipping duplicate tool name advertised by a later tool server"
+                                );
+                                tool_names.remove(&tool_name);
+                                continue;
+                            }
+                            tool_owners.insert(tool_name.clone(), name.clone());
                             defs.push(ToolDef {
-                                name,
+                                name: tool_name,
                                 description: t.description.as_deref().unwrap_or("").to_string(),
                                 input_schema: Value::Object(input_schema_value(t.input_schema)),
                             });
@@ -468,70 +603,281 @@ impl ToolRegistry {
                                  (probe child may linger until process exit)"
                             );
                         }
-                        if lazy_bash.is_some() {
-                            anyhow::bail!(
-                                "multiple tool-bash endpoints configured; only one is supported"
-                            );
-                        }
                         lazy_bash = Some(LazyBash {
                             tool_names,
                             config: BashSpawnConfig {
                                 command: command.clone(),
                                 args: args.clone(),
+                                env: env.clone(),
                                 project_root: project_root.to_path_buf(),
                                 sandbox_template: sandbox.clone(),
                             },
                             resolver: Arc::new(RwLock::new(bash_net_resolver.clone())),
                             active: Mutex::new(None),
                         });
+                        statuses.push(ToolServerStatus {
+                            name: name.clone(),
+                            transport: transport_kind,
+                            state: ConnectState::Connected,
+                        });
                     } else {
-                        let label = command.display().to_string();
+                        let transport_kind = TransportKind::Stdio;
+                        let label = name.clone();
                         let mut cmd = tokio::process::Command::new(command);
                         cmd.args(args);
                         cmd.env("SAVVAGENT_TOOL_FS_ROOT", project_root);
                         cmd.env("SAVVAGENT_TOOL_BASH_ROOT", project_root);
                         cmd.env("SAVVAGENT_TOOL_GREP_ROOT", project_root);
+                        cmd.envs(env);
 
                         let wrapper = apply_sandbox(&mut cmd, command, project_root, sandbox);
                         let allow_net = sandbox.net_allowed_for(command);
                         log_sandbox_wrapper(&label, &wrapper, allow_net, sandbox.is_enabled());
                         redirect_tool_stderr(&mut cmd, command);
 
-                        let transport = TokioChildProcess::new(cmd)
-                            .with_context(|| format!("spawn tool server: {label}"))?;
+                        let transport = match TokioChildProcess::new(cmd)
+                            .with_context(|| format!("spawn tool server: {label}"))
+                        {
+                            Ok(transport) => transport,
+                            Err(err) => {
+                                statuses.push(ToolServerStatus {
+                                    name: label,
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: err.to_string(),
+                                    },
+                                });
+                                continue;
+                            }
+                        };
                         let handler =
                             ResourceCapturingHandler::new(label.clone(), resource_tx.clone());
-                        let service = handler
-                            .serve(transport)
-                            .await
-                            .with_context(|| format!("init MCP session with {label}"))?;
-                        let tools = service
-                            .list_all_tools()
-                            .await
-                            .with_context(|| format!("list_tools on {label}"))?;
-                        let idx = eager_servers.len();
-                        for t in tools {
-                            let name = t.name.to_string();
-                            if routes.insert(name.clone(), idx).is_some() {
-                                anyhow::bail!("duplicate tool `{name}` advertised by {label}");
+                        let deadline = tokio::time::Instant::now() + connect_timeout;
+                        let service =
+                            match tokio::time::timeout_at(deadline, handler.serve(transport)).await
+                            {
+                                Ok(Ok(service)) => service,
+                                Ok(Err(err)) => {
+                                    statuses.push(ToolServerStatus {
+                                        name: label,
+                                        transport: transport_kind,
+                                        state: ConnectState::Failed {
+                                            reason: format!("init MCP session with {name}: {err}"),
+                                        },
+                                    });
+                                    continue;
+                                }
+                                Err(_) => {
+                                    statuses.push(ToolServerStatus {
+                                        name: label,
+                                        transport: transport_kind,
+                                        state: ConnectState::Failed {
+                                            reason: format!(
+                                                "connect timed out while initializing {name}"
+                                            ),
+                                        },
+                                    });
+                                    continue;
+                                }
+                            };
+                        let tools = match tokio::time::timeout_at(
+                            deadline,
+                            service.list_all_tools(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(tools)) => tools,
+                            Ok(Err(err)) => {
+                                if let Err(cancel_err) = service.cancel().await {
+                                    tracing::warn!(
+                                        server = %name,
+                                        "tool server shutdown failed after list_all_tools error: {cancel_err}"
+                                    );
+                                }
+                                statuses.push(ToolServerStatus {
+                                    name: label,
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: format!("list_tools on {name}: {err}"),
+                                    },
+                                });
+                                continue;
                             }
+                            Err(_) => {
+                                if let Err(cancel_err) = service.cancel().await {
+                                    tracing::warn!(
+                                        server = %name,
+                                        "tool server shutdown failed after list_all_tools timeout: {cancel_err}"
+                                    );
+                                }
+                                statuses.push(ToolServerStatus {
+                                    name: label,
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: format!(
+                                            "connect timed out while listing tools from {name}"
+                                        ),
+                                    },
+                                });
+                                continue;
+                            }
+                        };
+                        let idx = eager_servers.len();
+                        let mut seen_here = HashSet::new();
+                        for t in tools {
+                            let tool_name = t.name.to_string();
+                            if !seen_here.insert(tool_name.clone()) {
+                                tracing::warn!(
+                                    tool = %tool_name,
+                                    server = %name,
+                                    "tool server advertised a duplicate tool name; skipping later occurrence"
+                                );
+                                continue;
+                            }
+                            if let Some(existing_owner) = tool_owners.get(&tool_name) {
+                                tracing::warn!(
+                                    tool = %tool_name,
+                                    server = %name,
+                                    existing_owner = %existing_owner,
+                                    "skipping duplicate tool name advertised by a later tool server"
+                                );
+                                continue;
+                            }
+                            tool_owners.insert(tool_name.clone(), name.clone());
+                            routes.insert(tool_name.clone(), idx);
                             defs.push(ToolDef {
-                                name,
+                                name: tool_name,
                                 description: t.description.as_deref().unwrap_or("").to_string(),
                                 input_schema: Value::Object(input_schema_value(t.input_schema)),
                             });
                         }
                         eager_servers.push(ToolServer { label, service });
+                        statuses.push(ToolServerStatus {
+                            name: name.clone(),
+                            transport: transport_kind,
+                            state: ConnectState::Connected,
+                        });
                     }
                 }
-                // TODO(Task 2): implement the Http transport arm (spawn a
-                // Streamable HTTP MCP client, attach `auth`, and merge its
-                // tools the same way as the eager stdio arm above). Placeholder
-                // so the match stays exhaustive after Task 1's new variant.
-                ToolEndpoint::Http { name, .. } => {
-                    anyhow::bail!(
-                        "ToolEndpoint::Http (`{name}`) is not yet supported by ToolRegistry::connect"
-                    );
+                ToolEndpoint::Http { name, url, auth } => {
+                    let transport_kind = TransportKind::Http;
+                    let config = match auth {
+                        HttpAuth::None => {
+                            StreamableHttpClientTransportConfig::with_uri(url.clone())
+                        }
+                        HttpAuth::Bearer { token } => {
+                            StreamableHttpClientTransportConfig::with_uri(url.clone())
+                                .auth_header(token.clone())
+                        }
+                    };
+                    let transport_client = StreamableHttpClientTransport::from_config(config);
+                    let handler = ResourceCapturingHandler::new(name.clone(), resource_tx.clone());
+                    let deadline = tokio::time::Instant::now() + connect_timeout;
+                    let service =
+                        match tokio::time::timeout_at(deadline, handler.serve(transport_client))
+                            .await
+                        {
+                            Ok(Ok(service)) => service,
+                            Ok(Err(err)) => {
+                                statuses.push(ToolServerStatus {
+                                    name: name.clone(),
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: format!("init MCP session with {name}: {err}"),
+                                    },
+                                });
+                                continue;
+                            }
+                            Err(_) => {
+                                statuses.push(ToolServerStatus {
+                                    name: name.clone(),
+                                    transport: transport_kind,
+                                    state: ConnectState::Failed {
+                                        reason: format!(
+                                            "connect timed out while initializing {name}"
+                                        ),
+                                    },
+                                });
+                                continue;
+                            }
+                        };
+                    let tools = match tokio::time::timeout_at(deadline, service.list_all_tools())
+                        .await
+                    {
+                        Ok(Ok(tools)) => tools,
+                        Ok(Err(err)) => {
+                            if let Err(cancel_err) = service.cancel().await {
+                                tracing::warn!(
+                                    server = %name,
+                                    "http tool server shutdown failed after list_all_tools error: {cancel_err}"
+                                );
+                            }
+                            statuses.push(ToolServerStatus {
+                                name: name.clone(),
+                                transport: transport_kind,
+                                state: ConnectState::Failed {
+                                    reason: format!("list_tools on {name}: {err}"),
+                                },
+                            });
+                            continue;
+                        }
+                        Err(_) => {
+                            if let Err(cancel_err) = service.cancel().await {
+                                tracing::warn!(
+                                    server = %name,
+                                    "http tool server shutdown failed after list_all_tools timeout: {cancel_err}"
+                                );
+                            }
+                            statuses.push(ToolServerStatus {
+                                name: name.clone(),
+                                transport: transport_kind,
+                                state: ConnectState::Failed {
+                                    reason: format!(
+                                        "connect timed out while listing tools from {name}"
+                                    ),
+                                },
+                            });
+                            continue;
+                        }
+                    };
+                    let idx = eager_servers.len();
+                    let mut seen_here = HashSet::new();
+                    for t in tools {
+                        let tool_name = t.name.to_string();
+                        if !seen_here.insert(tool_name.clone()) {
+                            tracing::warn!(
+                                tool = %tool_name,
+                                server = %name,
+                                "tool server advertised a duplicate tool name; skipping later occurrence"
+                            );
+                            continue;
+                        }
+                        if let Some(existing_owner) = tool_owners.get(&tool_name) {
+                            tracing::warn!(
+                                tool = %tool_name,
+                                server = %name,
+                                existing_owner = %existing_owner,
+                                "skipping duplicate tool name advertised by a later tool server"
+                            );
+                            continue;
+                        }
+                        tool_owners.insert(tool_name.clone(), name.clone());
+                        routes.insert(tool_name.clone(), idx);
+                        defs.push(ToolDef {
+                            name: tool_name,
+                            description: t.description.as_deref().unwrap_or("").to_string(),
+                            input_schema: Value::Object(input_schema_value(t.input_schema)),
+                        });
+                    }
+                    eager_servers.push(ToolServer {
+                        label: name.clone(),
+                        service,
+                    });
+                    statuses.push(ToolServerStatus {
+                        name: name.clone(),
+                        transport: transport_kind,
+                        state: ConnectState::Connected,
+                    });
                 }
             }
         }
@@ -567,10 +913,17 @@ impl ToolRegistry {
             eager_servers,
             routes,
             defs,
+            statuses,
             lazy_bash,
             in_process: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             in_process_defs: tokio::sync::RwLock::new(std::collections::HashMap::new()),
         })
+    }
+
+    /// Snapshot of per-endpoint connection status records captured during
+    /// [`Self::connect`].
+    pub fn statuses(&self) -> &[ToolServerStatus] {
+        &self.statuses
     }
 
     /// Trusted shell-availability flag for the default-prompt builder.
@@ -589,6 +942,7 @@ impl ToolRegistry {
             eager_servers: Vec::new(),
             routes: HashMap::new(),
             defs: Vec::new(),
+            statuses: Vec::new(),
             lazy_bash: None,
             in_process: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             in_process_defs: tokio::sync::RwLock::new(std::collections::HashMap::new()),
@@ -842,6 +1196,7 @@ impl LazyBash {
                 &self.config.args,
                 &self.config.project_root,
                 &self.config.sandbox_template,
+                &self.config.env,
                 allow_net,
             );
             let label = self.config.command.display().to_string();
@@ -899,6 +1254,7 @@ fn build_bash_command(
     args: &[String],
     project_root: &Path,
     sandbox_template: &SandboxConfig,
+    env: &HashMap<String, String>,
     allow_net: bool,
 ) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new(command);
@@ -906,6 +1262,7 @@ fn build_bash_command(
     cmd.env("SAVVAGENT_TOOL_FS_ROOT", project_root);
     cmd.env("SAVVAGENT_TOOL_BASH_ROOT", project_root);
     cmd.env("SAVVAGENT_TOOL_GREP_ROOT", project_root);
+    cmd.envs(env);
 
     // Clone the template and inject the per-spawn allow_net override. We
     // merge with any user-pinned `[tool_overrides.tool-bash]` entry —
@@ -1350,6 +1707,7 @@ mod lazy_bash_tests {
             eager_servers: Vec::new(),
             routes: HashMap::new(),
             defs: Vec::new(),
+            statuses: Vec::new(),
             lazy_bash: None,
             in_process: tokio::sync::RwLock::new(std::collections::HashMap::new()),
             in_process_defs: tokio::sync::RwLock::new(std::collections::HashMap::new()),
@@ -1516,6 +1874,418 @@ mod tool_call_outcome_tests {
             blocks
                 .iter()
                 .all(|b| !matches!(b, savvagent_protocol::ContentBlock::Html { .. }))
+        );
+    }
+}
+
+#[cfg(test)]
+mod connect_tests {
+    use super::*;
+    use std::future::Future;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    use async_trait::async_trait;
+    use serde_json::json;
+    use tokio::sync::mpsc;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    struct DenyResolver;
+
+    #[async_trait]
+    impl BashNetResolver for DenyResolver {
+        async fn resolve_policy(&self, _context: BashNetContext<'_>) -> bool {
+            false
+        }
+    }
+
+    fn deny_resolver() -> BashNetResolverHandle {
+        Arc::new(DenyResolver)
+    }
+
+    #[derive(Clone, Default)]
+    struct SharedWriter(Arc<Mutex<Vec<u8>>>);
+
+    struct SharedWriterGuard(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for SharedWriterGuard {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log buffer mutex poisoned")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for SharedWriter {
+        type Writer = SharedWriterGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            SharedWriterGuard(self.0.clone())
+        }
+    }
+
+    impl SharedWriter {
+        fn into_string(self) -> String {
+            String::from_utf8(self.0.lock().expect("log buffer mutex poisoned").clone())
+                .expect("captured logs are valid utf-8")
+        }
+    }
+
+    async fn capture_logs<Fut>(future: Fut) -> (Fut::Output, String)
+    where
+        Fut: Future,
+    {
+        let writer = SharedWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(writer.clone())
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        let output = future.await;
+        drop(guard);
+        (output, writer.into_string())
+    }
+
+    fn fixture_manifest() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("mcp-connect-fixture")
+            .join("Cargo.toml")
+    }
+
+    fn build_fixture_binary(bin_name: &str) -> PathBuf {
+        let manifest = fixture_manifest();
+        assert!(
+            manifest.exists(),
+            "fixture manifest missing at {manifest:?}"
+        );
+
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let status = Command::new(&cargo)
+            .args(["build", "--quiet", "--manifest-path"])
+            .arg(&manifest)
+            .args(["--bin", bin_name])
+            .status()
+            .expect("invoke cargo build for mcp-connect-fixture");
+        assert!(status.success(), "cargo build for fixture failed");
+
+        let test_bin = std::env::current_exe().expect("current_exe");
+        let target_debug = test_bin
+            .ancestors()
+            .find(|p| p.file_name().and_then(|s| s.to_str()) == Some("debug"))
+            .map(PathBuf::from)
+            .expect("current_exe must live under target/debug/deps");
+        let exe_name = if cfg!(windows) {
+            format!("{bin_name}.exe")
+        } else {
+            bin_name.to_string()
+        };
+        let out = target_debug.join(exe_name);
+        assert!(out.exists(), "fixture binary missing at {out:?}");
+        out
+    }
+
+    fn test_artifact_path(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-artifacts")
+            .join("tool-registry");
+        std::fs::create_dir_all(&dir).expect("create test artifact dir");
+        dir.join(format!("{name}-{unique}.txt"))
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn connect_records_failed_endpoint_without_aborting_remaining_servers() {
+        let fixture = build_fixture_binary("mcp-connect-fixture");
+        let endpoints = vec![
+            ToolEndpoint::Stdio {
+                name: "good".into(),
+                command: fixture,
+                args: Vec::new(),
+                env: HashMap::from([
+                    ("MCP_FIXTURE_TOOL_NAME".into(), "echo_env".into()),
+                    ("MCP_FIXTURE_RETURN_ENV".into(), "MY_VAR".into()),
+                    ("MY_VAR".into(), "ok".into()),
+                ]),
+            },
+            ToolEndpoint::Stdio {
+                name: "bogus".into(),
+                command: PathBuf::from("definitely-not-a-real-savvagent-tool"),
+                args: Vec::new(),
+                env: HashMap::new(),
+            },
+        ];
+        let (tx, _rx) = mpsc::channel::<ResourceEvent>(8);
+        let registry = ToolRegistry::connect(
+            &endpoints,
+            Path::new("."),
+            &SandboxConfig::default(),
+            Duration::from_secs(2),
+            deny_resolver(),
+            tx,
+        )
+        .await
+        .expect("connect should isolate endpoint failures");
+
+        assert_eq!(
+            registry.eager_servers.len(),
+            1,
+            "valid endpoint should stay connected"
+        );
+        assert_eq!(registry.eager_servers[0].label, "good");
+        assert_eq!(registry.statuses.len(), 2);
+        assert_eq!(registry.statuses[0].name, "good");
+        assert_eq!(registry.statuses[0].transport, TransportKind::Stdio);
+        assert_eq!(registry.statuses[0].state, ConnectState::Connected);
+        assert_eq!(registry.statuses[1].name, "bogus");
+        assert_eq!(registry.statuses[1].transport, TransportKind::Stdio);
+        assert!(
+            matches!(registry.statuses[1].state, ConnectState::Failed { .. }),
+            "bogus endpoint should be recorded as failed: {:?}",
+            registry.statuses[1]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn configured_env_reaches_spawned_stdio_server() {
+        let fixture = build_fixture_binary("mcp-connect-fixture");
+        let endpoints = vec![ToolEndpoint::Stdio {
+            name: "env-server".into(),
+            command: fixture,
+            args: Vec::new(),
+            env: HashMap::from([
+                ("MCP_FIXTURE_TOOL_NAME".into(), "echo_env".into()),
+                ("MCP_FIXTURE_RETURN_ENV".into(), "MY_VAR".into()),
+                ("MY_VAR".into(), "stdio-env-value".into()),
+            ]),
+        }];
+        let (tx, _rx) = mpsc::channel::<ResourceEvent>(8);
+        let registry = ToolRegistry::connect(
+            &endpoints,
+            Path::new("."),
+            &SandboxConfig::default(),
+            Duration::from_secs(2),
+            deny_resolver(),
+            tx,
+        )
+        .await
+        .expect("connect should succeed");
+
+        let outcome = registry
+            .call_with_bash_net_override(
+                "echo_env",
+                json!({ "command": "ignored" }),
+                NetOverride::Inherit,
+            )
+            .await;
+        assert!(!outcome.is_error, "tool call failed: {:?}", outcome.payload);
+        assert_eq!(outcome.payload, "stdio-env-value");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn configured_env_reaches_lazy_bash_respawn() {
+        let fixture = build_fixture_binary("tool-bash-fixture");
+        let endpoints = vec![ToolEndpoint::Stdio {
+            name: "bash-fixture".into(),
+            command: fixture,
+            args: Vec::new(),
+            env: HashMap::from([
+                ("MCP_FIXTURE_TOOL_NAME".into(), "run".into()),
+                ("MCP_FIXTURE_RETURN_ENV".into(), "MY_VAR".into()),
+                ("MY_VAR".into(), "lazy-bash-env-value".into()),
+            ]),
+        }];
+        let (tx, _rx) = mpsc::channel::<ResourceEvent>(8);
+        let registry = ToolRegistry::connect(
+            &endpoints,
+            Path::new("."),
+            &SandboxConfig::default(),
+            Duration::from_secs(2),
+            deny_resolver(),
+            tx,
+        )
+        .await
+        .expect("connect should succeed");
+
+        let outcome = registry
+            .call_with_bash_net_override(
+                "run",
+                json!({ "command": "ignored" }),
+                NetOverride::ForceDeny,
+            )
+            .await;
+        assert!(!outcome.is_error, "tool call failed: {:?}", outcome.payload);
+        assert_eq!(outcome.payload, "lazy-bash-env-value");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn duplicate_tool_name_warns_and_keeps_both_endpoints_connected() {
+        let fixture = build_fixture_binary("mcp-connect-fixture");
+        let endpoints = vec![
+            ToolEndpoint::Stdio {
+                name: "first".into(),
+                command: fixture.clone(),
+                args: Vec::new(),
+                env: HashMap::from([("MCP_FIXTURE_TOOL_NAME".into(), "dup_tool".into())]),
+            },
+            ToolEndpoint::Stdio {
+                name: "second".into(),
+                command: fixture,
+                args: Vec::new(),
+                env: HashMap::from([("MCP_FIXTURE_TOOL_NAME".into(), "dup_tool".into())]),
+            },
+        ];
+        let (tx, _rx) = mpsc::channel::<ResourceEvent>(8);
+        let (registry, logs) = capture_logs(ToolRegistry::connect(
+            &endpoints,
+            Path::new("."),
+            &SandboxConfig::default(),
+            Duration::from_secs(2),
+            deny_resolver(),
+            tx,
+        ))
+        .await;
+        let registry = registry.expect("connect should succeed");
+
+        assert_eq!(
+            registry
+                .defs
+                .iter()
+                .filter(|def| def.name == "dup_tool")
+                .count(),
+            1,
+            "duplicate tool name should be registered once"
+        );
+        assert_eq!(registry.statuses.len(), 2);
+        assert!(
+            registry
+                .statuses
+                .iter()
+                .all(|status| status.state == ConnectState::Connected)
+        );
+        assert!(
+            logs.contains("skipping duplicate tool name advertised by a later tool server"),
+            "expected duplicate-tool warning in logs, got:\n{logs}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn hung_list_tools_is_timed_out_and_cancelled() {
+        let fixture = build_fixture_binary("mcp-connect-fixture");
+        let pid_file = test_artifact_path("hung-list-pid");
+        let _exit_file = test_artifact_path("hung-list-exit");
+        let endpoints = vec![ToolEndpoint::Stdio {
+            name: "hung".into(),
+            command: fixture,
+            args: Vec::new(),
+            env: HashMap::from([
+                ("MCP_FIXTURE_HANG_LIST".into(), "1".into()),
+                (
+                    "MCP_FIXTURE_PID_FILE".into(),
+                    pid_file.to_string_lossy().into_owned(),
+                ),
+                (
+                    "MCP_FIXTURE_EXIT_FILE".into(),
+                    _exit_file.to_string_lossy().into_owned(),
+                ),
+            ]),
+        }];
+        let (tx, _rx) = mpsc::channel::<ResourceEvent>(8);
+        let registry = ToolRegistry::connect(
+            &endpoints,
+            Path::new("."),
+            &SandboxConfig::default(),
+            Duration::from_millis(200),
+            deny_resolver(),
+            tx,
+        )
+        .await
+        .expect("connect should time out without failing the whole registry");
+
+        assert_eq!(registry.statuses.len(), 1);
+        assert!(
+            matches!(
+                registry.statuses[0].state,
+                ConnectState::Failed { ref reason } if reason.contains("timed out")
+            ),
+            "hung list_tools should be recorded as a timeout: {:?}",
+            registry.statuses[0]
+        );
+
+        assert!(
+            pid_file.exists(),
+            "fixture should have written its pid file"
+        );
+        #[cfg(target_os = "linux")]
+        {
+            let pid: u32 = std::fs::read_to_string(&pid_file)
+                .expect("read pid file")
+                .trim()
+                .parse()
+                .expect("parse pid");
+            let proc_path = PathBuf::from(format!("/proc/{pid}"));
+            for _ in 0..40 {
+                if !proc_path.exists() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            assert!(
+                !proc_path.exists(),
+                "timed-out server should have been cancelled and exited cleanly"
+            );
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = _exit_file;
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn bearer_token_never_appears_in_tracing_output() {
+        let token = "super-secret-bearer-token";
+        let endpoints = vec![ToolEndpoint::Http {
+            name: "remote".into(),
+            url: "http://127.0.0.1:9/mcp".into(),
+            auth: HttpAuth::Bearer {
+                token: token.into(),
+            },
+        }];
+        let (tx, _rx) = mpsc::channel::<ResourceEvent>(8);
+        let (registry, logs) = capture_logs(ToolRegistry::connect(
+            &endpoints,
+            Path::new("."),
+            &SandboxConfig::default(),
+            Duration::from_millis(250),
+            deny_resolver(),
+            tx,
+        ))
+        .await;
+        let registry = registry.expect("http endpoint failures are isolated");
+
+        assert_eq!(registry.statuses.len(), 1);
+        assert!(
+            matches!(registry.statuses[0].state, ConnectState::Failed { .. }),
+            "unreachable http endpoint should be recorded as failed"
+        );
+        assert!(
+            !logs.contains(token),
+            "bearer token must never appear in tracing output:\n{logs}"
         );
     }
 }

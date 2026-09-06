@@ -117,12 +117,12 @@ recent released heading when the release PR (Task 9's final note) is actually op
 - Modify: `crates/savvagent-host/src/tools.rs`
 - Modify: `crates/savvagent-host/src/session.rs`
 
-- [ ] Add `pub enum TransportKind { Stdio, Http }`, `pub enum ConnectState { Connected, Failed {
+- [x] Add `pub enum TransportKind { Stdio, Http }`, `pub enum ConnectState { Connected, Failed {
       reason: String } }`, `pub struct ToolServerStatus { pub name: String, pub transport:
       TransportKind, pub state: ConnectState }` to `tools.rs`.
-- [ ] Add a `statuses: Vec<ToolServerStatus>` field to `ToolRegistry`; populate it during `connect()`
+- [x] Add a `statuses: Vec<ToolServerStatus>` field to `ToolRegistry`; populate it during `connect()`
       for every endpoint (success and failure); add `pub fn statuses(&self) -> &[ToolServerStatus]`.
-- [ ] **Timeout plumbing (blocking fix from plan-review round 1):** `ToolRegistry::connect`'s current
+- [x] **Timeout plumbing (blocking fix from plan-review round 1):** `ToolRegistry::connect`'s current
       signature (`endpoints: &[ToolEndpoint], project_root: &Path, sandbox: &SandboxConfig,
       bash_net_resolver: BashNetResolverHandle, resource_tx: mpsc::Sender<ResourceEvent>`) has no
       timeout parameter. Add `connect_timeout: std::time::Duration` as a new parameter. Update all
@@ -133,7 +133,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       §2, rather than inventing a second timeout constant). The test call site (~3548) should pass
       whatever duration that specific test needs (short, if it's exercising timeout behavior; the
       existing default otherwise).
-- [ ] Rework `connect()`'s per-endpoint loop: replace the `?`-propagating `anyhow::bail!`/`with_context`
+- [x] Rework `connect()`'s per-endpoint loop: replace the `?`-propagating `anyhow::bail!`/`with_context`
       chain for the non-bash `Stdio` arm with the two-stage `tokio::time::timeout_at` shape from the
       spec's §2 (bind `service` in an outer scope as soon as `serve()` returns; timeout/error before
       that point records `ConnectState::Failed` with nothing to cancel; timeout/error on
@@ -166,24 +166,24 @@ recent released heading when the release PR (Task 9's final note) is actually op
       caller-must-know-before-anything-runs condition are not introduced by this change (none
       identified in the spec) — the only remaining hard error path is truly unexpected internal state
       (e.g. an unreachable branch), not endpoint reachability.
-- [ ] Add the `ToolEndpoint::Http` construction arm exactly per spec §2: build
+- [x] Add the `ToolEndpoint::Http` construction arm exactly per spec §2: build
       `StreamableHttpClientTransport::from_config(StreamableHttpClientTransportConfig::with_uri(url))`
       with `.auth_header(token)` applied when `auth` is `HttpAuth::Bearer { token }` (confirmed API:
       `StreamableHttpClientTransportConfig::auth_header<T: Into<String>>(self, value: T) -> Self`,
       rmcp 1.6, takes the token without a `"Bearer "` prefix — rmcp adds the scheme). No sandbox
       wrapping applies. Same two-stage timeout/cancel shape as the stdio arm.
-- [ ] Per-tool (not per-endpoint) collision handling: after a successful `list_all_tools()` on any
+- [x] Per-tool (not per-endpoint) collision handling: after a successful `list_all_tools()` on any
       arm, register each tool name into `routes` individually; a name already present is skipped
       (not overwritten), logged via `tracing::warn!`, and does **not** mark the endpoint `Failed` —
       it stays `Connected` with the other tools registered. `ConnectState::Failed` is reserved for
       "the endpoint itself never came up."
-- [ ] `ToolServer.label` is now populated from the endpoint's `name` field (not
+- [x] `ToolServer.label` is now populated from the endpoint's `name` field (not
       `command.display()`/`url.clone()`).
-- [ ] Add `pub fn tool_server_statuses(&self) -> Vec<ToolServerStatus>` to `Host`
+- [x] Add `pub fn tool_server_statuses(&self) -> Vec<ToolServerStatus>` to `Host`
       (`session.rs`), cloning from the registry (acquire the `tools: Mutex<Option<Arc<ToolRegistry>>>`
       lock briefly, clone `ToolServerStatus` — it's a small `Clone`-able struct — release before
       returning).
-- [ ] Write regression tests in `tools.rs`'s test module: (a) an endpoint whose command doesn't exist
+- [x] Write regression tests in `tools.rs`'s test module: (a) an endpoint whose command doesn't exist
       records `ConnectState::Failed` and does not abort `connect()` for the remaining endpoints
       (construct with ≥2 endpoints, one valid one bogus, assert both `Connected`/`Failed` co-exist in
       `statuses()`); (b) a tool-name collision between two endpoints leaves both `Connected` with a
@@ -194,16 +194,16 @@ recent released heading when the release PR (Task 9's final note) is actually op
       minimal test-only stub binary or an in-process fake transport, whichever the existing test
       infrastructure in this file already supports — check for existing stub-server test helpers in
       `tools.rs`/`session.rs` before writing a new one from scratch).
-- [ ] Bearer-token non-logging test: assert that constructing and using an `HttpAuth::Bearer` token
+- [x] Bearer-token non-logging test: assert that constructing and using an `HttpAuth::Bearer` token
       through `connect()` never causes the literal token value to appear in any `tracing` output
       captured during the call (use a `tracing` test subscriber or `tracing_test`/`tracing-subscriber`
       capture pattern already used elsewhere in this workspace, if any — check first).
-- [ ] Run `cargo test -p savvagent-host` — confirm green, including the new tests.
-- [ ] Public-interface check: `ToolRegistry::connect`'s behavior contract changes ("any endpoint
+- [x] Run `cargo test -p savvagent-host` — confirm green, including the new tests.
+- [x] Public-interface check: `ToolRegistry::connect`'s behavior contract changes ("any endpoint
       failure aborts `Host::start`" → "isolated and recorded"); `Host` gains
       `tool_server_statuses()`. Record both in the PR body per spec's Public-interface-changes
       section.
-- [ ] Commit: `feat(host): isolate per-endpoint tool connect failures, add HTTP transport and status tracking`.
+- [x] Commit: `feat(host): isolate per-endpoint tool connect failures, add HTTP transport and status tracking`.
 
 ## Task 3: Tolerant `mcp_servers` config loading (`crates/savvagent/src/config_file.rs`)
 

@@ -49,6 +49,7 @@ axum = { workspace = true, features = ["json"] }
 # bins owned by the crate-under-test), which is why we can't use the
 # usual `env!` lookup.
 resource-tool = { path = "tests/fixtures/resource-tool" }
+mcp-connect-fixture = { path = "tests/fixtures/mcp-connect-fixture" }
 
 [[example]]
 name = "headless"

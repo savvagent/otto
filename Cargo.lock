@@ -4468,6 +4468,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-connect-fixture"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "rmcp",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7035,6 +7045,7 @@ dependencies = [
  "async-trait",
  "axum",
  "futures",
+ "mcp-connect-fixture",
  "provider-anthropic",
  "provider-gemini",
  "provider-openai",

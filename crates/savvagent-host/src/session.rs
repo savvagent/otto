@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use savvagent_mcp::ProviderClient;
 use savvagent_plugin::SystemPromptSegment;
@@ -28,6 +29,7 @@ use crate::router::modality;
 use crate::sandbox::SandboxConfig;
 use crate::tools::{
     BashNetContext, BashNetResolver, BashNetResolverHandle, NetOverride, ToolRegistry,
+    ToolServerStatus,
 };
 
 /// Current transcript file schema version.
@@ -578,6 +580,7 @@ impl Host {
             &config.tools,
             &config.project_root,
             &sandbox,
+            Duration::from_millis(config.connect_timeout_ms),
             resolver,
             resource_tx,
         )
@@ -683,6 +686,7 @@ impl Host {
             &config.tools,
             &config.project_root,
             &sandbox,
+            Duration::from_millis(config.connect_timeout_ms),
             resolver,
             resource_tx,
         )
@@ -1821,6 +1825,15 @@ impl Host {
     pub async fn tool_defs(&self) -> Vec<ToolDef> {
         let guard = self.tools.lock().await;
         guard.as_ref().map(|t| t.defs.clone()).unwrap_or_default()
+    }
+
+    /// Snapshot of every configured tool server's startup status.
+    pub async fn tool_server_statuses(&self) -> Vec<ToolServerStatus> {
+        let guard = self.tools.lock().await;
+        guard
+            .as_ref()
+            .map(|t| t.statuses().to_vec())
+            .unwrap_or_default()
     }
 
     /// What the policy would return for `tool_name` with empty arguments —
@@ -3549,6 +3562,7 @@ mod policy_tests {
             &[],
             &config.project_root,
             &sandbox,
+            Duration::from_millis(config.connect_timeout_ms),
             resolver,
             resource_tx,
         )
