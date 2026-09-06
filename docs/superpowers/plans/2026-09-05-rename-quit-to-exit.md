@@ -72,10 +72,10 @@ plan implements it exactly.
       expectation in `crates/savvagent/src/plugin/mod.rs` so they expect `exit` / `internal:exit`
       instead of `quit` / `internal:quit`.
 - [ ] Run targeted tests before implementation:
-      `cargo test -p savvagent quit_returns_quit_effect quit_is_listed_and_runs_via_runslash register_builtins_pr8_complete -- --nocapture`
-      (or, if the runner rejects multiple names, run the same test functions via the smallest number
-      of `cargo test -p savvagent <name>` invocations needed). Expect failure on `/quit`-named
-      assertions before code changes land.
+      `cargo test -p savvagent -- quit_returns_quit_effect`;
+      `cargo test -p savvagent -- quit_is_listed_and_runs_via_runslash`;
+      `cargo test -p savvagent -- register_builtins_pr8_complete`.
+      Expect failure on `/quit`-named assertions before code changes land.
 - [ ] Implement the rename in the listed files: expose `/exit` as the command name, rename the core
       builtin plugin id to `internal:exit`, update the home command list and palette fixture, revise
       locale-rendered strings, and update README documentation. Keep `Effect::Quit`,
@@ -84,10 +84,10 @@ plan implements it exactly.
       `rg -n '/quit|internal:quit|name: "quit"|quit-summary|quit-description' crates/savvagent/src crates/savvagent/locales README.md`
       and confirm only intentional historical/non-user-facing references remain, if any.
 - [ ] Run targeted validation after implementation:
-      `cargo test -p savvagent quit_returns_quit_effect`;
-      `cargo test -p savvagent manifest_marks_quit_as_core`;
-      `cargo test -p savvagent quit_is_listed_and_runs_via_runslash`;
-      `cargo test -p savvagent register_builtins_pr8_complete`.
+      `cargo test -p savvagent -- exit_returns_quit_effect`;
+      `cargo test -p savvagent -- manifest_marks_exit_as_core`;
+      `cargo test -p savvagent -- exit_is_listed_and_runs_via_runslash`;
+      `cargo test -p savvagent -- register_builtins_pr8_complete`.
       Expect all to pass with `/exit` semantics.
 - [ ] Public-interface check: record that this task makes a **breaking slash-command rename** on the
       README-documented public interface (`/quit` removed, `/exit` added). Call it out in the PR
