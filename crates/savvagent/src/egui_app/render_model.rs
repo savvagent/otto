@@ -21,6 +21,7 @@ pub struct RenderModel {
     pub tips: Vec<StyledLine>,
     pub footer_left: Vec<StyledLine>,
     pub footer_center: Vec<StyledLine>,
+    pub footer_turn_state: Vec<StyledLine>,
     pub footer_right: Vec<StyledLine>,
     pub tool_entries: Vec<ToolEntryRender>,
 }
@@ -40,6 +41,7 @@ pub async fn build_model(app: &crate::app::App, area_cols: u16) -> RenderModel {
         tips: fd.tips,
         footer_left: fd.footer_left,
         footer_center: fd.footer_center,
+        footer_turn_state: fd.footer_turn_state,
         footer_right: fd.footer_right,
         tool_entries: fd.tool_entries,
     }

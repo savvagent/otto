@@ -238,6 +238,7 @@ fn paint_footer(state: &SavvagentApp, ctx: &egui::Context, palette: &Palette) {
             .footer_left
             .iter()
             .chain(&model.footer_center)
+            .chain(&model.footer_turn_state)
             .chain(&model.footer_right)
         {
             ui.label(styled_line_to_job(line, palette, FONT_SIZE));

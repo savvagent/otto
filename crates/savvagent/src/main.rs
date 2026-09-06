@@ -2820,6 +2820,7 @@ async fn run_app(
     let mut next_turn_id: u32 = 0;
     let mut current_turn_id: Option<u32> = None;
     let mut footer_pending_turn_id: Option<u32> = None;
+    let mut turn_terminal_event_seen = false;
     let mut next_tool_call_id: u64 = 0;
     let mut last_tool_call_id: Option<u64> = None;
     let mut last_emitted_ctx: u32 = 0;
@@ -2899,6 +2900,7 @@ async fn run_app(
             match msg {
                 WorkerMsg::Event(e) => {
                     let was_complete = matches!(e, TurnEvent::TurnComplete { .. });
+                    let predicted_turn_id = footer_pending_turn_id;
                     if matches!(
                         &e,
                         TurnEvent::IterationStarted { iteration } if *iteration == 1
@@ -2909,6 +2911,14 @@ async fn run_app(
                             | TurnEvent::AbortedAfterGrace { .. }
                     ) {
                         footer_pending_turn_id = None;
+                    }
+                    if matches!(
+                        e,
+                        TurnEvent::TurnComplete { .. }
+                            | TurnEvent::Cancelled { .. }
+                            | TurnEvent::AbortedAfterGrace { .. }
+                    ) {
+                        turn_terminal_event_seen = true;
                     }
                     // Capture the canvas id before apply_turn_event consumes
                     // the event and removes the index from html_block_index_to_id.
@@ -2926,13 +2936,22 @@ async fn run_app(
                     // which is what telemetry/render/transcript
                     // subscribers actually want (they need the latest
                     // text buffer, metrics, and entry list).
-                    let host_event = translate_turn_event_to_host_event(
+                    let prestart_cancelled = matches!(
                         &e,
-                        &mut next_turn_id,
-                        &mut current_turn_id,
-                        &mut next_tool_call_id,
-                        &mut last_tool_call_id,
-                    );
+                        TurnEvent::Cancelled { .. } | TurnEvent::AbortedAfterGrace { .. }
+                    ) && current_turn_id.is_none()
+                        && predicted_turn_id.is_some();
+                    let host_event = if prestart_cancelled {
+                        None
+                    } else {
+                        translate_turn_event_to_host_event(
+                            &e,
+                            &mut next_turn_id,
+                            &mut current_turn_id,
+                            &mut next_tool_call_id,
+                            &mut last_tool_call_id,
+                        )
+                    };
                     app.apply_turn_event(e);
                     app.update_metrics();
                     // If an HTML block just completed, try to create a renderer
@@ -2948,7 +2967,26 @@ async fn run_app(
                         // internal:html-canvas plugin off via plugins.toml.
                         auto_export_canvas(app, canvas_id, current_turn_id.unwrap_or(next_turn_id));
                     }
-                    if let Some(he) = host_event {
+                    if prestart_cancelled {
+                        let turn_id = predicted_turn_id.expect("checked is_some above");
+                        next_turn_id = next_turn_id.max(turn_id);
+                        last_tool_call_id = None;
+                        for host_event in [
+                            savvagent_plugin::HostEvent::TurnStart { turn_id },
+                            savvagent_plugin::HostEvent::TurnEnd {
+                                turn_id,
+                                success: false,
+                            },
+                        ] {
+                            if let Err(err) =
+                                crate::plugin::effects::dispatch_host_event(app, host_event, 0)
+                                    .await
+                            {
+                                tracing::warn!(error = %err,
+                                    "host-event dispatch (from TurnEvent) failed");
+                            }
+                        }
+                    } else if let Some(he) = host_event {
                         if let Err(err) =
                             crate::plugin::effects::dispatch_host_event(app, he, 0).await
                         {
@@ -2981,53 +3019,61 @@ async fn run_app(
                 }
                 WorkerMsg::Error(msg) => {
                     app.is_loading = false;
-                    footer_pending_turn_id = None;
+                    let pending_turn_id = footer_pending_turn_id.take();
                     app.entries.push(Entry::Note(format!("Error: {msg}")));
                     app.update_metrics();
-                    // A runner error terminates the turn without a
-                    // TurnComplete; emit TurnEnd { success: false } so
-                    // subscribers see symmetry with successful turns.
-                    // If the provider errored before producing
-                    // `IterationStarted { iteration: 1 }` (auth fail,
-                    // network glitch on first request), `current_turn_id`
-                    // is None — synthesize a TurnStart first so
-                    // subscribers see a complete `PromptSubmitted ->
-                    // TurnStart -> TurnEnd` shape instead of a missing
-                    // turn frame for those error modes.
-                    let turn_id = match current_turn_id.take() {
-                        Some(id) => id,
-                        None => {
-                            next_turn_id = next_turn_id.saturating_add(1);
-                            let synthetic = next_turn_id;
-                            if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                                app,
-                                savvagent_plugin::HostEvent::TurnStart { turn_id: synthetic },
-                                0,
-                            )
-                            .await
-                            {
-                                tracing::warn!(error = %err,
-                                    "synthetic TurnStart dispatch failed");
+                    if !turn_terminal_event_seen {
+                        // A runner error terminates the turn without a
+                        // terminal TurnEvent; emit TurnEnd { success: false }
+                        // so subscribers see symmetry with successful turns.
+                        // If the provider errored before producing
+                        // `IterationStarted { iteration: 1 }` (auth fail,
+                        // network glitch on first request), `current_turn_id`
+                        // is None — synthesize a TurnStart first so
+                        // subscribers see a complete `PromptSubmitted ->
+                        // TurnStart -> TurnEnd` shape instead of a missing
+                        // turn frame for those error modes.
+                        let turn_id = match current_turn_id.take() {
+                            Some(id) => id,
+                            None => {
+                                let synthetic = pending_turn_id.unwrap_or_else(|| {
+                                    next_turn_id = next_turn_id.saturating_add(1);
+                                    next_turn_id
+                                });
+                                next_turn_id = next_turn_id.max(synthetic);
+                                if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                                    app,
+                                    savvagent_plugin::HostEvent::TurnStart {
+                                        turn_id: synthetic,
+                                    },
+                                    0,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(error = %err,
+                                        "synthetic TurnStart dispatch failed");
+                                }
+                                synthetic
                             }
-                            synthetic
+                        };
+                        // Clear any stale per-turn tool-call state so the
+                        // next turn starts clean.
+                        last_tool_call_id = None;
+                        if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                            app,
+                            savvagent_plugin::HostEvent::TurnEnd {
+                                turn_id,
+                                success: false,
+                            },
+                            0,
+                        )
+                        .await
+                        {
+                            tracing::warn!(error = %err,
+                                "TurnEnd(failure) dispatch failed");
                         }
-                    };
-                    // Clear any stale per-turn tool-call state so the
-                    // next turn starts clean.
-                    last_tool_call_id = None;
-                    if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                        app,
-                        savvagent_plugin::HostEvent::TurnEnd {
-                            turn_id,
-                            success: false,
-                        },
-                        0,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %err,
-                            "TurnEnd(failure) dispatch failed");
                     }
+                    turn_terminal_event_seen = false;
                 }
                 WorkerMsg::BashDone => {
                     app.is_loading = false;
@@ -3346,6 +3392,7 @@ async fn run_app(
                             app.push_user(value.clone());
                             app.input_textarea = make_input_textarea(Vec::<String>::new());
                             app.is_loading = true;
+                            turn_terminal_event_seen = false;
                             // Fire HostEvent::PromptSubmitted so hook
                             // subscribers (transcript loggers, telemetry,
                             // future custom prompt-rewriters) see the
