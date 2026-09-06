@@ -4,6 +4,12 @@
 .env.local
 /home/
 
+# savvagent-host's connect-integration tests write scratch pid/exit-file
+# artifacts under a crate-local `target/test-artifacts/` directory (not the
+# workspace-root `/target` covered above) — see `test_artifact_path` in
+# crates/savvagent-host/src/tools.rs.
+crates/savvagent-host/target/
+
 # Local worktrees created by Claude Code's EnterWorktree tool.
 .claude/worktrees/
 
