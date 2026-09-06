@@ -118,6 +118,7 @@ impl std::error::Error for IndexBuildError {}
 
 impl Indexes {
     const USER_SLASH_COMMANDS_PLUGIN_ID: &str = "internal:user-slash-commands";
+    const USER_SLASH_COMMANDS_BUILTIN_RELOAD: &str = "reload-commands";
 
     /// Look up the plugin id that owns the canonical content renderer for
     /// `block_type`. Returns `None` if no enabled plugin claims that type.
@@ -183,18 +184,18 @@ impl Indexes {
         pid: &PluginId,
     ) -> Result<(), IndexBuildError> {
         if let Some(existing) = idx.slash.get(&s.name).cloned() {
-            let existing_is_user_slash_commands =
-                existing.as_str() == Self::USER_SLASH_COMMANDS_PLUGIN_ID;
-            let new_is_user_slash_commands = pid.as_str() == Self::USER_SLASH_COMMANDS_PLUGIN_ID;
+            let existing_is_discovered_user_slash =
+                Self::is_discovered_user_slash(&s.name, &existing);
+            let new_is_discovered_user_slash = Self::is_discovered_user_slash(&s.name, pid);
 
-            if existing_is_user_slash_commands || new_is_user_slash_commands {
+            if existing_is_discovered_user_slash || new_is_discovered_user_slash {
                 tracing::warn!(
                     slash = %s.name,
                     existing = %existing.as_str(),
                     incoming = %pid.as_str(),
-                    "user slash command conflicts with an existing slash owner; keeping the non-user-slash winner"
+                    "discovered user slash command conflicts with an existing slash owner; keeping the non-user-slash winner"
                 );
-                if existing_is_user_slash_commands && !new_is_user_slash_commands {
+                if existing_is_discovered_user_slash && !new_is_discovered_user_slash {
                     idx.slash.insert(s.name, pid.clone());
                 }
                 return Ok(());
@@ -208,6 +209,11 @@ impl Indexes {
         }
         idx.slash.insert(s.name, pid.clone());
         Ok(())
+    }
+
+    fn is_discovered_user_slash(name: &str, pid: &PluginId) -> bool {
+        pid.as_str() == Self::USER_SLASH_COMMANDS_PLUGIN_ID
+            && name != Self::USER_SLASH_COMMANDS_BUILTIN_RELOAD
     }
 
     fn insert_screen(
@@ -448,6 +454,29 @@ mod tests {
             idx.slash.get("hello").map(PluginId::as_str),
             Some("internal:user-slash-commands"),
             "non-conflicting user commands must still be indexed"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_slash_reload_commands_conflict_is_hard_error() {
+        let proj = tempfile::TempDir::new().unwrap();
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = proj.path().join(".savvagent/commands");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("reload-commands.md"), "shadowed").unwrap();
+
+        let trust = std::sync::Arc::new(RwLock::new(std::collections::BTreeMap::new()));
+        let reg =
+            PluginRegistry::from_plugins(vec![Box::new(UserSlashCommandsPlugin::with_roots(
+                proj.path().to_path_buf(),
+                home.path().to_path_buf(),
+                trust,
+            ))]);
+
+        let err = Indexes::build(&reg).await.unwrap_err();
+        assert!(
+            matches!(err, IndexBuildError::SlashConflict { ref name, .. } if name == "reload-commands"),
+            "the built-in /reload-commands surface must remain a hard-error conflict"
         );
     }
 
