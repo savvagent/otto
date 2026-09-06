@@ -2557,6 +2557,44 @@ pub(crate) fn translate_turn_event_to_host_event(
                 None
             }
         }
+
+        async fn dispatch_failed_turn_end_on_exit(
+            app: &mut app::App,
+            current_turn_id: &mut Option<u32>,
+            footer_pending_turn_id: &mut Option<u32>,
+            log_context: &'static str,
+        ) {
+            let (turn_id, synthesize_start) = if let Some(turn_id) = current_turn_id.take() {
+                (turn_id, false)
+            } else if let Some(turn_id) = footer_pending_turn_id.take() {
+                (turn_id, true)
+            } else {
+                return;
+            };
+            if synthesize_start {
+                if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                    app,
+                    savvagent_plugin::HostEvent::TurnStart { turn_id },
+                    0,
+                )
+                .await
+                {
+                    tracing::warn!(error = %err, context = log_context, "TurnStart(exit) dispatch failed");
+                }
+            }
+            if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                app,
+                savvagent_plugin::HostEvent::TurnEnd {
+                    turn_id,
+                    success: false,
+                },
+                0,
+            )
+            .await
+            {
+                tracing::warn!(error = %err, context = log_context, "TurnEnd(exit) dispatch failed");
+            }
+        }
         TurnEvent::ToolCallStarted { name, .. } => {
             *next_tool_call_id = next_tool_call_id.saturating_add(1);
             *last_tool_call_id = Some(*next_tool_call_id);
@@ -3101,28 +3139,15 @@ async fn run_app(
         }
 
         if app.should_quit {
-            // If the user requested quit mid-turn, subscribers would
-            // otherwise see a TurnStart with no matching TurnEnd. Emit
-            // TurnEnd { success: false } so the turn frame closes
-            // cleanly. (We dispatch before the host-slot drain so
-            // subscribers still have App state to react to. We don't
-            // bother resetting `last_tool_call_id` here — we're
-            // returning from `run_app` and the variable goes out of
-            // scope.)
-            if let Some(turn_id) = current_turn_id.take() {
-                if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                    app,
-                    savvagent_plugin::HostEvent::TurnEnd {
-                        turn_id,
-                        success: false,
-                    },
-                    0,
-                )
-                .await
-                {
-                    tracing::warn!(error = %err, "TurnEnd(quit) dispatch failed");
-                }
-            }
+            // Close either the active turn or a prompt-submitted turn that
+            // has not reached `IterationStarted` yet before tearing down.
+            dispatch_failed_turn_end_on_exit(
+                app,
+                &mut current_turn_id,
+                &mut footer_pending_turn_id,
+                "quit",
+            )
+            .await;
             drain_pending_bash_net(app, &host_slot).await;
             return Ok(());
         }
@@ -3228,25 +3253,13 @@ async fn run_app(
             continue;
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            // Ctrl-C mid-turn: emit TurnEnd { success: false } so
-            // subscribers see a complete turn frame instead of a
-            // dangling TurnStart. (No need to reset
-            // `last_tool_call_id` — we're about to return from
-            // `run_app`.)
-            if let Some(turn_id) = current_turn_id.take() {
-                if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                    app,
-                    savvagent_plugin::HostEvent::TurnEnd {
-                        turn_id,
-                        success: false,
-                    },
-                    0,
-                )
-                .await
-                {
-                    tracing::warn!(error = %err, "TurnEnd(ctrl-c) dispatch failed");
-                }
-            }
+            dispatch_failed_turn_end_on_exit(
+                app,
+                &mut current_turn_id,
+                &mut footer_pending_turn_id,
+                "ctrl-c",
+            )
+            .await;
             drain_pending_bash_net(app, &host_slot).await;
             return Ok(());
         }
@@ -3270,24 +3283,13 @@ async fn run_app(
             if portable.modifiers.ctrl
                 && matches!(portable.code, savvagent_plugin::KeyCodePortable::Char('d'))
             {
-                // Ctrl-D on a screen-stacked view is a quit: same
-                // symmetric-TurnEnd treatment as the top-level Ctrl-C
-                // path above. (No need to reset `last_tool_call_id`
-                // — we're about to return from `run_app`.)
-                if let Some(turn_id) = current_turn_id.take() {
-                    if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                        app,
-                        savvagent_plugin::HostEvent::TurnEnd {
-                            turn_id,
-                            success: false,
-                        },
-                        0,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %err, "TurnEnd(ctrl-d) dispatch failed");
-                    }
-                }
+                dispatch_failed_turn_end_on_exit(
+                    app,
+                    &mut current_turn_id,
+                    &mut footer_pending_turn_id,
+                    "ctrl-d",
+                )
+                .await;
                 drain_pending_bash_net(app, &host_slot).await;
                 return Ok(());
             }

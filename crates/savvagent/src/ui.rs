@@ -1298,8 +1298,8 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-fn compose_footer_ratatui_line(
-    groups: [&[Line<'static>]; 3],
+fn compose_footer_ratatui_line<const N: usize>(
+    groups: [&[Line<'static>]; N],
     separator: &Span<'static>,
 ) -> Line<'static> {
     let mut spans: Vec<Span<'static>> = Vec::new();
@@ -1429,6 +1429,12 @@ mod tests {
 
     fn palette() -> Palette {
         Palette::for_theme(Theme::Dark)
+    }
+
+    fn locale_lock() -> std::sync::MutexGuard<'static, ()> {
+        let guard = crate::test_helpers::HOME_LOCK.lock().unwrap();
+        rust_i18n::set_locale("en");
+        guard
     }
 
     fn joined_ratatui(line: &Line<'_>) -> String {
@@ -1589,6 +1595,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_idle_are_unchanged() {
+        let _lock = locale_lock();
         let turn_state = vec![one_span_line("idle")];
         let palette = palette();
 
@@ -1603,6 +1610,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_busy_include_working_label() {
+        let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![StyledLine {
             spans: vec![StyledSpan {
@@ -1624,6 +1632,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_busy_override_idle_label_during_submit_gap() {
+        let _lock = locale_lock();
         let idle = rust_i18n::t!("footer.idle").to_string();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![one_span_line(&idle)];
@@ -1637,6 +1646,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_busy_include_spinner_glyph_output() {
+        let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![StyledLine {
             spans: vec![StyledSpan {
@@ -1662,6 +1672,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_busy_use_accent_and_muted_spinner_colors() {
+        let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![StyledLine {
             spans: vec![StyledSpan {
@@ -1699,6 +1710,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_busy_change_spinner_frame_across_ticks() {
+        let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![StyledLine {
             spans: vec![StyledSpan {
@@ -1718,6 +1730,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_busy_do_not_invent_text_for_empty_turn_slot() {
+        let _lock = locale_lock();
         let turn_state: Vec<StyledLine> = vec![];
 
         let out = footer_turn_state_lines(&turn_state, Some(3), 0, palette());
@@ -1727,6 +1740,7 @@ mod tests {
 
     #[test]
     fn footer_turn_state_lines_skip_empty_leader_before_attaching_spinner() {
+        let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![StyledLine { spans: vec![] }, one_span_line(&working)];
 
