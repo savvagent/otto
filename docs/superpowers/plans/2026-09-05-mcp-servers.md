@@ -84,32 +84,32 @@ recent released heading when the release PR (Task 9's final note) is actually op
 **Files:**
 - Modify: `crates/savvagent-host/src/config.rs`
 
-- [ ] Baseline: `cargo test --workspace --no-fail-fast` — confirm green before touching anything;
+- [x] Baseline: `cargo test --workspace --no-fail-fast` — confirm green before touching anything;
       record the total test count as the pre-change baseline for this plan's final comparison.
-- [ ] Add `name: String` and `env: HashMap<String, String>` fields to `ToolEndpoint::Stdio`; add a
+- [x] Add `name: String` and `env: HashMap<String, String>` fields to `ToolEndpoint::Stdio`; add a
       new `Http { name: String, url: String, auth: HttpAuth }` variant; define
       `pub enum HttpAuth { None, Bearer { token: String } }`. Mark both `ToolEndpoint` and `HttpAuth`
       `#[non_exhaustive]`. Add `use std::collections::HashMap;`.
-- [ ] Update every in-workspace `ToolEndpoint::Stdio { command, args }` construction site to the new
+- [x] Update every in-workspace `ToolEndpoint::Stdio { command, args }` construction site to the new
       shape (`crates/savvagent/src/main.rs`'s `ToolBins::apply`, passing `name` as the bundled tool's
       canonical name — `"fs"`/`"bash"`/`"grep"`/`"lsp"`/`"web"` — and `env: HashMap::new()`; any
       test-only constructions in `crates/savvagent-host/src/session.rs`/`tools.rs` tests). Do not
       touch `ToolRegistry::connect`'s body yet (Task 2) beyond what's needed to keep it compiling
       against the new field shape (pattern match arms will need `name`/`env` bound, even if unused
       until Task 2).
-- [ ] Add/extend unit tests in `config.rs`: `ToolEndpoint::Http` constructs with each `HttpAuth`
+- [x] Add/extend unit tests in `config.rs`: `ToolEndpoint::Http` constructs with each `HttpAuth`
       variant; a `#[non_exhaustive]`-enforcement compile-time check is unnecessary (rustc enforces it
       automatically for out-of-crate code) — instead add a doc-comment-level note only.
-- [ ] Run `cargo check -p savvagent-host -p savvagent --all-targets` — fix any compile errors from
+- [x] Run `cargo check -p savvagent-host -p savvagent --all-targets` — fix any compile errors from
       the field/variant addition (expected in `tools.rs`'s match arm and `main.rs`'s `ToolBins::apply`
       and any test fixtures).
-- [ ] Run `cargo test -p savvagent-host` — confirm green.
-- [ ] Public-interface check: this is the **breaking `ToolEndpoint` change** identified in the spec.
+- [x] Run `cargo test -p savvagent-host` — confirm green.
+- [x] Public-interface check: this is the **breaking `ToolEndpoint` change** identified in the spec.
       Record in the PR body: `ToolEndpoint::Stdio` gained `name`/`env` fields (breaking for any
       external struct-literal construction), a new `Http` variant was added, and `ToolEndpoint`/
       `HttpAuth` are now `#[non_exhaustive]` (breaking for any external exhaustive `match`). Note the
       required MINOR version bump per this repo's pre-1.0 convention.
-- [ ] Commit: `feat(host): add ToolEndpoint::Http and name/env fields on Stdio`.
+- [x] Commit: `feat(host): add ToolEndpoint::Http and name/env fields on Stdio`.
 
 ## Task 2: `ToolRegistry::connect` rework — failure isolation, status record, two-stage timeout, `Http` arm
 
