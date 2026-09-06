@@ -210,14 +210,14 @@ recent released heading when the release PR (Task 9's final note) is actually op
 **Files:**
 - Modify: `crates/savvagent/src/config_file.rs`
 
-- [ ] Add `McpServerEntry` (tagged enum, `#[serde(tag = "transport", rename_all = "lowercase")]`,
+- [x] Add `McpServerEntry` (tagged enum, `#[serde(tag = "transport", rename_all = "lowercase")]`,
       `Stdio { name, command, args, env }` / `Http { name, url, auth }`) and `McpAuthMode` (`None`
       default / `Bearer` / `Oauth`) exactly per spec §3. Add `mcp_servers: Vec<McpServerEntry>`
       (`#[serde(default)]`) to `ConfigFile`, keeping the existing `#[serde(default)]` on
       `startup`/`migration`.
-- [ ] Add `pub struct LoadedConfig { pub config: ConfigFile, pub mcp_server_diagnostics: Vec<String>
+- [x] Add `pub struct LoadedConfig { pub config: ConfigFile, pub mcp_server_diagnostics: Vec<String>
       }`.
-- [ ] Rewrite `ConfigFile::load_or_default(path: &Path) -> LoadedConfig`: parse file contents to
+- [x] Rewrite `ConfigFile::load_or_default(path: &Path) -> LoadedConfig`: parse file contents to
       `toml::Value` first (fall back to `ConfigFile::default()` + empty diagnostics on a syntactically
       broken file, exactly as today's whole-file fallback does); deserialize `startup`/`migration`
       from that `Value` (with `mcp_servers` treated as opaque during this step — do not fail the whole
@@ -225,12 +225,12 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `Vec<toml::Value>` and attempt `McpServerEntry::deserialize` on each element independently,
       collecting a diagnostic string (including which row, e.g. by index or `name` if present) for
       each failure and skipping it, appending successes to `config.mcp_servers`.
-- [ ] Add `McpServerEntry::validate(&self, seen_names: &HashSet<String>) -> Result<(), String>` per
+- [x] Add `McpServerEntry::validate(&self, seen_names: &HashSet<String>) -> Result<(), String>` per
       spec's Validation subsection: name non-empty, unique (case-sensitive) across `mcp_servers`, no
       `:` character in `name` (keyring namespace separator), `auth != Oauth` (not yet supported,
       rejected with a clear message), at most one `env` value equal to the literal string `"keyring"`
       for `Stdio` entries (naming both variables in the error if more than one).
-- [ ] Add unit tests: (a) a `config.toml` with one valid and one malformed `[[mcp_servers]]` row still
+- [x] Add unit tests: (a) a `config.toml` with one valid and one malformed `[[mcp_servers]]` row still
       loads `startup`/`migration` correctly and returns one diagnostic + one successfully-parsed
       entry; (b) `auth = "oauth"` is accepted at the tolerant-decode step (it's valid TOML shape) but
       rejected by `validate()` with a clear "not yet supported" message; (c) duplicate `name`s across
@@ -239,7 +239,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `invalid_policy_string_falls_back_to_default`/`missing_file_returns_default` tests updated for
       the new `LoadedConfig` return shape (should still pass conceptually unchanged, just accessed via
       `.config`).
-- [ ] **Update every caller of `ConfigFile::load_or_default` (blocking fix from plan-review round 1
+- [x] **Update every caller of `ConfigFile::load_or_default` (blocking fix from plan-review round 1
       — the full caller list, not just `main.rs`):**
       `crates/savvagent/src/main.rs:260` (`bootstrap_app_and_host`) — destructure `LoadedConfig`,
       threading `mcp_server_diagnostics` into the startup-notes path (this is Task 6's job; here just
@@ -262,11 +262,11 @@ recent released heading when the release PR (Task 9's final note) is actually op
       all typed fields it's actually responsible for.
       This is compile-error-driven, so run `cargo check -p savvagent --all-targets` after the signature
       change and confirm no other call sites were missed.
-- [ ] Run `cargo test -p savvagent`. Confirm green.
-- [ ] Public-interface check: `ConfigFile::load_or_default`'s return-type change is internal-only per
+- [x] Run `cargo test -p savvagent`. Confirm green.
+- [x] Public-interface check: `ConfigFile::load_or_default`'s return-type change is internal-only per
       spec (no external callers; `crates/savvagent` is the TUI binary crate) — note this explicitly in
       the PR body so reviewers don't flag it as a Rule-6 violation needing a version bump.
-- [ ] Commit: `feat(config): add tolerant mcp_servers loading to ConfigFile`.
+- [x] Commit: `feat(config): add tolerant mcp_servers loading to ConfigFile`.
 
 ## Task 4: `toml_edit`-based write path (`crates/savvagent/src/mcp_config_writer.rs`)
 

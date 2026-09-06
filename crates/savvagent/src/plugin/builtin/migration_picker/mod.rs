@@ -50,7 +50,7 @@ impl MigrationPickerPlugin {
     /// at `HostStarting`.
     fn process_host_starting(&mut self) -> Vec<Effect> {
         let path = ConfigFile::default_path();
-        let cfg = ConfigFile::load_or_default(&path);
+        let cfg = ConfigFile::load_or_default(&path).config;
         match decide_migration(&cfg) {
             MigrationOutcome::AlreadyDone => vec![],
             MigrationOutcome::Direct { startup_providers } => {
@@ -88,7 +88,7 @@ impl MigrationPickerPlugin {
         path: &std::path::Path,
         startup_providers: Vec<ProviderId>,
     ) -> Effect {
-        let mut cfg = ConfigFile::load_or_default(path);
+        let mut cfg = ConfigFile::load_or_default(path).config;
         let ids_str = startup_providers
             .iter()
             .map(|id| id.as_str())
@@ -203,7 +203,7 @@ impl Plugin for MigrationPickerPlugin {
                     .collect::<Vec<_>>()
                     .join(", ");
                 let path = ConfigFile::default_path();
-                let mut cfg = ConfigFile::load_or_default(&path);
+                let mut cfg = ConfigFile::load_or_default(&path).config;
                 cfg.startup.startup_providers =
                     fallback.iter().map(|id| id.as_str().to_string()).collect();
                 cfg.migration.v1_done = true;

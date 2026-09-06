@@ -594,9 +594,11 @@ impl GuiApp {
         // thread.
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let tool_bins = crate::build_tool_bins();
-        let config_file = crate::config_file::ConfigFile::load_or_default(
+        let loaded_config = crate::config_file::ConfigFile::load_or_default(
             &crate::config_file::ConfigFile::default_path(),
         );
+        let _mcp_server_diagnostics = loaded_config.mcp_server_diagnostics;
+        let config_file = loaded_config.config;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
         let ctx = cc.egui_ctx.clone();

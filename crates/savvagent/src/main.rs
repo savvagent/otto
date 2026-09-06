@@ -258,8 +258,10 @@ pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path
 {
     let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let tool_bins = build_tool_bins();
-    let config_file =
+    let loaded_config =
         config_file::ConfigFile::load_or_default(&config_file::ConfigFile::default_path());
+    let _mcp_server_diagnostics = loaded_config.mcp_server_diagnostics;
+    let config_file = loaded_config.config;
     let initial = bootstrap_host_only(project_root.clone(), tool_bins.clone(), config_file).await;
     build_app_with_host(initial, project_root, tool_bins).await
 }
