@@ -72,10 +72,11 @@ plan implements it exactly.
       expectation in `crates/savvagent/src/plugin/mod.rs` so they expect `exit` / `internal:exit`
       instead of `quit` / `internal:quit`.
 - [ ] Run targeted tests before implementation:
-      `cargo test -p savvagent -- quit_returns_quit_effect`;
-      `cargo test -p savvagent -- quit_is_listed_and_runs_via_runslash`;
+      `cargo test -p savvagent -- exit_returns_quit_effect`;
+      `cargo test -p savvagent -- exit_is_listed_and_runs_via_runslash`;
       `cargo test -p savvagent -- register_builtins_pr8_complete`.
-      Expect failure on `/quit`-named assertions before code changes land.
+      Expect failure because the tests now expect `/exit` / `internal:exit` before the production
+      code is renamed.
 - [ ] Implement the rename in the listed files: expose `/exit` as the command name, rename the core
       builtin plugin id to `internal:exit`, update the home command list and palette fixture, revise
       locale-rendered strings, and update README documentation. Keep `Effect::Quit`,
@@ -110,15 +111,7 @@ plan implements it exactly.
 **Files:**
 - No feature-branch code changes; this task records the mandatory release follow-through.
 
-- [ ] Confirm the feature PR itself does **not** bump versions or edit `CHANGELOG.md`; per
-      `RELEASING.md` and the repo workflow, those land in a dedicated release PR after merge.
-- [ ] When opening the release PR, bump the shared workspace version from `0.21.0` to `0.22.0`,
-      update every internal `workspace.dependencies` version to match, and add a `CHANGELOG.md`
-      entry that explicitly calls out the breaking `/quit` -> `/exit` rename under the release's
-      dated section.
-- [ ] Validate the release PR with `cargo fmt --all -- --check`,
-      `cargo clippy --workspace --all-targets`, and `cargo test --workspace` before requesting its
-      mandatory review trio.
-- [ ] Format and commit: `cargo fmt --all` (if needed) then
-      `git commit -m "release: cut v0.22.0"` in the dedicated release worktree after this feature PR
-      merges.
+- [ ] Note in the feature PR body and release handoff that a dedicated release PR must be opened
+      immediately after merge to bump `workspace.package.version` and all internal
+      `workspace.dependencies` versions to `0.22.0`, add the breaking `/quit` -> `/exit` entry to
+      `CHANGELOG.md`, run the required validation, and ship the `v0.22.0` tag per `RELEASING.md`.
