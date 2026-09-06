@@ -111,7 +111,7 @@ fn default_theme_name() -> String {
     "dark".to_string()
 }
 
-fn deserialize_language_code<'de, D>(deserializer: D) -> Result<String, D::Error>
+pub(crate) fn deserialize_language_code<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {

@@ -3,7 +3,8 @@
 //! Mirrors `crates/savvagent/src/plugin/builtin/themes/catalog.rs`.
 //! Persistence lives in `~/.savvagent/config.toml`'s `[language]` section.
 
-use crate::config_file::{ConfigFile, LanguageSection};
+use crate::config_file::{ConfigFile, LanguageSection, deserialize_language_code};
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 /// Shipped language entry. Static; the catalog is a const slice.
@@ -118,7 +119,7 @@ fn load_from_path(path: &Path) -> Option<String> {
     let Some(value) = root.get("language") else {
         return None;
     };
-    match value.clone().try_into::<LanguageSection>() {
+    match value.clone().try_into::<PersistedLanguageSection>() {
         Ok(section) => Some(section.code),
         Err(e) => {
             eprintln!(
@@ -128,6 +129,12 @@ fn load_from_path(path: &Path) -> Option<String> {
             None
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct PersistedLanguageSection {
+    #[serde(deserialize_with = "deserialize_language_code")]
+    code: String,
 }
 
 /// Persist `code` to `~/.savvagent/config.toml`'s `[language]` section.
@@ -267,6 +274,17 @@ mod tests {
     }
 
     #[test]
+    fn load_missing_code_in_file_returns_none() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
+        let path = crate::config_file::ConfigFile::default_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"[language]\n").unwrap();
+        assert_eq!(load(), None);
+    }
+
+    #[test]
     fn detect_initial_precedence() {
         let _guard = HOME_LOCK.lock().unwrap();
 
@@ -377,6 +395,28 @@ mod tests {
         // SAFETY: same.
         unsafe {
             std::env::remove_var("LANG");
+        }
+    }
+
+    #[test]
+    fn detect_initial_falls_through_missing_code_file_to_env() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
+
+        let path = crate::config_file::ConfigFile::default_path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"[language]\n").unwrap();
+
+        unsafe {
+            std::env::set_var("LC_MESSAGES", "pt_BR.UTF-8");
+            std::env::remove_var("LC_ALL");
+            std::env::remove_var("LANG");
+        }
+
+        assert_eq!(detect_initial(), "pt");
+
+        unsafe {
+            std::env::remove_var("LC_MESSAGES");
         }
     }
 }
