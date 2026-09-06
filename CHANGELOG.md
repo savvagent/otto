@@ -8,6 +8,8 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.23.0 - 2026-09-06
+
 ### Added
 
 - User-configured `[[mcp_servers]]` in `~/.savvagent/config.toml`, covering local stdio MCP tool
