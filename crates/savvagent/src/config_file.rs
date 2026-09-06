@@ -205,6 +205,7 @@ impl ConfigFile {
         Self::load_from_toml_str(path, &contents)
     }
 
+    #[cfg(test)]
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -222,6 +223,7 @@ impl ConfigFile {
         save_section(path, "theme", &theme)
     }
 
+    #[cfg(test)]
     pub fn save_update_section(path: &Path, update: UpdateSection) -> std::io::Result<()> {
         save_section(path, "update", &update)
     }

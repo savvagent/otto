@@ -89,7 +89,7 @@ fn load_from_default_path(path: Option<PathBuf>) -> Option<String> {
 }
 
 fn load_from_path(path: &Path) -> Option<String> {
-    let text = match std::fs::read_to_string(&path) {
+    let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => {
@@ -110,9 +110,7 @@ fn load_from_path(path: &Path) -> Option<String> {
             return None;
         }
     };
-    let Some(value) = root.get("language") else {
-        return None;
-    };
+    let value = root.get("language")?;
     match value.clone().try_into::<PersistedLanguageSection>() {
         Ok(section) => Some(section.code),
         Err(e) => {
