@@ -60,7 +60,11 @@ impl MigrationPickerPlugin {
                     .map(|id| id.as_str().to_string())
                     .collect();
                 new_cfg.migration.v1_done = true;
-                if let Err(e) = new_cfg.save(&path) {
+                if let Err(e) = ConfigFile::save_startup_and_migration_sections(
+                    &path,
+                    &new_cfg.startup,
+                    &new_cfg.migration,
+                ) {
                     tracing::warn!(error = %e, "migration: failed to write config.toml");
                 }
                 vec![]
@@ -99,7 +103,11 @@ impl MigrationPickerPlugin {
             .map(|id| id.as_str().to_string())
             .collect();
         cfg.migration.v1_done = true;
-        let line = match cfg.save(path) {
+        let line = match ConfigFile::save_startup_and_migration_sections(
+            path,
+            &cfg.startup,
+            &cfg.migration,
+        ) {
             Ok(()) => StyledLine::plain(
                 rust_i18n::t!("migration.saved", ids = ids_str.as_str()).to_string(),
             ),
@@ -207,7 +215,11 @@ impl Plugin for MigrationPickerPlugin {
                 cfg.startup.startup_providers =
                     fallback.iter().map(|id| id.as_str().to_string()).collect();
                 cfg.migration.v1_done = true;
-                let line = match cfg.save(&path) {
+                let line = match ConfigFile::save_startup_and_migration_sections(
+                    &path,
+                    &cfg.startup,
+                    &cfg.migration,
+                ) {
                     Ok(()) => StyledLine::plain(
                         rust_i18n::t!("migration.fallback", ids = ids_str.as_str()).to_string(),
                     ),
@@ -363,6 +375,41 @@ mod tests {
         assert!(
             matches!(result, Err(PluginError::ScreenNotFound(ref id)) if id == "unknown"),
             "expected ScreenNotFound(\"unknown\"), got an Ok"
+        );
+    }
+
+    #[test]
+    fn write_and_mark_preserves_explicit_default_language_without_materializing_other_defaults() {
+        use tempfile::TempDir;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[language]
+code = "en"
+"#,
+        )
+        .unwrap();
+
+        let p = MigrationPickerPlugin::new();
+        let _ = p.write_and_mark_at(&path, vec![ProviderId::new("anthropic").unwrap()]);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("[language]\ncode = \"en\""),
+            "explicit default locale must survive migration save: {text}"
+        );
+        assert!(text.contains("[startup]"), "saved config: {text}");
+        assert!(text.contains("[migration]"), "saved config: {text}");
+        assert!(
+            !text.contains("[theme]"),
+            "migration save must not materialize default theme: {text}"
+        );
+        assert!(
+            !text.contains("[update]"),
+            "migration save must not materialize default update settings: {text}"
         );
     }
 

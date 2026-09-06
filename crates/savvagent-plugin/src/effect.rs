@@ -45,7 +45,7 @@ pub enum Effect {
     SetActiveLocale {
         /// Locale code from the shipped catalog (e.g. "en", "es", "pt", "hi").
         code: String,
-        /// Whether to persist the selection to ~/.savvagent/language.toml.
+        /// Whether to persist the selection to ~/.savvagent/config.toml.
         persist: bool,
     },
     /// Switch the active provider's model. The runtime resolves the active

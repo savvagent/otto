@@ -212,6 +212,17 @@ impl ConfigFile {
         save_section(path, "update", &update)
     }
 
+    pub fn save_startup_and_migration_sections(
+        path: &Path,
+        startup: &StartupSection,
+        migration: &MigrationSection,
+    ) -> std::io::Result<()> {
+        let mut root = load_root_for_save(path)?;
+        insert_section(&mut root, "startup", startup)?;
+        insert_section(&mut root, "migration", migration)?;
+        write_root(path, &root)
+    }
+
     pub fn to_startup_policy(&self) -> StartupConnectPolicy {
         let ids: Vec<ProviderId> = self
             .startup
@@ -290,14 +301,25 @@ where
     T: Serialize,
 {
     let mut root = load_root_for_save(path)?;
+    insert_section(&mut root, section, value)?;
+    write_root(path, &root)
+}
+
+fn insert_section<T>(root: &mut Table, section: &'static str, value: &T) -> std::io::Result<()>
+where
+    T: Serialize,
+{
     let value = toml::Value::try_from(value)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     root.insert(section.to_string(), value);
+    Ok(())
+}
 
+fn write_root(path: &Path, root: &Table) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let text = toml::to_string_pretty(&root)
+    let text = toml::to_string_pretty(root)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
     write_atomic(path, &text)
 }
@@ -654,6 +676,78 @@ name = "not-a-real-theme"
         assert!(
             text.contains(r#"code = "hi""#),
             "language save should still update its own section: {text}"
+        );
+    }
+
+    #[test]
+    fn save_startup_and_migration_sections_do_not_materialize_default_sections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        ConfigFile::save_startup_and_migration_sections(
+            &path,
+            &StartupSection {
+                policy: StartupPolicyKind::LastUsed,
+                startup_providers: vec!["anthropic".into()],
+                connect_timeout_ms: 5000,
+            },
+            &MigrationSection { v1_done: true },
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[startup]"), "saved config: {text}");
+        assert!(text.contains("[migration]"), "saved config: {text}");
+        assert!(
+            !text.contains("[language]"),
+            "startup+migration save must not pin locale detection: {text}"
+        );
+        assert!(
+            !text.contains("[theme]"),
+            "startup+migration save must not materialize default theme: {text}"
+        );
+        assert!(
+            !text.contains("[update]"),
+            "startup+migration save must not materialize default update settings: {text}"
+        );
+    }
+
+    #[test]
+    fn save_startup_and_migration_sections_preserve_explicit_default_language() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[language]
+code = "en"
+"#,
+        )
+        .unwrap();
+
+        ConfigFile::save_startup_and_migration_sections(
+            &path,
+            &StartupSection {
+                policy: StartupPolicyKind::OptIn,
+                startup_providers: vec!["anthropic".into()],
+                connect_timeout_ms: 3000,
+            },
+            &MigrationSection { v1_done: true },
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains("[language]\ncode = \"en\""),
+            "explicit default language must round-trip: {text}"
+        );
+        assert!(
+            !text.contains("[theme]"),
+            "unrelated absent sections must stay absent: {text}"
+        );
+        assert!(
+            !text.contains("[update]"),
+            "unrelated absent sections must stay absent: {text}"
         );
     }
 
