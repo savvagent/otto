@@ -181,7 +181,13 @@ async fn compute_tool_entries(
     tool_entries
 }
 
-pub fn render(app: &mut App, frame: &mut Frame, frame_data: &HomeFrameData) {
+pub fn render(
+    app: &mut App,
+    frame: &mut Frame,
+    frame_data: &HomeFrameData,
+    tick: u64,
+    turn_active: bool,
+) {
     let area = frame.area();
 
     if app.show_splash {
@@ -308,12 +314,7 @@ pub fn render(app: &mut App, frame: &mut Frame, frame_data: &HomeFrameData) {
         bg: None,
         modifiers: savvagent_plugin::TextMods::default(),
     };
-    let footer_center = footer_center_lines(
-        &frame_data.footer_center,
-        app.is_loading,
-        footer_spinner_tick(app),
-        palette,
-    );
+    let footer_center = footer_center_lines(&frame_data.footer_center, turn_active, tick, palette);
     let footer_left: Vec<Line<'static>> = frame_data
         .footer_left
         .iter()
@@ -1298,6 +1299,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 /// future second contributor to `home.footer.left` shares the slot
 /// without its content being silently dropped). Lines with no spans are
 /// skipped and never introduce a stray separator.
+#[cfg(test)]
 fn compose_footer_line(
     groups: [&[savvagent_plugin::StyledLine]; 3],
     separator: &savvagent_plugin::StyledSpan,
@@ -1419,10 +1421,6 @@ fn footer_spinner_spans(tick: u64, palette: Palette) -> Vec<Span<'static>> {
     }
 
     spans
-}
-
-fn footer_spinner_tick(app: &App) -> u64 {
-    (app.splash_shown_at.elapsed().as_millis() / 100) as u64
 }
 
 #[cfg(test)]

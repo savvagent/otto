@@ -2814,6 +2814,7 @@ async fn run_app(
     let mut next_tool_call_id: u64 = 0;
     let mut last_tool_call_id: Option<u64> = None;
     let mut last_emitted_ctx: u32 = 0;
+    let mut render_tick: u64 = 0;
 
     // Emit `HostEvent::HostStarting` exactly once. Subscribers (e.g.
     // future providers' auto-probe wiring) get one shot at startup.
@@ -2881,7 +2882,9 @@ async fn run_app(
 
         let frame_area = terminal.get_frame().area();
         let frame_data = ui::compute_home_frame_data(app, frame_area).await;
-        terminal.draw(|f| ui::render(app, f, &frame_data))?;
+        terminal
+            .draw(|f| ui::render(app, f, &frame_data, render_tick, current_turn_id.is_some()))?;
+        render_tick = render_tick.wrapping_add(1);
 
         while let Ok(msg) = worker_rx.try_recv() {
             match msg {
