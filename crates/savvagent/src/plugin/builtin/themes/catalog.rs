@@ -230,7 +230,7 @@ pub fn load() -> Theme {
 /// Load the theme selection from an explicit path. Pure inner used by
 /// [`load`] and tests.
 pub(crate) fn load_from_path(path: &Path) -> Theme {
-    Theme::from_name(&ConfigFile::load_or_default(path).theme.name).unwrap_or_default()
+    Theme::from_name(&ConfigFile::load_or_default(path).config.theme.name).unwrap_or_default()
 }
 
 /// Persist the selected theme.

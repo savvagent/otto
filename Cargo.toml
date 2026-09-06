@@ -25,7 +25,7 @@ members = [
 default-members = ["crates/savvagent"]
 
 [workspace.package]
-version = "0.21.0"
+version = "0.22.1"
 edition = "2024"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/savvagent/savvagent-cli"
@@ -33,23 +33,23 @@ rust-version = "1.89"
 
 [workspace.dependencies]
 # Local crates
-savvagent-plugin = { path = "crates/savvagent-plugin", version = "0.21.0" }
-savvagent-plugin-wit = { path = "crates/savvagent-plugin-wit", version = "0.21.0" }
-savvagent-plugin-wasm = { path = "crates/savvagent-plugin-wasm", version = "0.21.0" }
-savvagent-protocol = { path = "crates/savvagent-protocol", version = "0.21.0" }
-savvagent-mcp = { path = "crates/savvagent-mcp", version = "0.21.0" }
-savvagent-host = { path = "crates/savvagent-host", version = "0.21.0" }
-provider-anthropic = { path = "crates/provider-anthropic", version = "0.21.0" }
-provider-gemini = { path = "crates/provider-gemini", version = "0.21.0" }
-provider-local = { path = "crates/provider-local", version = "0.21.0" }
-provider-openai = { path = "crates/provider-openai", version = "0.21.0" }
-tool-bash = { path = "crates/tool-bash", version = "0.21.0" }
-tool-fs = { path = "crates/tool-fs", version = "0.21.0" }
-tool-grep = { path = "crates/tool-grep", version = "0.21.0" }
-tool-lsp = { path = "crates/tool-lsp", version = "0.21.0" }
-tool-web = { path = "crates/tool-web", version = "0.21.0" }
-savvagent-fence = { path = "crates/savvagent-fence", version = "0.21.0" }
-savvagent-canvas = { path = "crates/savvagent-canvas", version = "0.21.0" }
+savvagent-plugin = { path = "crates/savvagent-plugin", version = "0.22.1" }
+savvagent-plugin-wit = { path = "crates/savvagent-plugin-wit", version = "0.22.1" }
+savvagent-plugin-wasm = { path = "crates/savvagent-plugin-wasm", version = "0.22.1" }
+savvagent-protocol = { path = "crates/savvagent-protocol", version = "0.22.1" }
+savvagent-mcp = { path = "crates/savvagent-mcp", version = "0.22.1" }
+savvagent-host = { path = "crates/savvagent-host", version = "0.22.1" }
+provider-anthropic = { path = "crates/provider-anthropic", version = "0.22.1" }
+provider-gemini = { path = "crates/provider-gemini", version = "0.22.1" }
+provider-local = { path = "crates/provider-local", version = "0.22.1" }
+provider-openai = { path = "crates/provider-openai", version = "0.22.1" }
+tool-bash = { path = "crates/tool-bash", version = "0.22.1" }
+tool-fs = { path = "crates/tool-fs", version = "0.22.1" }
+tool-grep = { path = "crates/tool-grep", version = "0.22.1" }
+tool-lsp = { path = "crates/tool-lsp", version = "0.22.1" }
+tool-web = { path = "crates/tool-web", version = "0.22.1" }
+savvagent-fence = { path = "crates/savvagent-fence", version = "0.22.1" }
+savvagent-canvas = { path = "crates/savvagent-canvas", version = "0.22.1" }
 
 # Blitz building blocks — pinned per Phase 0 spike findings
 # (`docs/superpowers/notes/2026-05-21-blitz-spike.md`). We depend on the
@@ -86,6 +86,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
+toml_edit = "0.25"
 schemars = { version = "1.2", features = ["preserve_order"] }
 
 # HTTP / MCP
@@ -192,6 +193,7 @@ ratatui = { version = "0.30", features = [
     # can auto-tail to the newest message and scroll back coherently.
     "unstable-rendered-line-info",
 ] }
+tui-spinner = "0.4.17"
 ratatui-themes = "0.2.0"
 # Markdown → ratatui Text renderer used by `internal:changelog`. We turn
 # off `highlight-code` (the default feature) to avoid pulling in syntect

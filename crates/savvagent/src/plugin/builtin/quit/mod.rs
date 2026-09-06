@@ -1,50 +1,50 @@
-//! `internal:quit` — shuts down the application cleanly.
+//! `internal:exit` — shuts down the application cleanly.
 
 use async_trait::async_trait;
 use savvagent_plugin::{
     Contributions, Effect, Manifest, Plugin, PluginError, PluginId, PluginKind, SlashSpec,
 };
 
-/// Plugin that registers the `/quit` slash command.
+/// Plugin that registers the `/exit` slash command.
 ///
-/// `/quit` emits [`Effect::Quit`], which `apply_effects` maps to
+/// `/exit` emits [`Effect::Quit`], which `apply_effects` maps to
 /// [`crate::app::App::request_quit`] (setting `should_quit = true` so the
 /// event loop exits on its next tick).
 ///
 /// Registered as [`PluginKind::Core`] so the plugins-manager screen
-/// refuses to disable it — disabling `/quit` would leave the user with no
+/// refuses to disable it — disabling `/exit` would leave the user with no
 /// in-band way to leave the TUI from the command palette.
-pub struct QuitPlugin;
+pub struct ExitPlugin;
 
-impl QuitPlugin {
-    /// Construct a new [`QuitPlugin`].
+impl ExitPlugin {
+    /// Construct a new [`ExitPlugin`].
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for QuitPlugin {
+impl Default for ExitPlugin {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl Plugin for QuitPlugin {
+impl Plugin for ExitPlugin {
     fn manifest(&self) -> Manifest {
         let mut contributions = Contributions::default();
         contributions.slash_commands = vec![SlashSpec {
-            name: "quit".into(),
-            summary: rust_i18n::t!("slash.quit-summary").to_string(),
+            name: "exit".into(),
+            summary: rust_i18n::t!("slash.exit-summary").to_string(),
             args_hint: None,
             requires_arg: false,
             suppress_prompt_segments: vec![],
         }];
         Manifest {
-            id: PluginId::new("internal:quit").expect("valid built-in id"),
-            name: "Quit".into(),
+            id: PluginId::new("internal:exit").expect("valid built-in id"),
+            name: "Exit".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            description: rust_i18n::t!("plugin.quit-description").to_string(),
+            description: rust_i18n::t!("plugin.exit-description").to_string(),
             kind: PluginKind::Core,
             contributions,
         }
@@ -59,25 +59,25 @@ impl Plugin for QuitPlugin {
 mod tests {
     use super::*;
 
-    /// `/quit` returns exactly one [`Effect::Quit`] — regression test for
-    /// the post-v0.9 hotfix where `/quit` was missing from the plugin
-    /// surface entirely and `Effect::RunSlash { name: "quit", .. }` from
+    /// `/exit` returns exactly one [`Effect::Quit`] — regression test for
+    /// the post-v0.9 hotfix where `/exit` was missing from the plugin
+    /// surface entirely and `Effect::RunSlash { name: "exit", .. }` from
     /// the palette hit `SlashError::Unknown`.
     #[tokio::test]
-    async fn quit_returns_quit_effect() {
-        let mut p = QuitPlugin::new();
-        let effs = p.handle_slash("quit", vec![]).await.unwrap();
+    async fn exit_returns_quit_effect() {
+        let mut p = ExitPlugin::new();
+        let effs = p.handle_slash("exit", vec![]).await.unwrap();
         assert_eq!(effs.len(), 1);
         assert!(matches!(effs[0], Effect::Quit));
     }
 
     #[tokio::test]
-    async fn manifest_marks_quit_as_core() {
-        let p = QuitPlugin::new();
+    async fn manifest_marks_exit_as_core() {
+        let p = ExitPlugin::new();
         let m = p.manifest();
-        assert_eq!(m.id.as_str(), "internal:quit");
+        assert_eq!(m.id.as_str(), "internal:exit");
         assert!(matches!(m.kind, PluginKind::Core));
         assert_eq!(m.contributions.slash_commands.len(), 1);
-        assert_eq!(m.contributions.slash_commands[0].name, "quit");
+        assert_eq!(m.contributions.slash_commands[0].name, "exit");
     }
 }

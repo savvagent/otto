@@ -542,7 +542,8 @@ pub struct App {
     pub live_text: String,
     /// True while a turn is in flight.
     pub is_loading: bool,
-    /// Set by `/quit` or Ctrl-C to break the event loop.
+    /// Set when the app handles [`savvagent_plugin::Effect::Quit`] so the
+    /// event loop exits on the next tick.
     pub should_quit: bool,
     /// Approximate context size (chars / 4) — naive token estimate.
     pub context_size: usize,
@@ -1426,8 +1427,8 @@ impl App {
                 needs_arg: true,
             },
             Command {
-                name: "/quit".into(),
-                description: "Quit".into(),
+                name: "/exit".into(),
+                description: "Exit".into(),
                 needs_arg: false,
             },
         ];
@@ -1693,7 +1694,7 @@ impl App {
     /// `SelectingProvider` InputMode for `/connect`) or are genuinely
     /// unknown.
     ///
-    /// The legacy arms for `/clear`, `/save`, `/view`, `/edit`, `/quit`
+    /// The legacy arms for `/clear`, `/save`, `/view`, `/edit`, `/exit`
     /// were removed once their plugin counterparts shipped (PR 5, PR 4,
     /// PR 8 hotfix): leaving the legacy arms intact meant disabling the
     /// owning plugin in `/plugins` had no effect — the slash was still
@@ -2250,6 +2251,7 @@ mod tests {
     async fn startup_pushes_html_canvas_segment_to_host() {
         let _lock = crate::test_helpers::HOME_LOCK.lock().unwrap();
         let set = crate::plugin::register_builtins(
+            std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::BTreeMap::new())),
             std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
@@ -2259,6 +2261,8 @@ mod tests {
             std::sync::Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
                 "/t.json",
             ))),
+            crate::McpManagerSeed::default(),
+            vec![],
         );
         let registry = crate::plugin::registry::PluginRegistry::new(set);
         let segments = registry.active_prompt_segments();

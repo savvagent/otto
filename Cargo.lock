@@ -4468,6 +4468,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-connect-fixture"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "rmcp",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5759,7 +5769,7 @@ dependencies = [
 
 [[package]]
 name = "provider-anthropic"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5782,7 +5792,7 @@ dependencies = [
 
 [[package]]
 name = "provider-gemini"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5805,7 +5815,7 @@ dependencies = [
 
 [[package]]
 name = "provider-local"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5825,7 +5835,7 @@ dependencies = [
 
 [[package]]
 name = "provider-openai"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6941,7 +6951,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6990,6 +7000,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "toml",
+ "toml_edit 0.25.11+spec-1.1.0",
  "tool-bash",
  "tool-fs",
  "tool-grep",
@@ -6998,6 +7009,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tui-markdown",
+ "tui-spinner",
  "tui-textarea-2",
  "which",
  "zip 5.1.1",
@@ -7005,7 +7017,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-canvas"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -7024,16 +7036,17 @@ dependencies = [
 
 [[package]]
 name = "savvagent-fence"
-version = "0.21.0"
+version = "0.22.1"
 
 [[package]]
 name = "savvagent-host"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
  "axum",
  "futures",
+ "mcp-connect-fixture",
  "provider-anthropic",
  "provider-gemini",
  "provider-openai",
@@ -7057,7 +7070,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-mcp"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "savvagent-protocol",
@@ -7070,7 +7083,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-plugin"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "async-trait",
  "savvagent-protocol",
@@ -7081,7 +7094,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-plugin-wasm"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7107,14 +7120,14 @@ dependencies = [
 
 [[package]]
 name = "savvagent-plugin-wit"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "wit-parser 0.250.0",
 ]
 
 [[package]]
 name = "savvagent-protocol"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "schemars",
  "serde",
@@ -8614,6 +8627,7 @@ dependencies = [
  "indexmap",
  "toml_datetime 1.1.1+spec-1.1.0",
  "toml_parser",
+ "toml_writer",
  "winnow 1.0.2",
 ]
 
@@ -8633,8 +8647,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
+name = "toml_writer"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
+
+[[package]]
 name = "tool-bash"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "rmcp",
@@ -8650,7 +8670,7 @@ dependencies = [
 
 [[package]]
 name = "tool-fs"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "globset",
@@ -8668,7 +8688,7 @@ dependencies = [
 
 [[package]]
 name = "tool-grep"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "grep-matcher",
@@ -8688,7 +8708,7 @@ dependencies = [
 
 [[package]]
 name = "tool-lsp"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8709,7 +8729,7 @@ dependencies = [
 
 [[package]]
 name = "tool-web"
-version = "0.21.0"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -8884,6 +8904,15 @@ dependencies = [
  "ratatui 0.29.0",
  "rstest",
  "tracing",
+]
+
+[[package]]
+name = "tui-spinner"
+version = "0.4.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f64d1f5cd083a354bd19e8b40bf9355768822eaf9122e6371e4cb2d77a9df8e2"
+dependencies = [
+ "ratatui 0.30.0",
 ]
 
 [[package]]

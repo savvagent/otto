@@ -176,8 +176,10 @@ async fn list_then_read_then_summarize() {
         "claude-test",
     )
     .with_tool(ToolEndpoint::Stdio {
+        name: "fs".to_string(),
         command: bin,
         args: vec![],
+        env: Default::default(),
     })
     .with_project_root(project_path.clone());
 
@@ -245,8 +247,10 @@ async fn loop_limit_kicks_in() {
         "claude-test",
     )
     .with_tool(ToolEndpoint::Stdio {
+        name: "fs".to_string(),
         command: bin,
         args: vec![],
+        env: Default::default(),
     })
     .with_max_iterations(3);
 

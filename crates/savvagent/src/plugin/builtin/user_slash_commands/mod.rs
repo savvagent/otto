@@ -103,6 +103,17 @@ impl Plugin for UserSlashCommandsPlugin {
         });
         let idx = self.index_snapshot();
         for d in idx.commands.values() {
+            // `/exit` is a reserved built-in slash command. Skip a
+            // user-defined `commands/exit.md` so startup keeps the core
+            // session-termination command instead of failing the whole app on
+            // a manifest conflict.
+            if d.name == "exit" {
+                tracing::warn!(
+                    path = %d.path.display(),
+                    "skipping reserved user slash command `/exit`"
+                );
+                continue;
+            }
             let summary = d
                 .frontmatter
                 .description

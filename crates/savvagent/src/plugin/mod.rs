@@ -83,7 +83,9 @@ pub(crate) use external::register_builtins_with_external;
 /// `take_client` map, so both code paths mutate the same state — the
 /// dual-instance bug that previously broke `/connect <provider>` is now
 /// architecturally impossible.
+#[allow(clippy::too_many_arguments)] // Each arg is a distinct bootstrap-time dependency.
 pub(crate) fn register_builtins(
+    host_slot: crate::HostSlot,
     trust_levels: builtin::user_slash_commands::TrustMap,
     user_hooks_index: std::sync::Arc<
         tokio::sync::RwLock<crate::plugin::builtin::user_hooks::discovery::HooksIndex>,
@@ -91,6 +93,8 @@ pub(crate) fn register_builtins(
     session_id: String,
     project_root: std::path::PathBuf,
     transcript_path: std::sync::Arc<tokio::sync::RwLock<std::path::PathBuf>>,
+    mcp_manager_seed: crate::McpManagerSeed,
+    mcp_statuses: Vec<savvagent_host::ToolServerStatus>,
 ) -> BuiltinSet {
     use builtin::provider_common::ProviderEntry;
 
@@ -110,11 +114,16 @@ pub(crate) fn register_builtins(
         Box::new(builtin::home_tips::HomeTipsPlugin::new()),
         Box::new(builtin::language::LanguagePlugin::new()),
         Box::new(builtin::lsp_installer::LspInstallerPlugin::new()),
+        Box::new(builtin::mcp::McpPlugin::new(
+            mcp_manager_seed,
+            mcp_statuses,
+            host_slot,
+        )),
         Box::new(builtin::migration_picker::MigrationPickerPlugin::new()),
         Box::new(builtin::model::ModelPlugin::new()),
         Box::new(builtin::plugins_manager::PluginsManagerPlugin::new()),
         Box::new(builtin::prompt_keybindings::PromptKeybindingsPlugin::new()),
-        Box::new(builtin::quit::QuitPlugin::new()),
+        Box::new(builtin::quit::ExitPlugin::new()),
         Box::new(builtin::resume::ResumePlugin::new()),
         Box::new(builtin::route::RoutePlugin::new()),
         Box::new(builtin::save::SavePlugin::new()),
@@ -172,6 +181,7 @@ mod tests {
         use std::collections::BTreeMap;
         use std::sync::Arc;
         let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
             Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
             Arc::new(tokio::sync::RwLock::new(
                 crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
@@ -181,6 +191,8 @@ mod tests {
             Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
                 "/t.json",
             ))),
+            crate::McpManagerSeed::default(),
+            vec![],
         );
         let registry = PluginRegistry::new(set);
         let indexes = Indexes::build(&registry).await.expect("indexes build");
@@ -204,6 +216,7 @@ mod tests {
         use std::collections::BTreeMap;
         use std::sync::Arc;
         let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
             Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
             Arc::new(tokio::sync::RwLock::new(
                 crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
@@ -213,6 +226,8 @@ mod tests {
             Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
                 "/t.json",
             ))),
+            crate::McpManagerSeed::default(),
+            vec![],
         );
         // Non-provider plugins from PR 1..PR 5 + themes (PR 6) + plugins-manager (PR 8)
         // + migration-picker (Task 9) + tool-web-summary (web tools).
@@ -230,11 +245,12 @@ mod tests {
             "internal:home-tips",
             "internal:language",
             "internal:lsp-installer",
+            "internal:mcp",
             "internal:migration-picker",
             "internal:model",
             "internal:plugins-manager",
             "internal:prompt-keybindings",
-            "internal:quit",
+            "internal:exit",
             "internal:resume",
             "internal:route",
             "internal:save",
@@ -255,7 +271,7 @@ mod tests {
                 "missing non-provider plugin id: {expected}"
             );
         }
-        assert_eq!(set.plugins.len(), 27);
+        assert_eq!(set.plugins.len(), 28);
 
         // `internal:user-hooks` lives in `hook_entries`, not the `plugins`
         // Vec. The dual-Arc HookEntry pattern means it still appears in
@@ -307,15 +323,16 @@ mod tests {
         // tool-web-summary adds 1 more, bringing non-provider count to 30;
         // removing view-file, edit-file, and editor-keybindings drops the
         // non-provider count from 30 back down to 27;
+        // `/mcp` adds 1 more, bringing non-provider count to 28;
         // sub-project B (user-hooks) moves to `hook_entries` (not counted
         // in the plugins Vec) but still surfaces in the registry's plugins
         // map via the dual-Arc HookEntry, contributing 1 more registry
-        // entry; total registry size is 27 + 4 + 1 = 32.
+        // entry; total registry size is 28 + 4 + 1 = 33.
         let reg = PluginRegistry::new(set);
         assert_eq!(
             reg.len(),
-            32,
-            "registry should have 27 non-provider + 4 provider + 1 hook plugin"
+            33,
+            "registry should have 28 non-provider + 4 provider + 1 hook plugin"
         );
         assert_eq!(
             reg.provider_count(),
@@ -353,6 +370,7 @@ mod tests {
         use std::collections::BTreeMap;
         use std::sync::Arc;
         let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
             Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
             Arc::new(tokio::sync::RwLock::new(
                 crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
@@ -362,6 +380,8 @@ mod tests {
             Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
                 "/t.json",
             ))),
+            crate::McpManagerSeed::default(),
+            vec![],
         );
         assert_eq!(set.hook_entries.len(), 1);
         // The hook-view exposes the same manifest as the plugin-view

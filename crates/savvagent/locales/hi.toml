@@ -257,7 +257,7 @@ language-summary           = "UI भाषा बदलें"
 model-summary              = "सक्रिय प्रदाता पर अगले मॉडल पर स्विच करें"
 plugins-summary            = "Plugins प्रबंधित करें"
 prompt-keybindings-summary = "प्रॉम्प्ट कीबाइंडिंग दिखाएं"
-quit-summary               = "savvagent से बाहर निकलें"
+exit-summary               = "savvagent से बाहर निकलें"
 resume-summary             = "सहेजी हुई ट्रांसक्रिप्ट पुनः प्रारंभ करें"
 # TODO: translate (Phase 5)
 route-summary              = "Manage routing rules (reload | show)"
@@ -276,7 +276,7 @@ language-description      = "/language + locale कैटलॉग (en/es/pt/hi)
 model-description         = "सक्रिय प्रदाता पर अगले मॉडल पर चक्र"
 plugins-manager-description = "वैकल्पिक plugins सक्षम/निष्क्रिय करें"
 provider-anthropic-description = "Anthropic प्रदाता (Claude परिवार)"
-quit-description          = "एप्लिकेशन को साफ़-सुथरे ढंग से बंद करें"
+exit-description          = "एप्लिकेशन को साफ़-सुथरे ढंग से बंद करें"
 resume-description        = "पुनः प्रारंभ के लिए सहेजी हुई ट्रांसक्रिप्ट चुनें"
 # TODO: translate (Phase 5)
 route-description         = "User routing rules from ~/.savvagent/routing.toml"

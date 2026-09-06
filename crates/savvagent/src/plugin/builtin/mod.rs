@@ -13,6 +13,9 @@ pub mod command_palette;
 /// Provider connection picker; opened via `/connect` with no args.
 pub mod connect;
 
+/// MCP server manager; opened via `/mcp`.
+pub mod mcp;
+
 /// Footer widget: sandbox state + turn state + working dir + key reminder.
 pub mod home_footer;
 
@@ -46,7 +49,7 @@ pub mod model;
 /// Persists per-user state in `~/.savvagent/plugins.toml`.
 pub mod plugins_manager;
 
-/// Shuts down the TUI; registered as `/quit`. Core plugin (non-disableable).
+/// Shuts down the TUI; registered as `/exit`. Core plugin (non-disableable).
 pub mod quit;
 
 /// Transcript picker; opened via `/resume` with an in-memory cache backed

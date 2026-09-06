@@ -94,7 +94,7 @@ struct RuntimeConfig {
 
 impl RuntimeConfig {
     fn from_path(path: &std::path::Path) -> Self {
-        let cfg = ConfigFile::load_or_default(path);
+        let cfg = ConfigFile::load_or_default(path).config;
         Self {
             disabled: cfg.update.disabled,
             periodic_interval: Duration::from_secs(cfg.effective_update_periodic_interval_secs()),
