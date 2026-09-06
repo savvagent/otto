@@ -1312,12 +1312,13 @@ fn footer_center_lines(
     tick: u64,
     palette: Palette,
 ) -> Vec<Line<'static>> {
+    let mut spinner_attached = false;
     center
         .iter()
         .cloned()
         .map(|line| {
             let mut line = crate::plugin::convert::styled_line_to_ratatui(line, &palette);
-            if !turn_active || line.spans.is_empty() || !footer_center_line_is_turn_working(&line) {
+            if !turn_active || spinner_attached || line.spans.is_empty() {
                 return line;
             }
 
@@ -1328,29 +1329,10 @@ fn footer_center_lines(
 
             line.spans.push(Span::raw(" "));
             line.spans.extend(spinner);
+            spinner_attached = true;
             line
         })
         .collect()
-}
-
-fn footer_center_line_is_turn_working(line: &Line<'_>) -> bool {
-    let sentinel = "__SAVVAGENT_TURN_ID__";
-    let template = rust_i18n::t!("footer.turn-working", id = sentinel).to_string();
-    let Some((prefix, suffix)) = template.split_once(sentinel) else {
-        return false;
-    };
-
-    let text: String = line
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect();
-    if !text.starts_with(prefix) || !text.ends_with(suffix) {
-        return false;
-    }
-
-    let id = &text[prefix.len()..text.len() - suffix.len()];
-    !id.is_empty() && id.chars().all(|c| c.is_ascii_digit())
 }
 
 fn footer_spinner_spans(tick: u64, palette: Palette) -> Vec<Span<'static>> {
@@ -1706,28 +1688,16 @@ mod tests {
     }
 
     #[test]
-    fn footer_center_lines_loading_idle_text_stays_idle_without_spinner() {
-        let idle = rust_i18n::t!("footer.idle").to_string();
-        let center = vec![one_span_line(&idle)];
-        let palette = palette();
-
-        let out = footer_center_lines(&center, true, 0, palette);
-        let expected = vec![crate::plugin::convert::styled_line_to_ratatui(
-            center[0].clone(),
-            &palette,
-        )];
-
-        assert_eq!(out, expected);
-    }
-
-    #[test]
-    fn footer_center_line_is_turn_working_matches_localized_turn_label_only() {
+    fn footer_center_lines_skip_empty_leader_before_attaching_spinner() {
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let idle = rust_i18n::t!("footer.idle").to_string();
+        let center = vec![StyledLine { spans: vec![] }, one_span_line(&working)];
 
-        assert!(footer_center_line_is_turn_working(&Line::from(working)));
-        assert!(!footer_center_line_is_turn_working(&Line::from(idle)));
-        assert!(!footer_center_line_is_turn_working(&Line::from("working")));
+        let out = footer_center_lines(&center, true, 0, palette());
+        assert!(out[0].spans.is_empty());
+
+        let rendered = joined_ratatui(&out[1]);
+        assert!(rendered.starts_with(&working));
+        assert_ne!(rendered, working);
     }
 
     // Canvas overlay row math --------------------------------------------
