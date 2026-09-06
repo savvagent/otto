@@ -49,6 +49,10 @@ plan implements it exactly.
   comments.
 - `crates/savvagent/src/plugin/mod.rs` — update builtin registration expectations from
   `internal:quit` to `internal:exit`.
+- `crates/savvagent/src/plugin/manifests.rs` — keep startup manifest conflicts strict in general
+  while skipping only discovered user-command collisions against the new built-in `/exit`.
+- `crates/savvagent/src/main.rs` — cover the startup non-crash path for conflicting `commands/exit.md`
+  and document the intentional test-only HOME-lock lint suppression.
 - `crates/savvagent/locales/en.toml`
 - `crates/savvagent/locales/es.toml`
 - `crates/savvagent/locales/pt.toml`
@@ -65,6 +69,8 @@ plan implements it exactly.
 - Modify: `crates/savvagent/src/plugin/effects.rs`
 - Modify: `crates/savvagent/src/app.rs`
 - Modify: `crates/savvagent/src/plugin/mod.rs`
+- Modify: `crates/savvagent/src/plugin/manifests.rs`
+- Modify: `crates/savvagent/src/main.rs`
 - Modify: `crates/savvagent/locales/en.toml`
 - Modify: `crates/savvagent/locales/es.toml`
 - Modify: `crates/savvagent/locales/pt.toml`
@@ -84,7 +90,11 @@ plan implements it exactly.
 - [ ] Implement the rename in the listed files: expose `/exit` as the command name, rename the core
       builtin plugin id to `internal:exit`, update the home command list and palette fixture, revise
       locale-rendered strings, and update README documentation. Keep `Effect::Quit`,
-      `App::request_quit`, Ctrl-C, and Ctrl-D behavior unchanged.
+      `App::request_quit`, Ctrl-C, and Ctrl-D behavior unchanged. If the rename exposes a startup
+      conflict with discovered user commands named `exit`, make that path graceful by keeping the
+      builtin owner and skipping only the conflicting discovered command entry; do not weaken the
+      hard-error behavior for the plugin's own built-in `/reload-commands` surface or for other
+      plugin conflicts.
 - [ ] Grep for lingering public-surface references:
       `rg -n '/quit|internal:quit|name: "quit"|quit-summary|quit-description' crates/savvagent/src crates/savvagent/locales README.md`
       and confirm only intentional historical/non-user-facing references remain, if any.

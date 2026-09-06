@@ -56,6 +56,11 @@ surface and test that hard-codes the old spelling.
    may stay `quit-summary` / `quit-description` if that avoids unnecessary churn, but the rendered
    strings must say "Exit" / "/exit". If renaming the locale keys proves low-risk, do it in the same
    change for consistency.
+6. Guard the more-common `/exit` spelling against user-defined command collisions at startup. A
+   `commands/exit.md` file should no longer panic the app during `Indexes::build`; instead, the
+   built-in `internal:exit` command keeps ownership and the conflicting discovered user command is
+   skipped, matching the existing `/reload-commands` reindex behavior. The static built-in
+   `/reload-commands` contribution itself remains a hard conflict if a user tries to shadow it.
 
 ## Scope
 
@@ -92,8 +97,10 @@ change for a core built-in plugin, not as a separately versioned public ABI surf
 - `crates/savvagent/src/tui.rs` does not implement the slash command; it only contains a generic
   restore comment about quitting from the alternate screen. Functional changes are not expected
   there unless wording cleanup is warranted.
-- `crates/savvagent/src/main.rs` does not need behavioral changes for this rename because the quit
-  behavior is already expressed through `Effect::Quit`; only the slash-command producer changes.
+- The rename itself does not need new runtime shutdown behavior in `crates/savvagent/src/main.rs`,
+  because quitting is already expressed through `Effect::Quit`; however, startup regression coverage
+  and user-command collision handling may still need small `main.rs` / `plugin/manifests.rs` changes
+  once `/exit` becomes the built-in spelling.
 
 ## Assumptions
 
@@ -115,6 +122,11 @@ change for a core built-in plugin, not as a separately versioned public ABI surf
   to `Effect::Quit`; the palette regression test should cover that exact path.
 - Any code comment or test that still claims `/quit` is the public command would be a documentation
   regression even if behavior is correct.
+- A project-local or user-wide `commands/exit.md` must not crash startup now that `/exit` is the
+  built-in command; the builtin should win and the conflicting discovered command should be skipped.
+- A user-defined `reload-commands.md` must still fail hard, because that collides with the
+  `internal:user-slash-commands` plugin's own built-in static slash rather than with a discovered
+  command that can be safely skipped.
 - If locale-key renaming would force wide churn across all translations for no runtime benefit,
   keeping the key names while updating their rendered strings is acceptable; consistency of rendered
   output matters more than internal i18n key names.
