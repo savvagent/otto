@@ -28,6 +28,11 @@ boundary changes and PATCH captures fixes).
 - The public host config surface for tool servers now covers both stdio and HTTP transports, and
   the TUI preserves malformed neighboring `[[mcp_servers]]` rows/comments when `/mcp` edits
   `config.toml`.
+- **Breaking (on-disk config surface):** language, theme, and self-update preferences now live in
+  `~/.savvagent/config.toml` under `[language]`, `[theme]`, and `[update]`. The separate
+  `~/.savvagent/language.toml` and `~/.savvagent/theme.toml` files are removed without back-compat
+  migration because this repo still has no user base to migrate. `SAVVAGENT_NO_UPDATE_CHECK`
+  remains available as an override for CI and scripting. (#21)
 
 ## 0.22.1 - 2026-09-06
 
