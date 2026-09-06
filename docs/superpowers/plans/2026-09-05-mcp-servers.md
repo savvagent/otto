@@ -275,10 +275,10 @@ recent released heading when the release PR (Task 9's final note) is actually op
 - Modify: `crates/savvagent/Cargo.toml`, root `Cargo.toml`
 - Modify: `crates/savvagent/src/main.rs` (module registration only, `mod mcp_config_writer;`)
 
-- [ ] Add `toml_edit = "0.25"` to root `Cargo.toml`'s `[workspace.dependencies]`; add
+- [x] Add `toml_edit = "0.25"` to root `Cargo.toml`'s `[workspace.dependencies]`; add
       `toml_edit.workspace = true` to `crates/savvagent/Cargo.toml`. Run `cargo check -p savvagent` to
       confirm the dependency resolves.
-- [ ] Implement `mcp_config_writer.rs` with two public functions operating on a `config.toml` path:
+- [x] Implement `mcp_config_writer.rs` with two public functions operating on a `config.toml` path:
       `pub fn add_server(path: &Path, entry_toml: toml_edit::Table) -> std::io::Result<()>` and
       `pub fn remove_server(path: &Path, name: &str) -> std::io::Result<bool>` (returns whether a
       matching row was found and removed). Both: read the file fresh via `std::fs::read_to_string`
@@ -287,20 +287,20 @@ recent released heading when the release PR (Task 9's final note) is actually op
       create, for `add_server`, if absent) the top-level `mcp_servers` array-of-tables via
       `as_array_of_tables_mut`, mutate only that node (`push` for add; find-by-`name`-key-and-remove
       for remove — do not touch any other node), write back via `document.to_string()`.
-- [ ] Add a helper to build a `toml_edit::Table` from a validated `McpServerEntry`-shaped input (the
+- [x] Add a helper to build a `toml_edit::Table` from a validated `McpServerEntry`-shaped input (the
       `/mcp` add form's fields), setting `transport`/`name`/`command`/`args`/`env` or
       `transport`/`name`/`url`/`auth` keys directly as `toml_edit::Item`s (not via serde — this module
       never round-trips through `McpServerEntry`, exactly per spec).
-- [ ] Regression test (the one explicitly required by spec §3): write a `config.toml` with one valid
+- [x] Regression test (the one explicitly required by spec §3): write a `config.toml` with one valid
       `[[mcp_servers]]` row, one malformed row (unrecognized `transport` value) preceded by a
       hand-written comment, call `add_server` to append a third row, then read the raw file text back
       and assert the malformed row's original text *and* its preceding comment are byte-for-byte
       unchanged, and the new row is present. A second test does the same for `remove_server`,
       removing the valid row by name and confirming the malformed row + comment survive untouched.
-- [ ] Test: `remove_server` on a name that doesn't exist returns `Ok(false)` without modifying the
+- [x] Test: `remove_server` on a name that doesn't exist returns `Ok(false)` without modifying the
       file (idempotent no-op, matching `creds::mcp_delete`'s idempotency).
-- [ ] Run `cargo test -p savvagent mcp_config_writer`. Confirm green.
-- [ ] Commit: `feat(config): add toml_edit-based mcp_servers write path`.
+- [x] Run `cargo test -p savvagent mcp_config_writer`. Confirm green.
+- [x] Commit: `feat(config): add toml_edit-based mcp_servers write path`.
 
 ## Task 5: Keyring additions (`crates/savvagent/src/creds.rs`)
 

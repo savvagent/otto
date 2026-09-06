@@ -40,6 +40,7 @@ mod canvas_input;
 mod config_file;
 mod creds;
 mod egui_app;
+mod mcp_config_writer;
 mod migration;
 mod models_pref;
 mod palette;
