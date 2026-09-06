@@ -375,11 +375,11 @@ recent released heading when the release PR (Task 9's final note) is actually op
   `crates/savvagent/src/plugin/external.rs` (`register_builtins_with_external`'s parameter list),
   `crates/savvagent/src/main.rs` (`build_app_with_host`'s call into `register_builtins_with_external`)
 
-- [ ] Read `crates/savvagent/src/plugin/builtin/connect/mod.rs` and `screen.rs` in full immediately
+- [x] Read `crates/savvagent/src/plugin/builtin/connect/mod.rs` and `screen.rs` in full immediately
       before starting this task (already read once during spec drafting — re-read for exact ABI
       shape: `Manifest`/`Contributions`/`SlashSpec`/`ScreenSpec`/`ScreenLayout`/`Effect::OpenScreen`/
       `create_screen`).
-- [ ] **Plugin-ABI status bridge (blocking fix from plan-review round 2 — replaces the round-1 draft's
+- [x] **Plugin-ABI status bridge (blocking fix from plan-review round 2 — replaces the round-1 draft's
       `HostEvent`-based design, which round 2 correctly flagged as (a) requiring matching changes to
       `crates/savvagent-plugin-wit/wit/shared.wit`'s `hook-kind` variant, both directions of
       `crates/savvagent-plugin-wasm/src/convert.rs`'s exhaustive `HookKind` conversions, and both
@@ -427,10 +427,10 @@ recent released heading when the release PR (Task 9's final note) is actually op
          `skip_notes` entry), never conflated with `ConnectState::Failed` (which means "we tried to
          connect and it failed," a different condition from "we never tried because
          validation/secret-resolution failed first").
-- [ ] `mod.rs`: `McpPlugin` registers slash command `"mcp"` (no args → open `mcp.manager` screen,
+- [x] `mod.rs`: `McpPlugin` registers slash command `"mcp"` (no args → open `mcp.manager` screen,
       matching `connect`'s no-arg behavior) and screen id `"mcp.manager"`. `create_screen` builds
       `McpManagerScreen` from the seeded `McpManagerSeed` + status list, per the bridge design above.
-- [ ] `screen.rs`: `McpManagerScreen` lists configured servers (name, transport, status) — reuse
+- [x] `screen.rs`: `McpManagerScreen` lists configured servers (name, transport, status) — reuse
       whatever list/table rendering helper `connect/screen.rs`'s `ConnectPickerScreen` or another
       existing picker screen already provides, rather than writing new ratatui rendering from scratch.
       Key handling: `a` opens an add sub-flow (name / transport / command+args or url / optional
@@ -441,7 +441,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       "restart savvagent to apply changes" note either way once the config write succeeds, and report
       "server removed; stale credential could not be deleted" if the keyring delete step fails after a
       successful config removal. `r` re-reads status only (no live reconnect).
-- [ ] Register `McpPlugin` in `crates/savvagent/src/plugin/builtin/mod.rs` (`pub mod mcp;` with a doc
+- [x] Register `McpPlugin` in `crates/savvagent/src/plugin/builtin/mod.rs` (`pub mod mcp;` with a doc
       comment) and in `crates/savvagent/src/plugin/mod.rs`'s `register_builtins` plugin vec; update
       `register_builtins_pr8_complete` (and any other test asserting the builtin id list/count) to
       include `"internal:mcp"` (or whatever id convention this plugin uses — match `connect`'s
@@ -449,13 +449,13 @@ recent released heading when the release PR (Task 9's final note) is actually op
       otherwise follow the Optional-plugin registration pattern used by e.g. `lsp_installer` — decide
       based on whether the spec implies core-vs-optional, defaulting to Core since `/connect` is
       Core and `/mcp` is its direct analog).
-- [ ] Add plugin-level unit tests mirroring `connect/mod.rs`'s test module shape: manifest exposes the
+- [x] Add plugin-level unit tests mirroring `connect/mod.rs`'s test module shape: manifest exposes the
       `"mcp"` slash + `"mcp.manager"` screen; `handle_slash` with no args returns
       `Effect::OpenScreen`; screen key handling for add/remove (mock/stub the config-writer and
       keyring calls behind whatever seam is idiomatic here — check how other builtins with
       side-effecting slash handlers are tested, e.g. `save`/`route`, for the mocking convention before
       inventing a new one).
-- [ ] Run `cargo test -p savvagent plugin::builtin::mcp`. Confirm green.
+- [x] Run `cargo test -p savvagent plugin::builtin::mcp`. Confirm green.
 - [ ] Commit: `feat: add /mcp slash command and manager screen`.
 
 ## Task 8: Docs (`README.md`, `PRD.md`, `CLAUDE.md`, `CHANGELOG.md`)

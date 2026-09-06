@@ -2191,6 +2191,7 @@ mod tests {
         use std::sync::Arc;
 
         let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
             Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
             Arc::new(tokio::sync::RwLock::new(
                 crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
@@ -2200,6 +2201,8 @@ mod tests {
             Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
                 "/t.json",
             ))),
+            crate::McpManagerSeed::default(),
+            vec![],
         );
         let registry = PluginRegistry::new(set);
         let indexes = Indexes::build(&registry).await.expect("indexes build");
@@ -2250,6 +2253,7 @@ mod tests {
         use std::sync::Arc;
 
         let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
             Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
             Arc::new(tokio::sync::RwLock::new(
                 crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
@@ -2259,6 +2263,8 @@ mod tests {
             Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
                 "/t.json",
             ))),
+            crate::McpManagerSeed::default(),
+            vec![],
         );
         let registry = PluginRegistry::new(set);
         let registry = std::sync::Arc::new(tokio::sync::RwLock::new(registry));

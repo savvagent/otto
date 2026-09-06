@@ -66,7 +66,10 @@ pub use session::{
     TurnEvent, TurnOutcome,
 };
 pub use subhost::{SUBAGENT_NAME, SubHost, SubHostError, max_depth_from_env};
-pub use tools::{BashNetContext, BashNetResolver, NetOverride, SubagentContext, ToolCallContext};
+pub use tools::{
+    BashNetContext, BashNetResolver, ConnectState, NetOverride, SubagentContext, ToolCallContext,
+    ToolServerStatus, TransportKind,
+};
 
 /// `PreToolUseGate` trait and `PreToolDecision` enum.
 pub mod pre_tool_gate;

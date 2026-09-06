@@ -389,22 +389,32 @@ struct ActiveBashServer {
 /// Transport kind for a configured tool server endpoint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportKind {
+    /// Child-process stdio transport.
     Stdio,
+    /// Remote MCP Streamable HTTP transport.
     Http,
 }
 
 /// Outcome of attempting to connect one configured tool server endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectState {
+    /// Endpoint connected and at least one handshake completed.
     Connected,
-    Failed { reason: String },
+    /// Endpoint failed before it could register its tool surface.
+    Failed {
+        /// Human-readable failure reason captured during startup.
+        reason: String,
+    },
 }
 
 /// Startup status for one configured tool server endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolServerStatus {
+    /// Stable configured endpoint name.
     pub name: String,
+    /// Transport used for this endpoint.
     pub transport: TransportKind,
+    /// Observed connect result for this endpoint.
     pub state: ConnectState,
 }
 

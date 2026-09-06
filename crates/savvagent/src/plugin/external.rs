@@ -68,6 +68,7 @@ use crate::providers::{ProviderSpec, install_external_providers};
 /// only — the alternative would be a silent reset of every prior trust
 /// decision, which the spec forbids.
 pub(crate) async fn register_builtins_with_external(
+    host_slot: crate::HostSlot,
     trust_levels: builtin::user_slash_commands::TrustMap,
     user_hooks_index: std::sync::Arc<
         tokio::sync::RwLock<crate::plugin::builtin::user_hooks::discovery::HooksIndex>,
@@ -75,16 +76,21 @@ pub(crate) async fn register_builtins_with_external(
     session_id: String,
     project_root: std::path::PathBuf,
     transcript_path: std::sync::Arc<tokio::sync::RwLock<std::path::PathBuf>>,
+    mcp_manager_seed: crate::McpManagerSeed,
+    mcp_statuses: Vec<savvagent_host::ToolServerStatus>,
     home_dir: Option<&Path>,
     theme: ThemeProvider,
 ) -> (BuiltinSet, Vec<String>) {
     // Step 1: built-ins.
     let mut set = crate::plugin::register_builtins(
+        host_slot,
         trust_levels,
         user_hooks_index,
         session_id,
         project_root.clone(),
         transcript_path,
+        mcp_manager_seed,
+        mcp_statuses,
     );
 
     // Step 2: wasm plugins. Bail out gracefully on hard failures so the

@@ -306,16 +306,27 @@ pub(crate) async fn build_app_with_host(
     project_root: std::path::PathBuf,
     tool_bins: ToolBins,
 ) -> Result<(App, HostSlot, std::path::PathBuf, ToolBins)> {
-    let (header_model, initial_provider, startup_notes) = match &initial {
+    let (header_model, initial_provider, startup_notes, mcp_manager_seed) = match &initial {
         Some(boot) => (
             boot.header_model.clone(),
             boot.provider_id,
             boot.startup_notes.clone(),
+            boot.mcp_manager_seed.clone(),
         ),
-        None => ("(disconnected)".to_string(), None, Vec::new()),
+        None => (
+            "(disconnected)".to_string(),
+            None,
+            Vec::new(),
+            McpManagerSeed::default(),
+        ),
     };
 
     let host_slot: HostSlot = Arc::new(RwLock::new(initial.map(|boot| boot.host)));
+    let mcp_statuses = if let Some(host) = current_host(&host_slot).await {
+        host.tool_server_statuses().await
+    } else {
+        vec![]
+    };
 
     let transcript_dir = transcript_dir();
 
@@ -350,11 +361,14 @@ pub(crate) async fn build_app_with_host(
         let wasm_theme = savvagent_plugin_wasm::host_imports::theme::provider(Vec::new());
         let home_dir = dirs::home_dir();
         let (set, external_warnings) = plugin::register_builtins_with_external(
+            host_slot.clone(),
             app.trust_levels.clone(),
             app.user_hooks_index.clone(),
             app.session_id.clone(),
             project_root.clone(),
             app.transcript_path.clone(),
+            mcp_manager_seed,
+            mcp_statuses,
             home_dir.as_deref(),
             wasm_theme,
         )

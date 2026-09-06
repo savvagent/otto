@@ -2247,6 +2247,7 @@ mod tests {
     async fn startup_pushes_html_canvas_segment_to_host() {
         let _lock = crate::test_helpers::HOME_LOCK.lock().unwrap();
         let set = crate::plugin::register_builtins(
+            std::sync::Arc::new(tokio::sync::RwLock::new(None)),
             std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::BTreeMap::new())),
             std::sync::Arc::new(tokio::sync::RwLock::new(
                 crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
@@ -2256,6 +2257,8 @@ mod tests {
             std::sync::Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
                 "/t.json",
             ))),
+            crate::McpManagerSeed::default(),
+            vec![],
         );
         let registry = crate::plugin::registry::PluginRegistry::new(set);
         let segments = registry.active_prompt_segments();
