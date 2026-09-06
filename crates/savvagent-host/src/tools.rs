@@ -410,7 +410,12 @@ impl ToolRegistry {
 
         for ep in endpoints {
             match ep {
-                ToolEndpoint::Stdio { command, args } => {
+                ToolEndpoint::Stdio {
+                    name: _name,
+                    command,
+                    args,
+                    env: _env,
+                } => {
                     let is_bash = command.to_string_lossy().contains(TOOL_BASH_MARKER);
                     if is_bash {
                         // Probe spawn: spawn bash with allow_net=false just
@@ -518,6 +523,15 @@ impl ToolRegistry {
                         }
                         eager_servers.push(ToolServer { label, service });
                     }
+                }
+                // TODO(Task 2): implement the Http transport arm (spawn a
+                // Streamable HTTP MCP client, attach `auth`, and merge its
+                // tools the same way as the eager stdio arm above). Placeholder
+                // so the match stays exhaustive after Task 1's new variant.
+                ToolEndpoint::Http { name, .. } => {
+                    anyhow::bail!(
+                        "ToolEndpoint::Http (`{name}`) is not yet supported by ToolRegistry::connect"
+                    );
                 }
             }
         }

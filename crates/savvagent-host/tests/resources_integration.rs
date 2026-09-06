@@ -95,8 +95,10 @@ async fn fixture_publishes_resources_and_host_emits_turn_events() {
     .with_project_root(project_root_path.clone())
     .with_policy(PermissionPolicy::transient(project_root_path))
     .with_tool(ToolEndpoint::Stdio {
+        name: "fixture".to_string(),
         command: fixture_bin,
         args: Vec::new(),
+        env: Default::default(),
     });
 
     let provider: Box<dyn ProviderClient + Send + Sync> = Box::new(ScriptedToolUseProvider::new());

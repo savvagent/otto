@@ -124,19 +124,21 @@ pub(crate) struct ToolBins {
 impl ToolBins {
     /// Append every populated entry as a stdio [`ToolEndpoint`] on `config`.
     fn apply(&self, mut config: HostConfig) -> HostConfig {
-        for path in [
-            self.fs.as_deref(),
-            self.bash.as_deref(),
-            self.grep.as_deref(),
-            self.lsp.as_deref(),
-            self.web.as_deref(),
+        for (name, path) in [
+            ("fs", self.fs.as_deref()),
+            ("bash", self.bash.as_deref()),
+            ("grep", self.grep.as_deref()),
+            ("lsp", self.lsp.as_deref()),
+            ("web", self.web.as_deref()),
         ]
         .into_iter()
-        .flatten()
+        .filter_map(|(name, path)| path.map(|p| (name, p)))
         {
             config = config.with_tool(ToolEndpoint::Stdio {
+                name: name.to_string(),
                 command: path.to_path_buf(),
                 args: vec![],
+                env: Default::default(),
             });
         }
         config
