@@ -234,7 +234,11 @@ impl ConfigFile {
         startup: &StartupSection,
         migration: &MigrationSection,
     ) -> std::io::Result<()> {
-        let mut root = load_root_for_save(path)?;
+        let mut root = match load_root_for_save(path) {
+            Ok(root) => root,
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => Table::new(),
+            Err(error) => return Err(error),
+        };
         insert_section(&mut root, "startup", startup)?;
         insert_section(&mut root, "migration", migration)?;
         write_root(path, &root)
@@ -773,6 +777,33 @@ code = "en"
             !text.contains("[update]"),
             "unrelated absent sections must stay absent: {text}"
         );
+    }
+
+    #[test]
+    fn save_startup_and_migration_sections_recovers_from_malformed_config() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "[startup\npolicy = \"all\"\n").unwrap();
+
+        ConfigFile::save_startup_and_migration_sections(
+            &path,
+            &StartupSection {
+                policy: StartupPolicyKind::OptIn,
+                startup_providers: vec!["anthropic".into()],
+                connect_timeout_ms: 3000,
+            },
+            &MigrationSection { v1_done: true },
+        )
+        .unwrap();
+
+        let loaded = ConfigFile::load_or_default(&path);
+        assert_eq!(loaded.startup.policy, StartupPolicyKind::OptIn);
+        assert_eq!(loaded.startup.startup_providers, vec!["anthropic"]);
+        assert_eq!(loaded.startup.connect_timeout_ms, 3000);
+        assert!(loaded.migration.v1_done);
+        assert_eq!(loaded.language.code, "en");
+        assert_eq!(loaded.theme.name, "dark");
+        assert_eq!(loaded.update.periodic_interval_secs, 300);
     }
 
     #[test]
