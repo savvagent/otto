@@ -19,6 +19,10 @@ boundary changes and PATCH captures fixes).
 
 ### Changed
 
+- **Breaking (`savvagent-host` public API):** `ToolEndpoint::Stdio` gained `name`/`env` fields, a new
+  `Http { name, url, auth }` variant was added, and `ToolEndpoint`/the new `HttpAuth` enum are now
+  `#[non_exhaustive]`. Any external struct-literal construction of `ToolEndpoint::Stdio` or
+  exhaustive `match ToolEndpoint { .. }` must be updated.
 - The public host config surface for tool servers now covers both stdio and HTTP transports, and
   the TUI preserves malformed neighboring `[[mcp_servers]]` rows/comments when `/mcp` edits
   `config.toml`.
