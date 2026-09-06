@@ -10,6 +10,7 @@
 //!
 //! See `docs/superpowers/specs/2026-05-13-v0.11.0-tui-self-update-design.md`.
 
+use crate::config_file::ConfigFile;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -85,11 +86,31 @@ const OPT_OUT_CLI_FLAG: &str = "--no-update-check";
 /// so the row paints as theme background only.
 const BANNER_SLOT_ID: &str = "home.banner";
 
-/// Re-check interval for the periodic loop spawned by `on_event(HostStarting)`.
-/// First tick fires immediately (preserves startup behavior); subsequent
-/// ticks fire every two hours. Tests override this via
-/// [`SelfUpdatePlugin::with_periodic_interval`].
-const PERIODIC_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
+#[derive(Debug, Clone, Copy)]
+struct RuntimeConfig {
+    disabled: bool,
+    periodic_interval: Duration,
+}
+
+impl RuntimeConfig {
+    fn from_path(path: &std::path::Path) -> Self {
+        let cfg = ConfigFile::load_or_default(path);
+        Self {
+            disabled: cfg.update.disabled,
+            periodic_interval: Duration::from_secs(cfg.effective_update_periodic_interval_secs()),
+        }
+    }
+
+    fn from_default_path() -> Self {
+        match ConfigFile::default_path_if_resolved_home() {
+            Some(path) => Self::from_path(&path),
+            None => Self {
+                disabled: false,
+                periodic_interval: Duration::from_secs(300),
+            },
+        }
+    }
+}
 
 /// Inspect the process environment + argv for the opt-out signal. Pure
 /// helper (works on any iterator + env lookup) so unit tests can verify
@@ -157,10 +178,10 @@ pub struct SelfUpdatePlugin {
     /// the stub fetcher's tag to the developer's real `$HOME` cache,
     /// poisoning subsequent launches of the installed binary.
     cache_path_override: Option<PathBuf>,
-    /// Re-check cadence. Defaults to [`PERIODIC_INTERVAL`]; tests
-    /// override via [`SelfUpdatePlugin::with_periodic_interval`] so
-    /// `tokio::time::pause()` + `advance()` can drive multiple ticks
-    /// without burning a real 2-hour wall clock.
+    /// Re-check cadence. Loaded from `~/.savvagent/config.toml`'s
+    /// `[update].periodic_interval_secs` (default 300s); tests override via
+    /// [`SelfUpdatePlugin::with_periodic_interval`] so `tokio::time::pause()`
+    /// + `advance()` can drive multiple ticks without burning real wall clock.
     periodic_interval: Duration,
 }
 
@@ -175,14 +196,24 @@ impl SelfUpdatePlugin {
     }
 
     /// Construct a [`SelfUpdatePlugin`] with custom fetcher AND installer.
-    /// Honors the `SAVVAGENT_NO_UPDATE_CHECK` env var and
-    /// `--no-update-check` CLI flag — when either is set the plugin
+    /// Honors `~/.savvagent/config.toml`'s `[update]` section plus the
+    /// `SAVVAGENT_NO_UPDATE_CHECK` env var and `--no-update-check` CLI flag.
+    /// When config disables updates or either override is set, the plugin
     /// starts in [`UpdateState::Disabled`] and `on_event` is a no-op.
     pub fn with_fetcher_and_installer(
         fetcher: Arc<dyn ReleasesFetcher>,
         installer: Arc<dyn Installer>,
     ) -> Self {
-        let initial = if opt_out_active() {
+        let runtime_config = RuntimeConfig::from_default_path();
+        Self::with_fetcher_installer_and_runtime_config(fetcher, installer, runtime_config)
+    }
+
+    fn with_fetcher_installer_and_runtime_config(
+        fetcher: Arc<dyn ReleasesFetcher>,
+        installer: Arc<dyn Installer>,
+        runtime_config: RuntimeConfig,
+    ) -> Self {
+        let initial = if opt_out_active() || runtime_config.disabled {
             UpdateState::Disabled
         } else {
             UpdateState::Unknown
@@ -193,7 +224,7 @@ impl SelfUpdatePlugin {
             fetcher,
             installer,
             cache_path_override: None,
-            periodic_interval: PERIODIC_INTERVAL,
+            periodic_interval: runtime_config.periodic_interval,
         }
     }
 
@@ -218,8 +249,22 @@ impl SelfUpdatePlugin {
         self
     }
 
-    /// Test-only: override the periodic re-check cadence. Default is
-    /// [`PERIODIC_INTERVAL`] (2 hours); tests pass something tiny like
+    /// Test-only: construct the plugin against an explicit config file path
+    /// so unit tests can exercise config-backed interval/disable behavior
+    /// without reading the developer's real `~/.savvagent/config.toml`.
+    #[cfg(test)]
+    pub fn with_config_path(
+        fetcher: Arc<dyn ReleasesFetcher>,
+        installer: Arc<dyn Installer>,
+        config_path: PathBuf,
+    ) -> Self {
+        let runtime_config = RuntimeConfig::from_path(&config_path);
+        Self::with_fetcher_installer_and_runtime_config(fetcher, installer, runtime_config)
+    }
+
+    /// Test-only: override the periodic re-check cadence. Production loads the
+    /// default cadence from `~/.savvagent/config.toml`'s `[update]` section;
+    /// tests pass something tiny like
     /// `Duration::from_millis(50)` so they can drive multiple ticks
     /// under `tokio::time::pause()` + `advance()`.
     #[cfg(test)]
@@ -623,11 +668,50 @@ async fn run_check_once(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config_file::{ConfigFile, UpdateSection};
     use crate::test_helpers::HOME_LOCK;
     use async_trait::async_trait;
     use semver::Version;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static UPDATE_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn write_update_config(path: &std::path::Path, disabled: bool, periodic_interval_secs: u64) {
+        ConfigFile::save_update_section(
+            path,
+            UpdateSection {
+                periodic_interval_secs,
+                disabled,
+            },
+        )
+        .expect("update section should save");
+    }
+
+    struct OptOutEnvGuard(Option<std::ffi::OsString>);
+
+    impl OptOutEnvGuard {
+        fn set(value: &str) -> Self {
+            let prev = std::env::var_os(OPT_OUT_ENV_VAR);
+            // SAFETY: UPDATE_ENV_LOCK serializes this env mutation.
+            unsafe {
+                std::env::set_var(OPT_OUT_ENV_VAR, value);
+            }
+            Self(prev)
+        }
+    }
+
+    impl Drop for OptOutEnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: UPDATE_ENV_LOCK is still held while this guard lives.
+            unsafe {
+                match &self.0 {
+                    Some(value) => std::env::set_var(OPT_OUT_ENV_VAR, value),
+                    None => std::env::remove_var(OPT_OUT_ENV_VAR),
+                }
+            }
+        }
+    }
 
     /// In-test releases fetcher that returns a fixed tag.
     struct FixedFetcher(&'static str);
@@ -757,10 +841,7 @@ mod tests {
     ) -> SelfUpdatePlugin {
         let _lock = HOME_LOCK.lock().unwrap();
         rust_i18n::set_locale("en");
-        let p = SelfUpdatePlugin::with_fetcher_and_installer(
-            Arc::new(FixedFetcher("v0.11.0")),
-            installer,
-        );
+        let p = plugin_with_default_config(Arc::new(FixedFetcher("v0.11.0")), installer);
         *p.state.lock().unwrap() = state;
         p
     }
@@ -774,12 +855,36 @@ mod tests {
         }
     }
 
+    fn plugin_with_default_config(
+        fetcher: Arc<dyn ReleasesFetcher>,
+        installer: Arc<dyn Installer>,
+    ) -> SelfUpdatePlugin {
+        let _env_lock = UPDATE_ENV_LOCK.lock().unwrap();
+        let _opt_out = OptOutEnvGuard::set("");
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        SelfUpdatePlugin::with_config_path(fetcher, installer, config_path)
+    }
+
+    fn plugin_with_config_path(
+        fetcher: Arc<dyn ReleasesFetcher>,
+        installer: Arc<dyn Installer>,
+        config_path: PathBuf,
+    ) -> SelfUpdatePlugin {
+        let _env_lock = UPDATE_ENV_LOCK.lock().unwrap();
+        let _opt_out = OptOutEnvGuard::set("");
+        SelfUpdatePlugin::with_config_path(fetcher, installer, config_path)
+    }
+
     #[test]
     fn manifest_subscribes_to_host_starting_contributes_slot_and_slash() {
         let _lock = HOME_LOCK.lock().unwrap();
         rust_i18n::set_locale("en");
 
-        let p = SelfUpdatePlugin::new();
+        let p = plugin_with_default_config(
+            Arc::new(FixedFetcher("v0.11.0")),
+            Arc::new(StubInstaller::ok()),
+        );
         let m = p.manifest();
         assert_eq!(m.id.as_str(), "internal:self-update");
         assert_eq!(m.contributions.hooks, vec![HookKind::HostStarting]);
@@ -791,20 +896,75 @@ mod tests {
 
     #[test]
     fn initial_state_is_unknown_when_not_opted_out() {
-        // The plugin reads real env/argv on construction; this test runs
-        // under cargo test, whose argv does not include the opt-out flag
-        // and whose env (in CI / typical local dev) does not set
-        // SAVVAGENT_NO_UPDATE_CHECK. If the developer happens to have
-        // that env var set, this assertion is a no-op rather than a
-        // misleading failure.
-        if std::env::var(OPT_OUT_ENV_VAR)
-            .ok()
-            .is_some_and(|v| !v.is_empty())
-        {
-            return;
-        }
-        let p = SelfUpdatePlugin::new();
+        let p = plugin_with_default_config(
+            Arc::new(FixedFetcher("v0.11.0")),
+            Arc::new(StubInstaller::ok()),
+        );
         assert_eq!(p.state(), UpdateState::Unknown);
+    }
+
+    #[test]
+    fn configured_interval_sets_periodic_cadence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        write_update_config(&config_path, false, 1234);
+
+        let p = plugin_with_config_path(
+            Arc::new(FixedFetcher("v0.11.0")),
+            Arc::new(StubInstaller::ok()),
+            config_path,
+        );
+
+        assert_eq!(p.state(), UpdateState::Unknown);
+        assert_eq!(p.periodic_interval, Duration::from_secs(1234));
+    }
+
+    #[test]
+    fn zero_interval_in_config_falls_back_to_five_minutes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        write_update_config(&config_path, false, 0);
+
+        let p = plugin_with_config_path(
+            Arc::new(FixedFetcher("v0.11.0")),
+            Arc::new(StubInstaller::ok()),
+            config_path,
+        );
+
+        assert_eq!(p.periodic_interval, Duration::from_secs(300));
+    }
+
+    #[test]
+    fn config_can_disable_updates_without_env_override() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        write_update_config(&config_path, true, 777);
+
+        let p = plugin_with_config_path(
+            Arc::new(FixedFetcher("v0.11.0")),
+            Arc::new(StubInstaller::ok()),
+            config_path,
+        );
+
+        assert_eq!(p.state(), UpdateState::Disabled);
+        assert_eq!(p.periodic_interval, Duration::from_secs(777));
+    }
+
+    #[test]
+    fn env_opt_out_overrides_enabled_update_config() {
+        let _env_lock = UPDATE_ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        write_update_config(&config_path, false, 777);
+        let _opt_out = OptOutEnvGuard::set("1");
+
+        let p = SelfUpdatePlugin::with_config_path(
+            Arc::new(FixedFetcher("v0.11.0")),
+            Arc::new(StubInstaller::ok()),
+            config_path,
+        );
+
+        assert_eq!(p.state(), UpdateState::Disabled);
     }
 
     // --- opt_out_from pure helper ---
@@ -1135,8 +1295,7 @@ mod tests {
         installer: Arc<StubInstaller>,
         cache_path: std::path::PathBuf,
     ) -> SelfUpdatePlugin {
-        SelfUpdatePlugin::with_fetcher_and_installer(fetcher, installer)
-            .with_cache_path_override(cache_path)
+        plugin_with_default_config(fetcher, installer).with_cache_path_override(cache_path)
     }
 
     /// Spin until the plugin's state matches `predicate` or the iteration
@@ -1379,7 +1538,7 @@ mod tests {
         let mut p = {
             let _lock = HOME_LOCK.lock().unwrap();
             rust_i18n::set_locale("en");
-            SelfUpdatePlugin::with_fetcher_and_installer(
+            plugin_with_default_config(
                 Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
                 Arc::clone(&installer) as Arc<dyn Installer>,
             )
@@ -1414,7 +1573,7 @@ mod tests {
         let mut p = {
             let _lock = HOME_LOCK.lock().unwrap();
             rust_i18n::set_locale("en");
-            SelfUpdatePlugin::with_fetcher_and_installer(
+            plugin_with_default_config(
                 Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
                 Arc::clone(&installer) as Arc<dyn Installer>,
             )
@@ -1456,7 +1615,7 @@ mod tests {
         let mut p = {
             let _lock = HOME_LOCK.lock().unwrap();
             rust_i18n::set_locale("en");
-            SelfUpdatePlugin::with_fetcher_and_installer(
+            plugin_with_default_config(
                 Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
                 Arc::clone(&installer) as Arc<dyn Installer>,
             )
@@ -1498,7 +1657,7 @@ mod tests {
         let mut p = {
             let _lock = HOME_LOCK.lock().unwrap();
             rust_i18n::set_locale("en");
-            SelfUpdatePlugin::with_fetcher_and_installer(
+            plugin_with_default_config(
                 Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
                 Arc::clone(&installer) as Arc<dyn Installer>,
             )
@@ -1542,7 +1701,7 @@ mod tests {
         let mut p = {
             let _lock = HOME_LOCK.lock().unwrap();
             rust_i18n::set_locale("en");
-            SelfUpdatePlugin::with_fetcher_and_installer(
+            plugin_with_default_config(
                 Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
                 Arc::clone(&installer) as Arc<dyn Installer>,
             )
@@ -1564,11 +1723,9 @@ mod tests {
         let shared_state = Arc::clone(&p.state);
         let shared_installer = Arc::clone(&installer) as Arc<dyn Installer>;
         let slash_task = tokio::spawn(async move {
-            let mut helper = SelfUpdatePlugin::with_fetcher_and_installer(
-                Arc::new(FixedFetcher("v99.99.99")),
-                shared_installer,
-            )
-            .with_install_method(InstallMethod::Installed);
+            let mut helper =
+                plugin_with_default_config(Arc::new(FixedFetcher("v99.99.99")), shared_installer)
+                    .with_install_method(InstallMethod::Installed);
             helper.state = shared_state;
             let _ = helper.handle_slash("update", vec![]).await;
         });
@@ -1625,7 +1782,7 @@ mod tests {
         let mut p = {
             let _lock = HOME_LOCK.lock().unwrap();
             rust_i18n::set_locale("en");
-            SelfUpdatePlugin::with_fetcher_and_installer(
+            plugin_with_default_config(
                 Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
                 Arc::clone(&installer) as Arc<dyn Installer>,
             )
@@ -1669,7 +1826,7 @@ mod tests {
         let mut p = {
             let _lock = HOME_LOCK.lock().unwrap();
             rust_i18n::set_locale("en");
-            SelfUpdatePlugin::with_fetcher_and_installer(
+            plugin_with_default_config(
                 Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
                 Arc::clone(&installer) as Arc<dyn Installer>,
             )

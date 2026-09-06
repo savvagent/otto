@@ -187,9 +187,12 @@ impl ConfigFile {
         Some(Self::path_under(PathBuf::from(home)))
     }
 
+    pub fn default_path_if_resolved_home() -> Option<PathBuf> {
+        dirs::home_dir().map(Self::path_under)
+    }
+
     pub fn default_path() -> PathBuf {
-        dirs::home_dir()
-            .map(Self::path_under)
+        Self::default_path_if_resolved_home()
             .unwrap_or_else(|| Self::path_under(PathBuf::from(".")))
     }
 
