@@ -23,7 +23,7 @@ pub static HOME_LOCK: Mutex<()> = Mutex::new(());
 /// RAII guard: on construction, redirects the platform's home-dir env
 /// variables to a fresh tmpdir; on drop, restores the previous values (or
 /// unsets them). Must be held while the test touches home-rooted paths
-/// (e.g. `~/.savvagent/theme.toml`, `~/.savvagent/trusted-projects.json`).
+/// (e.g. `~/.savvagent/config.toml`, `~/.savvagent/trusted-projects.json`).
 pub struct HomeGuard {
     _td: tempfile::TempDir,
     prev_home: Option<std::ffi::OsString>,

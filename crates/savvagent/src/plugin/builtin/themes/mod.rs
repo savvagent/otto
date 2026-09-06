@@ -1,7 +1,7 @@
 //! `internal:themes` — theme catalog + `/theme` slash + theme picker screen.
 //!
 //! The catalog itself ([`catalog::Theme`] and the
-//! `~/.savvagent/theme.toml` round-trip helpers) and the lifted
+//! `~/.savvagent/config.toml` `[theme]` round-trip helpers) and the lifted
 //! [`picker::ThemePicker`] state machine live in this directory; this
 //! module wraps them in a [`Plugin`] + [`Screen`] pair so the
 //! `SelectingTheme` `InputMode` arm in the v0.8 keypath can go away.
