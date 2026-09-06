@@ -508,16 +508,13 @@ and out of scope).
   users; only malformed-`mcp_servers`-row recovery is new.
 - **Additive:** `/mcp` slash command, `creds::delete`/`mcp_save`/`mcp_load`/`mcp_delete` functions,
   `Host::tool_server_statuses()`.
-- **Breaking (plugin ABI, folded into this feature's MINOR bump — added during planning):**
+- **Internal-only (not a plugin-ABI change, per the plan's implementation-detail decision):**
   `/mcp`'s screen needs a way to learn tool-server connect status without `Screen`/`Plugin` trait
-  methods gaining direct `&Host` access (they don't have it, by design — see `connect/`'s existing
-  `HostEvent::ProviderRegistered`-cache pattern). This is implemented as a new
-  `HostEvent::ToolServersReady { statuses: Vec<ToolServerStatusInfo> }` variant (plus new, plain
-  `ToolServerStatusInfo`/`ToolTransportKind`/`ToolConnectState` types) added to
-  `crates/savvagent-plugin`'s `HostEvent` enum. `HostEvent` is not `#[non_exhaustive]` today, so this
-  is breaking for any external exhaustive `match HostEvent { .. }` (e.g. a WASM plugin built against
-  the prior ABI) — called out here explicitly so it's tracked under the same MINOR release as the
-  `ToolEndpoint` break in §1, not treated as a separate/overlooked interface change.
+  methods gaining direct `&Host` access. Since v1 has no live reconnect (§Scope), this is a one-shot
+  need resolved entirely within `crates/savvagent` — the `McpPlugin` is constructed with an initial
+  status/config snapshot (mirroring how `UserSlashCommandsPlugin::new(trust_levels)` is already
+  seeded at construction time), not via a new `HostEvent`/plugin-ABI surface. `savvagent-plugin`'s
+  `HostEvent` enum is unchanged by this feature.
 - **New dependency (round-3 review):** `toml_edit` is added to root `Cargo.toml` as a new workspace
   dependency, used only by `crates/savvagent` (§3's `/mcp` write path). The existing `toml` crate is
   retained unchanged for read-side parsing/serialization everywhere else; `toml_edit` is not a

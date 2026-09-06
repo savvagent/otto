@@ -138,8 +138,29 @@ recent released heading when the release PR (Task 9's final note) is actually op
       spec's §2 (bind `service` in an outer scope as soon as `serve()` returns; timeout/error before
       that point records `ConnectState::Failed` with nothing to cancel; timeout/error on
       `list_all_tools()` after that point calls `service.cancel().await` before recording `Failed`).
+      **Apply `env` to the spawned command (blocking fix from plan-review round 2 — Task 1 added the
+      `env: HashMap<String, String>` field to `ToolEndpoint::Stdio`, but connect()'s non-bash arm
+      never reads it today):** after building `cmd` via `tokio::process::Command::new(command)` and
+      `cmd.args(args)`, call `cmd.envs(&env)` — merging over (not replacing) the three
+      `SAVVAGENT_TOOL_*_ROOT` vars and the process's inherited environment, exactly as the spec's §1
+      describes. Add a regression test asserting a configured `env` entry (e.g. a literal
+      `MY_VAR=value`) actually reaches a spawned stdio server (a minimal stub server that echoes its
+      environment back as a tool result, or reads `std::env::var` and asserts inside the test process
+      if the stub is in-process — match whatever stub-server pattern Task 2's other new tests already
+      establish).
       Apply the identical two-stage shape to the bash-probe `Stdio` arm (still probe-spawn-and-cancel
-      on success, but now also two-stage-timeout-bounded and status-recorded).
+      on success, but now also two-stage-timeout-bounded and status-recorded). **The bash arm's `env`
+      must also reach every later lazy respawn, not just the probe (blocking fix from plan-review
+      round 2):** `BashSpawnConfig` (used by `LazyBash` to respawn `tool-bash` per-call) currently
+      persists only `command`/`args`/`project_root`/`sandbox_template` — add an `env:
+      HashMap<String, String>` field, populate it from the `Stdio` endpoint's `env` at `connect()`
+      time (alongside the other `BashSpawnConfig` fields already captured there), and thread it
+      through `build_bash_command`'s signature (`crates/savvagent-host/src/tools.rs:883`) with a
+      `cmd.envs(&env)` call matching the non-bash arm's treatment — both the probe spawn and every
+      later lazy respawn (`call_with_bash_net_override`'s respawn path) share this one code path, so a
+      single change to `build_bash_command` covers both. Add a regression test asserting a configured
+      `env` entry reaches a lazy-respawned bash child (not just the probe), since the probe and the
+      real spawn are separate `build_bash_command` invocations.
       A genuine per-endpoint failure no longer aborts the whole `connect()` call — record the status
       and `continue` to the next endpoint. Endpoint-registration failures that indicate a
       caller-must-know-before-anything-runs condition are not introduced by this change (none
@@ -307,6 +328,11 @@ recent released heading when the release PR (Task 9's final note) is actually op
       and push a startup note for each `mcp_server_diagnostics` entry (via whatever the existing
       startup-notes plumbing is — `deferred_notes`/`HostBoot::startup_notes`, per the code already
       read in `bootstrap_pool_host`).
+- [ ] Add `pub(crate) struct McpManagerSeed { pub configured: Vec<McpServerSummary>, pub skip_notes:
+      Vec<(String, String)> }` and `pub(crate) struct McpServerSummary { pub name: String, pub
+      transport: &'static str }` (plain, `Clone + Send` — no secrets, just enough for the `/mcp`
+      screen's initial listing before Task 7 merges in live connect status). `skip_notes` is `(name,
+      reason)` pairs for entries that failed `validate()` or had an unreadable keyring secret.
 - [ ] In `bootstrap_pool_host`, after `tool_bins.apply(...)` builds `config` and before
       `Host::start(config).await`, add a step that: iterates `config_file.mcp_servers`, calls
       `McpServerEntry::validate` against a running `seen_names` set, resolves secrets via
@@ -315,19 +341,28 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `config.tools` via repeated `config = config.with_tool(...)` (or direct `config.tools.push(...)`
       — check which is more idiomatic given `HostConfig::with_tool` takes `self` by value and `config`
       is already `mut` at this point). A server that fails validation or whose keyring secret is
-      missing/unreadable is skipped with a `deferred_notes.push(...)` note (not fatal).
+      missing/unreadable is skipped with both a `deferred_notes.push(...)` note (not fatal) and a
+      `skip_notes` entry on a `McpManagerSeed` being built alongside `config`. Every entry — validated
+      and skipped alike — contributes a `McpServerSummary` to `McpManagerSeed::configured`.
+- [ ] Add `mcp_manager_seed: McpManagerSeed` to `HostBoot` (`main.rs:217`), populated in
+      `bootstrap_pool_host` right after `Host::start(config).await` succeeds (same function, same
+      scope — no cross-boundary plumbing needed since `bootstrap_pool_host` already has both
+      `config_file` and the started `host` in hand at that point).
 - [ ] Run `cargo check -p savvagent --all-targets`, fix any remaining call-site fallout from the
-      `LoadedConfig` shape change (e.g. `start_host_remote`'s legacy path, if it also calls
-      `load_or_default` or receives `config_file` — confirm from the read code whether it needs the
-      same treatment).
+      `LoadedConfig`/`HostBoot` shape changes (e.g. `start_host_remote`'s legacy path, if it also
+      calls `load_or_default` or receives `config_file` — confirm from the read code whether it needs
+      the same treatment; note it currently returns a bare `Arc<Host>`, not a `HostBoot`, so it may
+      need no `McpManagerSeed` at all if the legacy remote-provider debug path is out of scope for
+      `mcp_servers` — confirm against the spec, which doesn't call this out either way, and default to
+      an empty `McpManagerSeed` for that path if so).
 - [ ] Add an integration-style test (in `main.rs`'s test module or a new
       `tests/mcp_bootstrap.rs`, whichever matches this crate's existing test-location convention —
       check first) that builds a `ConfigFile` with one valid `[[mcp_servers]]` stdio entry pointing at
       a trivial test MCP server binary/script, runs the bootstrap path, and asserts the resulting
-      `HostConfig.tools`/`Host::tool_server_statuses()` includes it. If spinning up a real trivial MCP
-      server for this test is impractical without infra not already present, scope this down to a
-      unit test of just the validate-and-resolve step (not the full `Host::start`), and note in the PR
-      body why the fuller test was scoped down.
+      `HostConfig.tools`/`Host::tool_server_statuses()`/`HostBoot::mcp_manager_seed` all include it.
+      If spinning up a real trivial MCP server for this test is impractical without infra not already
+      present, scope this down to a unit test of just the validate-and-resolve step (not the full
+      `Host::start`), and note in the PR body why the fuller test was scoped down.
 - [ ] Run `cargo test -p savvagent`. Confirm green.
 - [ ] Commit: `feat: wire configured mcp_servers into host bootstrap`.
 
@@ -336,70 +371,65 @@ recent released heading when the release PR (Task 9's final note) is actually op
 **Files:**
 - Create: `crates/savvagent/src/plugin/builtin/mcp/mod.rs`,
   `crates/savvagent/src/plugin/builtin/mcp/screen.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`, `crates/savvagent/src/plugin/mod.rs`
-- Modify: `crates/savvagent-plugin/src/event.rs` — new `HostEvent::ToolServersReady` variant and a
-  new plain DTO type (plugin-ABI-visible; confirmed `savvagent-plugin` has zero dependency on
-  `savvagent-host` per its `Cargo.toml`'s "Intentionally NO ratatui, crossterm, tokio runtime,
-  anyhow" comment and WIT-portability rule — this DTO must not reference `savvagent-host` types).
-- Modify: `crates/savvagent/src/main.rs` — emit `HostEvent::ToolServersReady` once after
-  `Host::start` succeeds in bootstrap (mirroring the existing `HostEvent::ProviderRegistered`/
-  `Connect` dispatch calls in `perform_connect`, e.g. around `main.rs:2500`).
+- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`, `crates/savvagent/src/plugin/mod.rs`,
+  `crates/savvagent/src/plugin/external.rs` (`register_builtins_with_external`'s parameter list),
+  `crates/savvagent/src/main.rs` (`build_app_with_host`'s call into `register_builtins_with_external`)
 
 - [ ] Read `crates/savvagent/src/plugin/builtin/connect/mod.rs` and `screen.rs` in full immediately
       before starting this task (already read once during spec drafting — re-read for exact ABI
       shape: `Manifest`/`Contributions`/`SlashSpec`/`ScreenSpec`/`ScreenLayout`/`Effect::OpenScreen`/
-      `create_screen`, and specifically the `candidates`-cache-via-`on_event` pattern the bridge
-      design below reuses).
-- [ ] **Plugin-ABI status bridge (blocking fix from plan-review round 1 — concrete design, not
-      deferred to implementation time):** `Plugin`/`Screen` trait methods have no direct `&Host`
-      access (confirmed: `Plugin::create_screen` takes only `(&self, id: &str, args: ScreenArgs)`,
-      and `savvagent-plugin` cannot depend on `savvagent-host`'s `ToolServerStatus`/`ConnectState`/
-      `TransportKind` types directly — that would violate the crate-boundary/WIT-portability rule).
-      The bridge is the same pattern `ConnectPlugin` already uses for `HostEvent::ProviderRegistered`
-      (`crates/savvagent/src/plugin/builtin/connect/mod.rs`'s `candidates: Vec<(ProviderId, String)>`
-      field, updated in `on_event` and read by `create_screen`):
-      1. Add plain (non-`savvagent-host`-dependent) types to `crates/savvagent-plugin/src/event.rs`:
-         `pub enum ToolTransportKind { Stdio, Http }`, `pub enum ToolConnectState { Connected, Failed
-         { reason: String } }`, `pub struct ToolServerStatusInfo { pub name: String, pub transport:
-         ToolTransportKind, pub state: ToolConnectState }` — all three deriving `Debug, Clone,
-         PartialEq, Eq` to match `HostEvent`'s own derive list — and a new
-         `HostEvent::ToolServersReady { statuses: Vec<ToolServerStatusInfo> }` variant (with its
-         `HookKind` mapping entry, mirroring every other `HostEvent` variant's treatment in
-         `event.rs`). **Public-interface check:** confirmed `HostEvent` (`crates/savvagent-plugin/
-         src/event.rs`) is **not** `#[non_exhaustive]` today, so adding this variant **is a breaking
-         change** for any external exhaustive `match HostEvent { ... }` (e.g. a WASM plugin compiled
-         against the old ABI) — this must be called out in the PR body per Rule 6 with the same
-         treatment as `ToolEndpoint` in Task 1, and folded into this feature's single MINOR version
-         bump (not a second separate bump). Do not mark `HostEvent` `#[non_exhaustive]` as part of
-         this change unless the spec is updated first — that's a separate, its own scope decision
-         and out of bounds for this plan; simply document the breakage.
-      2. In `crates/savvagent/src/main.rs`, after `Host::start(config).await` succeeds in
-         `bootstrap_pool_host` (and the equivalent GUI bootstrap path if one exists — check
-         `egui_app`), convert `host.tool_server_statuses()` (the `savvagent-host`-side type from
-         Task 2) into `Vec<ToolServerStatusInfo>` and dispatch `HostEvent::ToolServersReady` via
-         `crate::plugin::effects::dispatch_host_event` exactly like the existing
-         `ProviderRegistered`/`Connect` dispatches. Since v1 has no live reconnect, this fires exactly
-         once per app launch — no ongoing subscription/polling needed.
-      3. `McpPlugin` (this task) subscribes to `HookKind::ToolServersReady` in its `Manifest`
-         (mirroring `ConnectPlugin`'s `HookKind::ProviderRegistered` subscription), caches the
-         `Vec<ToolServerStatusInfo>` in a plugin-owned field on `on_event`, and passes a clone of that
-         cache to `McpManagerScreen` in `create_screen` — exactly the same shape as
-         `ConnectPlugin::candidates`/`ConnectPickerScreen::with_candidates`.
+      `create_screen`).
+- [ ] **Plugin-ABI status bridge (blocking fix from plan-review round 2 — replaces the round-1 draft's
+      `HostEvent`-based design, which round 2 correctly flagged as (a) requiring matching changes to
+      `crates/savvagent-plugin-wit/wit/shared.wit`'s `hook-kind` variant, both directions of
+      `crates/savvagent-plugin-wasm/src/convert.rs`'s exhaustive `HookKind` conversions, and both
+      `HostEvent`-projection match arms in `crates/savvagent-plugin-wasm/src/adapter/{interactive,
+      static_}.rs` — a much larger surface than this feature needs — and (b) not actually
+      dispatchable from `bootstrap_pool_host`, which runs before `App`/the plugin registry exist and
+      before `app.install_plugin_runtime` (`main.rs:391`) — there is no `dispatch_host_event` call
+      possible at the point the round-1 draft named):**
+      Since `McpPlugin` only needs a **one-shot initial seed** (v1 has no live reconnect — see Scope),
+      and `register_builtins`/`register_builtins_with_external` are already called *after*
+      `Host::start` has completed (confirmed: `build_app_with_host`, `main.rs:317`, calls
+      `register_builtins_with_external` well after `bootstrap_pool_host` returned a `HostBoot` with an
+      already-started `host`), the simplest correct bridge is **constructor-argument seeding**,
+      exactly like `UserSlashCommandsPlugin::new(trust_levels)` already does — no new `HostEvent`,
+      no `HookKind` variant, no WIT/WASM-adapter changes, and no wire-format/plugin-ABI surface change
+      at all (this bridge is entirely internal to `crates/savvagent`, never crossing into
+      `savvagent-plugin`'s portable ABI):
+      1. Task 6 already adds `McpManagerSeed { configured: Vec<McpServerSummary>, skip_notes:
+         Vec<(String, String)> }` to `HostBoot`, populated in `bootstrap_pool_host` right after
+         `Host::start` succeeds (same function scope has both `config_file` and the started `host`).
+      2. In `build_app_with_host` (`main.rs:269`), read `initial.as_ref().map(|b|
+         b.mcp_manager_seed.clone()).unwrap_or_default()` (mirroring how `header_model`/
+         `startup_notes` are already destructured from `initial` at the top of the function) and pass
+         it as a new parameter to `register_builtins_with_external` →
+         `register_builtins` (`crates/savvagent/src/plugin/external.rs:70`,
+         `crates/savvagent/src/plugin/mod.rs:86`), which constructs `McpPlugin::new(seed)` instead of
+         `McpPlugin::new()`.
+      3. Additionally read live connect status once at construction: `McpPlugin::new` (or a
+         `with_statuses` builder called right before construction in `build_app_with_host`, using
+         `current_host(&host_slot).await` — already available at that point since `host_slot` is
+         built earlier in the same function) takes `Vec<ToolServerStatus>` (the `savvagent-host`-side
+         type from Task 2 — reachable here because `crates/savvagent` **can** depend on
+         `savvagent-host`, unlike `savvagent-plugin`) alongside the `McpManagerSeed`, converts each to
+         a plain in-plugin display record, and stores both in `McpPlugin`'s fields for
+         `create_screen` to read — the same "stash what the screen needs at plugin-construction time"
+         shape `ConnectPlugin` uses for `candidates`, just seeded once up front instead of
+         accumulated via `on_event`.
       4. **Combine with configured-but-not-yet-connected servers (advisory note from plan-review
          round 1, addressed here):** a server that failed `McpServerEntry::validate` or had an
          unreadable keyring secret in Task 6 never became a `ToolEndpoint` at all, so it will never
-         appear in `tool_server_statuses()`. `McpManagerScreen` must show the full configured list
-         from `config_file.mcp_servers` (passed in alongside the status cache, sourced the same way
-         Task 6 already reads it) merged with the live status cache by name — entries present in
-         config but absent from the status cache are rendered as a distinct "not started: <reason>"
-         row (reusing whatever diagnostic string Task 6's skip-with-note path already produced),
-         never conflated with `ConnectState::Failed` (which means "we tried to connect and it
-         failed", a different condition from "we never tried because validation/secret-resolution
-         failed first").
+         appear in `Host::tool_server_statuses()` — it only appears in `McpManagerSeed::skip_notes`.
+         `McpManagerScreen` must render the full configured list from `McpManagerSeed::configured`
+         merged with the live status list by name — entries present in `configured` but absent from
+         the status list are rendered as a distinct "not started: <reason>" row (using the matching
+         `skip_notes` entry), never conflated with `ConnectState::Failed` (which means "we tried to
+         connect and it failed," a different condition from "we never tried because
+         validation/secret-resolution failed first").
 - [ ] `mod.rs`: `McpPlugin` registers slash command `"mcp"` (no args → open `mcp.manager` screen,
       matching `connect`'s no-arg behavior) and screen id `"mcp.manager"`. `create_screen` builds
-      `McpManagerScreen` from the cached `Vec<ToolServerStatusInfo>` plus the configured-server list,
-      per the bridge design above.
+      `McpManagerScreen` from the seeded `McpManagerSeed` + status list, per the bridge design above.
 - [ ] `screen.rs`: `McpManagerScreen` lists configured servers (name, transport, status) — reuse
       whatever list/table rendering helper `connect/screen.rs`'s `ConnectPickerScreen` or another
       existing picker screen already provides, rather than writing new ratatui rendering from scratch.
