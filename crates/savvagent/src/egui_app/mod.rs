@@ -597,7 +597,7 @@ impl GuiApp {
         let loaded_config = crate::config_file::ConfigFile::load_or_default(
             &crate::config_file::ConfigFile::default_path(),
         );
-        let _mcp_server_diagnostics = loaded_config.mcp_server_diagnostics;
+        let mcp_server_diagnostics = loaded_config.mcp_server_diagnostics;
         let config_file = loaded_config.config;
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -605,7 +605,8 @@ impl GuiApp {
         let pr = project_root.clone();
         let tb = tool_bins.clone();
         rt.spawn(async move {
-            let host = crate::bootstrap_host_only(pr, tb, config_file).await;
+            let host =
+                crate::bootstrap_host_only(pr, tb, config_file, mcp_server_diagnostics).await;
             // Ignore send errors: the only receiver is `Boot::Pending`, which
             // outlives the window unless the app already shut down.
             let _ = tx.send(host);

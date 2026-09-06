@@ -47,7 +47,8 @@ pub use capabilities::{
     CapabilitiesError, CostTier, ModelAlias, ModelCapabilities, ProviderCapabilities,
 };
 pub use config::{
-    HostConfig, ProviderEndpoint, ProviderRegistration, StartupConnectPolicy, ToolEndpoint,
+    HostConfig, HttpAuth, ProviderEndpoint, ProviderRegistration, StartupConnectPolicy,
+    ToolEndpoint,
 };
 pub use default_prompt::AppVersion;
 pub use permissions::{

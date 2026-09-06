@@ -324,16 +324,16 @@ recent released heading when the release PR (Task 9's final note) is actually op
 **Files:**
 - Modify: `crates/savvagent/src/main.rs`
 
-- [ ] In `bootstrap_app_and_host`, destructure the new `LoadedConfig` from `ConfigFile::load_or_default`
+- [x] In `bootstrap_app_and_host`, destructure the new `LoadedConfig` from `ConfigFile::load_or_default`
       and push a startup note for each `mcp_server_diagnostics` entry (via whatever the existing
       startup-notes plumbing is — `deferred_notes`/`HostBoot::startup_notes`, per the code already
       read in `bootstrap_pool_host`).
-- [ ] Add `pub(crate) struct McpManagerSeed { pub configured: Vec<McpServerSummary>, pub skip_notes:
+- [x] Add `pub(crate) struct McpManagerSeed { pub configured: Vec<McpServerSummary>, pub skip_notes:
       Vec<(String, String)> }` and `pub(crate) struct McpServerSummary { pub name: String, pub
       transport: &'static str }` (plain, `Clone + Send` — no secrets, just enough for the `/mcp`
       screen's initial listing before Task 7 merges in live connect status). `skip_notes` is `(name,
       reason)` pairs for entries that failed `validate()` or had an unreadable keyring secret.
-- [ ] In `bootstrap_pool_host`, after `tool_bins.apply(...)` builds `config` and before
+- [x] In `bootstrap_pool_host`, after `tool_bins.apply(...)` builds `config` and before
       `Host::start(config).await`, add a step that: iterates `config_file.mcp_servers`, calls
       `McpServerEntry::validate` against a running `seen_names` set, resolves secrets via
       `creds::mcp_load` for entries needing one (`Stdio` with an `env` value marked `"keyring"`, or
@@ -344,18 +344,18 @@ recent released heading when the release PR (Task 9's final note) is actually op
       missing/unreadable is skipped with both a `deferred_notes.push(...)` note (not fatal) and a
       `skip_notes` entry on a `McpManagerSeed` being built alongside `config`. Every entry — validated
       and skipped alike — contributes a `McpServerSummary` to `McpManagerSeed::configured`.
-- [ ] Add `mcp_manager_seed: McpManagerSeed` to `HostBoot` (`main.rs:217`), populated in
+- [x] Add `mcp_manager_seed: McpManagerSeed` to `HostBoot` (`main.rs:217`), populated in
       `bootstrap_pool_host` right after `Host::start(config).await` succeeds (same function, same
       scope — no cross-boundary plumbing needed since `bootstrap_pool_host` already has both
       `config_file` and the started `host` in hand at that point).
-- [ ] Run `cargo check -p savvagent --all-targets`, fix any remaining call-site fallout from the
+- [x] Run `cargo check -p savvagent --all-targets`, fix any remaining call-site fallout from the
       `LoadedConfig`/`HostBoot` shape changes (e.g. `start_host_remote`'s legacy path, if it also
       calls `load_or_default` or receives `config_file` — confirm from the read code whether it needs
       the same treatment; note it currently returns a bare `Arc<Host>`, not a `HostBoot`, so it may
       need no `McpManagerSeed` at all if the legacy remote-provider debug path is out of scope for
       `mcp_servers` — confirm against the spec, which doesn't call this out either way, and default to
       an empty `McpManagerSeed` for that path if so).
-- [ ] Add an integration-style test (in `main.rs`'s test module or a new
+- [x] Add an integration-style test (in `main.rs`'s test module or a new
       `tests/mcp_bootstrap.rs`, whichever matches this crate's existing test-location convention —
       check first) that builds a `ConfigFile` with one valid `[[mcp_servers]]` stdio entry pointing at
       a trivial test MCP server binary/script, runs the bootstrap path, and asserts the resulting
@@ -363,7 +363,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       If spinning up a real trivial MCP server for this test is impractical without infra not already
       present, scope this down to a unit test of just the validate-and-resolve step (not the full
       `Host::start`), and note in the PR body why the fuller test was scoped down.
-- [ ] Run `cargo test -p savvagent`. Confirm green.
+- [x] Run `cargo test -p savvagent`. Confirm green.
 - [ ] Commit: `feat: wire configured mcp_servers into host bootstrap`.
 
 ## Task 7: `/mcp` slash command + screen (`crates/savvagent/src/plugin/builtin/mcp/`)
