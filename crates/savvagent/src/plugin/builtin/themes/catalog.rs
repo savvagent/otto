@@ -264,6 +264,7 @@ pub(crate) fn save_to_path(path: &Path, theme: Theme) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{HOME_LOCK, NoHomeGuard};
     use tempfile::TempDir;
 
     // --- Built-ins ---
@@ -420,6 +421,13 @@ mod tests {
     }
 
     #[test]
+    fn load_ignores_real_home_when_home_env_is_unset() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let _no_home = NoHomeGuard::new();
+        assert_eq!(load(), Theme::Dark);
+    }
+
+    #[test]
     fn load_from_path_returns_default_on_parse_error() {
         let td = TempDir::new().unwrap();
         let path = td.path().join("config.toml");
@@ -471,5 +479,12 @@ mod tests {
     fn save_without_home_is_a_silent_noop() {
         save_to_default_path(None, Theme::HighContrast)
             .expect("save without a home directory should no-op");
+    }
+
+    #[test]
+    fn save_without_home_env_is_a_silent_noop() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let _no_home = NoHomeGuard::new();
+        save(Theme::HighContrast).expect("save without an explicit home directory should no-op");
     }
 }

@@ -181,11 +181,16 @@ impl ConfigFile {
     }
 
     pub fn default_path_if_home() -> Option<PathBuf> {
-        dirs::home_dir().map(Self::path_under)
+        let home = std::env::var_os("HOME")
+            .filter(|value| !value.is_empty())
+            .or_else(|| std::env::var_os("USERPROFILE").filter(|value| !value.is_empty()))?;
+        Some(Self::path_under(PathBuf::from(home)))
     }
 
     pub fn default_path() -> PathBuf {
-        Self::default_path_if_home().unwrap_or_else(|| Self::path_under(PathBuf::from(".")))
+        dirs::home_dir()
+            .map(Self::path_under)
+            .unwrap_or_else(|| Self::path_under(PathBuf::from(".")))
     }
 
     /// Load from `path`, falling back to [`Self::default`] on file-not-found
@@ -351,6 +356,7 @@ fn sync_parent_dir(dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_helpers::{HOME_LOCK, NoHomeGuard};
     use tempfile::TempDir;
 
     #[test]
@@ -818,5 +824,28 @@ code = "en"
                 .unwrap()
                 .contains("stale = true")
         );
+    }
+
+    #[test]
+    fn default_path_if_home_requires_explicit_home_env() {
+        let _lock = HOME_LOCK.lock().unwrap();
+        let _no_home = NoHomeGuard::new();
+        assert_eq!(ConfigFile::default_path_if_home(), None);
+        assert!(ConfigFile::default_path().ends_with(".savvagent/config.toml"));
+    }
+
+    #[test]
+    fn default_path_if_home_falls_back_to_userprofile_when_home_is_empty() {
+        let _lock = HOME_LOCK.lock().unwrap();
+        let tmp = TempDir::new().unwrap();
+        let _no_home = NoHomeGuard::new();
+        // SAFETY: HOME_LOCK is held for the duration of this test.
+        unsafe {
+            std::env::set_var("HOME", "");
+            std::env::set_var("USERPROFILE", tmp.path());
+        }
+
+        let path = ConfigFile::default_path_if_home().expect("USERPROFILE should be used");
+        assert_eq!(path, tmp.path().join(".savvagent").join("config.toml"));
     }
 }

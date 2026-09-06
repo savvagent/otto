@@ -171,7 +171,7 @@ pub fn detect_initial() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{HOME_LOCK, HomeGuard};
+    use crate::test_helpers::{HOME_LOCK, HomeGuard, NoHomeGuard};
     use std::io::Write;
 
     #[test]
@@ -253,6 +253,13 @@ mod tests {
     }
 
     #[test]
+    fn load_ignores_real_home_when_home_env_is_unset() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let _no_home = NoHomeGuard::new();
+        assert_eq!(load(), None);
+    }
+
+    #[test]
     fn load_malformed_toml_returns_none() {
         let _guard = HOME_LOCK.lock().unwrap();
         let _home = HomeGuard::new();
@@ -288,6 +295,13 @@ mod tests {
     #[test]
     fn save_without_home_is_a_silent_noop() {
         save_to_default_path(None, "es").expect("save without a home directory should no-op");
+    }
+
+    #[test]
+    fn save_without_home_env_is_a_silent_noop() {
+        let _guard = HOME_LOCK.lock().unwrap();
+        let _no_home = NoHomeGuard::new();
+        save("es").expect("save without an explicit home directory should no-op");
     }
 
     #[test]
