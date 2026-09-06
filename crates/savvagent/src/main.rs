@@ -4374,6 +4374,9 @@ mod canvas_key_tests {
         use crate::test_helpers::{HOME_LOCK, HomeGuard};
         use savvagent_plugin::PluginId;
 
+        // Test-only HOME serialization intentionally spans the startup awaits
+        // so concurrent tests can't race on the process-wide HOME override.
+        #[allow(clippy::await_holding_lock)]
         #[tokio::test(flavor = "current_thread")]
         async fn build_app_startup_skips_conflicting_user_exit_command() {
             let _lock = HOME_LOCK.lock().unwrap();
