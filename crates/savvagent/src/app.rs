@@ -594,14 +594,16 @@ pub struct App {
     pub resumed_at: Option<String>,
 
     /// Theme applied to the render path. Loaded from
-    /// `~/.savvagent/theme.toml` at startup; mutated by the
-    /// `internal:themes` plugin via `Effect::SetActiveTheme` and
-    /// persisted (when `persist = true`) by `apply_effects`.
+    /// `~/.savvagent/config.toml`'s `[theme]` section at startup;
+    /// mutated by the `internal:themes` plugin via
+    /// `Effect::SetActiveTheme` and persisted (when `persist = true`)
+    /// by `apply_effects`.
     pub active_theme: crate::plugin::builtin::themes::catalog::Theme,
 
     /// Currently-active locale code (e.g. `"en"`). Loaded at startup
-    /// from `~/.savvagent/language.toml` (or env detection); mutated by
-    /// `apply_effects` on `Effect::SetActiveLocale`.
+    /// from `~/.savvagent/config.toml`'s `[language]` section (or env
+    /// detection); mutated by `apply_effects` on
+    /// `Effect::SetActiveLocale`.
     pub active_language: String,
 
     /// Cached classification of the sandbox state for the startup splash.
@@ -1940,9 +1942,10 @@ impl App {
         }
     }
 
-    /// Persist the active locale to `~/.savvagent/language.toml`. Errors
-    /// surface as a styled note; the in-memory selection is kept either
-    /// way. Called from `apply_effects` on `Effect::SetActiveLocale { persist: true }`.
+    /// Persist the active locale to `~/.savvagent/config.toml`'s
+    /// `[language]` section. Errors surface as a styled note; the
+    /// in-memory selection is kept either way. Called from
+    /// `apply_effects` on `Effect::SetActiveLocale { persist: true }`.
     pub fn persist_language(&mut self) {
         let code = self.active_language.clone();
         match crate::plugin::builtin::language::catalog::save(&code) {
@@ -1967,9 +1970,10 @@ impl App {
         }
     }
 
-    /// Persist the active theme to `~/.savvagent/theme.toml`. Errors
-    /// surface as a styled note; the in-memory selection is kept either
-    /// way so the session-scoped UX is consistent.
+    /// Persist the active theme to `~/.savvagent/config.toml`'s
+    /// `[theme]` section. Errors surface as a styled note; the
+    /// in-memory selection is kept either way so the session-scoped UX
+    /// is consistent.
     ///
     /// Called from `apply_effects` on `Effect::SetActiveTheme { persist: true }`.
     pub fn persist_config(&mut self) {
@@ -2705,10 +2709,14 @@ mod tests {
         let _ = app.set_active_language("pt".to_string());
         app.persist_language();
 
-        let path = crate::plugin::builtin::language::catalog::config_path()
-            .expect("HOME set in HomeGuard");
+        let path = crate::config_file::ConfigFile::default_path();
         let text = std::fs::read_to_string(&path).expect("file should be written");
-        assert!(text.contains(r#"language = "pt""#), "file content: {text}");
+        assert!(text.contains("[language]"), "file content: {text}");
+        assert!(text.contains(r#"code = "pt""#), "file content: {text}");
+        assert!(
+            !path.with_file_name("language.toml").exists(),
+            "standalone language.toml should not be written"
+        );
 
         let notes = collect_app_notes(&app);
         let last = notes.last().cloned().unwrap_or_default();
@@ -2718,6 +2726,36 @@ mod tests {
         );
 
         rust_i18n::set_locale("en");
+    }
+
+    #[test]
+    fn persist_theme_writes_config_and_pushes_note() {
+        use crate::test_helpers::{HOME_LOCK, HomeGuard};
+        let _lock = HOME_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
+
+        let mut app = fresh_app();
+        app.set_active_theme_by_slug("high-contrast".to_string());
+        app.persist_config();
+
+        let path = crate::config_file::ConfigFile::default_path();
+        let text = std::fs::read_to_string(&path).expect("file should be written");
+        assert!(text.contains("[theme]"), "file content: {text}");
+        assert!(
+            text.contains(r#"name = "high-contrast""#),
+            "file content: {text}"
+        );
+        assert!(
+            !path.with_file_name("theme.toml").exists(),
+            "standalone theme.toml should not be written"
+        );
+
+        let notes = collect_app_notes(&app);
+        let last = notes.last().cloned().unwrap_or_default();
+        assert!(
+            last.contains("high-contrast"),
+            "expected theme slug in note, got: {last}"
+        );
     }
 
     #[test]

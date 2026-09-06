@@ -2061,9 +2061,10 @@ mod tests {
 
         assert_eq!(&*rust_i18n::locale(), "es");
         assert_eq!(app.active_language, "es");
-        let path = crate::plugin::builtin::language::catalog::config_path().unwrap();
+        let path = crate::config_file::ConfigFile::default_path();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains(r#"language = "es""#));
+        assert!(text.contains("[language]"), "config: {text}");
+        assert!(text.contains(r#"code = "es""#), "config: {text}");
 
         rust_i18n::set_locale("en");
     }
@@ -2087,11 +2088,8 @@ mod tests {
 
         assert_eq!(&*rust_i18n::locale(), "pt");
         assert_eq!(app.active_language, "pt");
-        let path = crate::plugin::builtin::language::catalog::config_path().unwrap();
-        assert!(
-            !path.exists(),
-            "persist=false must not create language.toml"
-        );
+        let path = crate::config_file::ConfigFile::default_path();
+        assert!(!path.exists(), "persist=false must not create config.toml");
 
         rust_i18n::set_locale("en");
     }
@@ -2876,7 +2874,7 @@ mod tests {
 
         // persist must not fire when the code was rejected — the file
         // must not exist in the HomeGuard tempdir.
-        let path = crate::plugin::builtin::language::catalog::config_path().unwrap();
+        let path = crate::config_file::ConfigFile::default_path();
         assert!(
             !path.exists(),
             "persist must not fire when set_active_language rejected the code"

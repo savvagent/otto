@@ -146,10 +146,10 @@ provider has a key on file.
 | `/disconnect <provider> [--force]` | Remove a provider from the pool. Default (drain) mode waits for any in-flight turn to finish. `--force` signals a cooperative cancel, waits 500 ms, then aborts. |
 | `/use <provider>` | Switch the active provider. As of v0.17.0 the conversation history is preserved across the switch — `tool_use_id`s are provider-namespaced so subsequent turns on the new provider can safely see prior tool calls. For one-off routing without changing the active provider, use the `@<provider>` prefix. |
 | `/model` | Open the model picker (no args), or switch directly: `/model gemini-2.5-pro`. As of v0.17.0 the picker lists every connected provider's models; selecting a model from a different provider switches the active provider too. Selection persists per provider to `~/.savvagent/models.toml`. |
-| `/theme` | Open the theme picker (no args), or switch directly: `/theme tokyo-night`. Persists to `~/.savvagent/theme.toml`. |
-| `/language` | Open the locale picker. Persists to `~/.savvagent/language.toml`. Ships with en / es / pt / hi; falls back to en for missing keys. |
+| `/theme` | Open the theme picker (no args), or switch directly: `/theme tokyo-night`. Persists to `~/.savvagent/config.toml` under `[theme].name`. |
+| `/language` | Open the locale picker. Persists to `~/.savvagent/config.toml` under `[language].code`. Ships with en / es / pt / hi; falls back to env detection, then en, when the saved value is missing or invalid. |
 | `/plugins` | Open the plugin manager — toggle optional plugins on/off; core plugins can't be disabled. Persists to `~/.savvagent/plugins.toml`. |
-| `/update` | Re-run the latest-release install. The TUI checks for new releases on launch AND re-checks every 2 hours while the TUI is open, auto-installing any newer release (the banner above the prompt reports progress). `/update` is only needed to retry after a failed install or to force the install before the next 2-hour tick. Replaces every binary in the release archive — `savvagent` plus the six helpers. Opt out with `SAVVAGENT_NO_UPDATE_CHECK=1` or `--no-update-check`. |
+| `/update` | Re-run the latest-release install. The TUI checks for new releases on launch AND re-checks while the TUI is open using `~/.savvagent/config.toml`'s `[update].periodic_interval_secs` (default 300 seconds), auto-installing any newer release (the banner above the prompt reports progress). Set `[update].disabled = true` to turn it off in config; `SAVVAGENT_NO_UPDATE_CHECK=1` or `--no-update-check` remain override switches for CI/scripting. Replaces every binary in the release archive — `savvagent` plus the six helpers. |
 | `/save` | Write the current transcript to `~/.savvagent/transcripts/<unix>.json`. |
 | `/save-canvas [path] [--block N] [--open]` | Write the most recent HTML canvas to a file. Default path is `savvagent-canvas-<id>.html` in the current directory. `--block N` targets a specific canvas by id; `--open` opens the file in the system browser after writing. |
 | `/resume` | Re-open a previously-saved transcript and continue from where it ended. With no args opens a picker; takes an absolute path or a bare basename relative to `~/.savvagent/transcripts/`. |
@@ -462,6 +462,16 @@ connect_timeout_ms = 3000
 [migration]
 # Set to true after the first-launch migration picker has run.
 v1_done = true
+
+[language]
+code = "en"
+
+[theme]
+name = "dark"
+
+[update]
+periodic_interval_secs = 300
+disabled = false
 ```
 
 First-time users with multiple keys already in the keyring see a one-time
@@ -919,7 +929,7 @@ args = []
 | `SAVVAGENT_TOOL_WEB_BIN` | `savvagent` | `savvagent-tool-web` (PATH) | Path to the web tool binary. |
 | `SAVVAGENT_BRAVE_API_KEY` / `BRAVE_API_KEY` | `savvagent-tool-web` | (unset) | API key for `web_search` via the Brave Search API. |
 | `SAVVAGENT_SEARXNG_URL` | `savvagent-tool-web` | (unset) | Base URL of a self-hosted SearXNG instance, used for `web_search` if no Brave key is set. |
-| `SAVVAGENT_NO_UPDATE_CHECK` | `savvagent` | (unset) | When set, disables the launch-time and periodic (2-hour) version check, and the `/update` slash command. CLI equivalent: `--no-update-check`. |
+| `SAVVAGENT_NO_UPDATE_CHECK` | `savvagent` | (unset) | Override switch for CI/scripting: when set, disables the launch-time and periodic update check regardless of `[update]` config, and disables `/update`. CLI equivalent: `--no-update-check`. |
 | `ANTHROPIC_API_KEY` | `savvagent-anthropic` | — | Read at server start. In-process flow gets it from `/connect`. |
 | `ANTHROPIC_BASE_URL` | `savvagent-anthropic` | `https://api.anthropic.com` | For local mocks. |
 | `SAVVAGENT_ANTHROPIC_LISTEN` | `savvagent-anthropic` | `127.0.0.1:8787` | Bind address. |
@@ -940,10 +950,8 @@ args = []
 |---|---|---|
 | `~/.savvagent/transcripts/<unix_secs>.json` | TUI | One pretty-printed `Vec<spp::Message>` per save (auto on `TurnComplete`, manual on `/save`). |
 | `~/.savvagent/canvases/<unix>-<turn>-<block>.html` | `internal:html-canvas` plugin | Auto-exported HTML source for each finalized canvas. Written with `0o600` permissions. Present only when the plugin is enabled. |
-| `~/.savvagent/config.toml` | TUI startup + `/mcp` | Startup connection policy (`opt-in` / `all` / `last-used` / `none`), `startup_providers`, `connect_timeout_ms`, one-time migration flag, and `[[mcp_servers]]` entries for user-configured stdio/HTTP MCP servers. Created automatically on first launch when multiple keyring entries are found. |
+| `~/.savvagent/config.toml` | TUI startup, `/theme`, `/language`, `/mcp`, `internal:self-update` | Startup connection policy (`opt-in` / `all` / `last-used` / `none`), `startup_providers`, per-provider `connect_timeout_ms`, one-time migration flag, `[language].code`, `[theme].name`, `[update]` settings (`periodic_interval_secs`, `disabled`), and `[[mcp_servers]]` entries for user-configured stdio/HTTP MCP servers. Created automatically on first launch when multiple keyring entries are found, and updated when those features persist settings. |
 | `~/.savvagent/models.toml` | `/model` | `{ providers: { id = model } }`. Re-applied at `/connect`. |
-| `~/.savvagent/theme.toml` | `/theme` | Selected theme slug. |
-| `~/.savvagent/language.toml` | `/language` | Selected locale code. |
 | `~/.savvagent/plugins.toml` | `/plugins` | Optional plugin enabled-set. Core plugins ignore this file. |
 | `~/.savvagent/sandbox.toml` | `/sandbox` | Sandbox mode + per-tool `allow_net` overrides. |
 | `~/.savvagent/permissions.toml` | host | Per-tool / per-pattern permission verdicts. |
