@@ -45,7 +45,10 @@ impl std::fmt::Debug for HttpAuth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HttpAuth::None => write!(f, "None"),
-            HttpAuth::Bearer { .. } => f.debug_struct("Bearer").field("token", &"<redacted>").finish(),
+            HttpAuth::Bearer { .. } => f
+                .debug_struct("Bearer")
+                .field("token", &"<redacted>")
+                .finish(),
         }
     }
 }
@@ -578,9 +581,7 @@ mod tests {
         };
         match ep {
             ToolEndpoint::Stdio {
-                name,
-                env: got_env,
-                ..
+                name, env: got_env, ..
             } => {
                 assert_eq!(name, "custom");
                 assert_eq!(got_env, env);
