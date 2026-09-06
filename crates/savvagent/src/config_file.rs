@@ -32,6 +32,12 @@ pub struct ConfigFile {
     #[serde(default)]
     pub startup: StartupSection,
     #[serde(default)]
+    pub language: LanguageSection,
+    #[serde(default)]
+    pub theme: ThemeSection,
+    #[serde(default)]
+    pub update: UpdateSection,
+    #[serde(default)]
     pub migration: MigrationSection,
 }
 
@@ -57,6 +63,72 @@ impl Default for StartupSection {
 
 fn default_timeout() -> u64 {
     3000
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanguageSection {
+    #[serde(default = "default_language_code")]
+    pub code: String,
+}
+
+impl Default for LanguageSection {
+    fn default() -> Self {
+        Self {
+            code: default_language_code(),
+        }
+    }
+}
+
+fn default_language_code() -> String {
+    "en".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeSection {
+    #[serde(default = "default_theme_name")]
+    pub name: String,
+}
+
+impl Default for ThemeSection {
+    fn default() -> Self {
+        Self {
+            name: default_theme_name(),
+        }
+    }
+}
+
+fn default_theme_name() -> String {
+    "dark".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSection {
+    #[serde(default = "default_update_periodic_interval_secs")]
+    pub periodic_interval_secs: u64,
+    #[serde(default)]
+    pub disabled: bool,
+}
+
+impl Default for UpdateSection {
+    fn default() -> Self {
+        Self {
+            periodic_interval_secs: default_update_periodic_interval_secs(),
+            disabled: false,
+        }
+    }
+}
+
+impl UpdateSection {
+    pub fn effective_periodic_interval_secs(&self) -> u64 {
+        match self.periodic_interval_secs {
+            0 => default_update_periodic_interval_secs(),
+            interval => interval,
+        }
+    }
+}
+
+fn default_update_periodic_interval_secs() -> u64 {
+    300
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -101,6 +173,24 @@ impl ConfigFile {
         std::fs::write(path, text)
     }
 
+    pub fn save_language_section(path: &Path, language: LanguageSection) -> std::io::Result<()> {
+        let mut config = Self::load_or_default(path);
+        config.language = language;
+        config.save(path)
+    }
+
+    pub fn save_theme_section(path: &Path, theme: ThemeSection) -> std::io::Result<()> {
+        let mut config = Self::load_or_default(path);
+        config.theme = theme;
+        config.save(path)
+    }
+
+    pub fn save_update_section(path: &Path, update: UpdateSection) -> std::io::Result<()> {
+        let mut config = Self::load_or_default(path);
+        config.update = update;
+        config.save(path)
+    }
+
     pub fn to_startup_policy(&self) -> StartupConnectPolicy {
         let ids: Vec<ProviderId> = self
             .startup
@@ -114,6 +204,10 @@ impl ConfigFile {
             StartupPolicyKind::LastUsed => StartupConnectPolicy::LastUsed(ids),
             StartupPolicyKind::OptIn => StartupConnectPolicy::OptIn(ids),
         }
+    }
+
+    pub fn effective_update_periodic_interval_secs(&self) -> u64 {
+        self.update.effective_periodic_interval_secs()
     }
 }
 
@@ -129,6 +223,11 @@ mod tests {
         let cfg = ConfigFile::load_or_default(&path);
         assert_eq!(cfg.startup.policy, StartupPolicyKind::OptIn);
         assert!(cfg.startup.startup_providers.is_empty());
+        assert_eq!(cfg.language.code, "en");
+        assert_eq!(cfg.theme.name, "dark");
+        assert_eq!(cfg.update.periodic_interval_secs, 300);
+        assert_eq!(cfg.update.effective_periodic_interval_secs(), 300);
+        assert!(!cfg.update.disabled);
         assert!(!cfg.migration.v1_done);
     }
 
@@ -140,6 +239,10 @@ mod tests {
         cfg.startup.policy = StartupPolicyKind::OptIn;
         cfg.startup.startup_providers = vec!["anthropic".into(), "gemini".into()];
         cfg.startup.connect_timeout_ms = 4000;
+        cfg.language.code = "es".into();
+        cfg.theme.name = "light".into();
+        cfg.update.periodic_interval_secs = 900;
+        cfg.update.disabled = true;
         cfg.migration.v1_done = true;
         cfg.save(&path).unwrap();
 
@@ -150,6 +253,11 @@ mod tests {
             vec!["anthropic", "gemini"]
         );
         assert_eq!(loaded.startup.connect_timeout_ms, 4000);
+        assert_eq!(loaded.language.code, "es");
+        assert_eq!(loaded.theme.name, "light");
+        assert_eq!(loaded.update.periodic_interval_secs, 900);
+        assert_eq!(loaded.update.effective_periodic_interval_secs(), 900);
+        assert!(loaded.update.disabled);
         assert!(loaded.migration.v1_done);
     }
 
@@ -184,5 +292,83 @@ mod tests {
         // Falls back entirely to default on parse error.
         assert_eq!(cfg.startup.policy, StartupPolicyKind::OptIn);
         assert_eq!(cfg.startup.connect_timeout_ms, default_timeout());
+    }
+
+    #[test]
+    fn save_theme_section_preserves_existing_startup_and_migration_fields() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        let mut cfg = ConfigFile::default();
+        cfg.startup.policy = StartupPolicyKind::LastUsed;
+        cfg.startup.startup_providers = vec!["anthropic".into()];
+        cfg.startup.connect_timeout_ms = 4321;
+        cfg.migration.v1_done = true;
+        cfg.language.code = "pt".into();
+        cfg.theme.name = "dark".into();
+        cfg.update.periodic_interval_secs = 600;
+        cfg.save(&path).unwrap();
+
+        ConfigFile::save_theme_section(
+            &path,
+            ThemeSection {
+                name: "light".into(),
+            },
+        )
+        .unwrap();
+
+        let loaded = ConfigFile::load_or_default(&path);
+        assert_eq!(loaded.startup.policy, StartupPolicyKind::LastUsed);
+        assert_eq!(loaded.startup.startup_providers, vec!["anthropic"]);
+        assert_eq!(loaded.startup.connect_timeout_ms, 4321);
+        assert!(loaded.migration.v1_done);
+        assert_eq!(loaded.language.code, "pt");
+        assert_eq!(loaded.theme.name, "light");
+        assert_eq!(loaded.update.periodic_interval_secs, 600);
+    }
+
+    #[test]
+    fn malformed_theme_entry_falls_back_to_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "[theme]\nname = 42\n").unwrap();
+
+        let cfg = ConfigFile::load_or_default(&path);
+
+        assert_eq!(cfg.language.code, "en");
+        assert_eq!(cfg.theme.name, "dark");
+        assert_eq!(cfg.update.periodic_interval_secs, 300);
+        assert!(!cfg.update.disabled);
+    }
+
+    #[test]
+    fn zero_update_interval_falls_back_to_default_effective_interval() {
+        let mut cfg = ConfigFile::default();
+        cfg.update.periodic_interval_secs = 0;
+
+        assert_eq!(cfg.update.effective_periodic_interval_secs(), 300);
+        assert_eq!(cfg.effective_update_periodic_interval_secs(), 300);
+    }
+
+    #[test]
+    fn save_language_and_update_sections_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        ConfigFile::save_language_section(&path, LanguageSection { code: "hi".into() }).unwrap();
+        ConfigFile::save_update_section(
+            &path,
+            UpdateSection {
+                periodic_interval_secs: 1200,
+                disabled: true,
+            },
+        )
+        .unwrap();
+
+        let loaded = ConfigFile::load_or_default(&path);
+        assert_eq!(loaded.language.code, "hi");
+        assert_eq!(loaded.update.periodic_interval_secs, 1200);
+        assert_eq!(loaded.effective_update_periodic_interval_secs(), 1200);
+        assert!(loaded.update.disabled);
     }
 }
