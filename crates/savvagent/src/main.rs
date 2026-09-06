@@ -2597,6 +2597,13 @@ pub(crate) fn translate_turn_event_to_host_event(
                 success: true,
             })
         }
+        TurnEvent::Cancelled { .. } | TurnEvent::AbortedAfterGrace { .. } => {
+            *last_tool_call_id = None;
+            current_turn_id.take().map(|turn_id| savvagent_plugin::HostEvent::TurnEnd {
+                turn_id,
+                success: false,
+            })
+        }
         TurnEvent::SubagentStop {
             agent_name,
             success,
@@ -2611,8 +2618,6 @@ pub(crate) fn translate_turn_event_to_host_event(
         | TurnEvent::PermissionRequested { .. }
         | TurnEvent::BashNetworkRequested { .. }
         | TurnEvent::ToolCallDenied { .. }
-        | TurnEvent::Cancelled { .. }
-        | TurnEvent::AbortedAfterGrace { .. }
         | TurnEvent::ResourceUpdated { .. }
         | TurnEvent::HtmlBlockStart { .. }
         | TurnEvent::HtmlBlockDelta { .. }
@@ -2800,12 +2805,8 @@ async fn run_app(
     // - `next_turn_id`: incremented at each new turn (the first
     //   `IterationStarted` after `current_turn_id` is `None`).
     // - `current_turn_id`: the id assigned to the in-flight turn, used to
-    //   match `TurnStart`/`TurnEnd` payloads. Cleared on TurnComplete /
-    //   WorkerMsg::Error.
-    // - `footer_turn_pending`: flips on prompt submission and stays true
-    //   until the model turn ends, so the footer spinner covers the
-    //   request-in-flight gap before the first `IterationStarted`.
-    //   `/bash` does not toggle it.
+    //   match `TurnStart`/`TurnEnd` payloads. Cleared on terminal turn
+    //   outcomes and WorkerMsg::Error.
     // - `next_tool_call_id`: minted per `ToolCallStarted`.
     // - `last_tool_call_id`: tracks the most recent unfinished tool call so
     //   that the matching `ToolCallFinished` emits the same `call_id`.
@@ -2815,7 +2816,6 @@ async fn run_app(
     //   payload so we only emit when the value actually moves.
     let mut next_turn_id: u32 = 0;
     let mut current_turn_id: Option<u32> = None;
-    let mut footer_turn_pending = false;
     let mut next_tool_call_id: u64 = 0;
     let mut last_tool_call_id: Option<u64> = None;
     let mut last_emitted_ctx: u32 = 0;
@@ -2887,22 +2887,13 @@ async fn run_app(
 
         let frame_area = terminal.get_frame().area();
         let frame_data = ui::compute_home_frame_data(app, frame_area).await;
-        let footer_turn_active = footer_turn_pending || current_turn_id.is_some();
-        terminal.draw(|f| ui::render(app, f, &frame_data, render_tick, footer_turn_active))?;
+        terminal.draw(|f| ui::render(app, f, &frame_data, render_tick, current_turn_id.is_some()))?;
         render_tick = render_tick.wrapping_add(1);
 
         while let Ok(msg) = worker_rx.try_recv() {
             match msg {
                 WorkerMsg::Event(e) => {
                     let was_complete = matches!(e, TurnEvent::TurnComplete { .. });
-                    if matches!(
-                        e,
-                        TurnEvent::TurnComplete { .. }
-                            | TurnEvent::Cancelled { .. }
-                            | TurnEvent::AbortedAfterGrace { .. }
-                    ) {
-                        footer_turn_pending = false;
-                    }
                     // Capture the canvas id before apply_turn_event consumes
                     // the event and removes the index from html_block_index_to_id.
                     let html_block_stop_id = if let TurnEvent::HtmlBlockStop { index } = &e {
@@ -2974,7 +2965,6 @@ async fn run_app(
                 }
                 WorkerMsg::Error(msg) => {
                     app.is_loading = false;
-                    footer_turn_pending = false;
                     app.entries.push(Entry::Note(format!("Error: {msg}")));
                     app.update_metrics();
                     // A runner error terminates the turn without a
@@ -3339,7 +3329,6 @@ async fn run_app(
                             app.push_user(value.clone());
                             app.input_textarea = make_input_textarea(Vec::<String>::new());
                             app.is_loading = true;
-                            footer_turn_pending = true;
                             // Fire HostEvent::PromptSubmitted so hook
                             // subscribers (transcript loggers, telemetry,
                             // future custom prompt-rewriters) see the
@@ -3368,9 +3357,21 @@ async fn run_app(
                             if let Some(reason) = app.pending_turn_cancellation.take() {
                                 app.push_note(format!("[blocked] {reason}"));
                                 app.is_loading = false;
-                                footer_turn_pending = false;
                                 app.pending_prompt_prefix = None;
                                 continue;
+                            }
+                            next_turn_id = next_turn_id.saturating_add(1);
+                            current_turn_id = Some(next_turn_id);
+                            if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                                app,
+                                savvagent_plugin::HostEvent::TurnStart {
+                                    turn_id: next_turn_id,
+                                },
+                                0,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %err, "TurnStart dispatch failed");
                             }
                             let prefix = app.pending_prompt_prefix.take();
 
