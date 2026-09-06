@@ -5769,7 +5769,7 @@ dependencies = [
 
 [[package]]
 name = "provider-anthropic"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5792,7 +5792,7 @@ dependencies = [
 
 [[package]]
 name = "provider-gemini"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5815,7 +5815,7 @@ dependencies = [
 
 [[package]]
 name = "provider-local"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5835,7 +5835,7 @@ dependencies = [
 
 [[package]]
 name = "provider-openai"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6951,7 +6951,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7017,7 +7017,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-canvas"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -7036,11 +7036,11 @@ dependencies = [
 
 [[package]]
 name = "savvagent-fence"
-version = "0.23.0"
+version = "0.23.1"
 
 [[package]]
 name = "savvagent-host"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7070,7 +7070,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-mcp"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "async-trait",
  "savvagent-protocol",
@@ -7083,7 +7083,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-plugin"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "async-trait",
  "savvagent-protocol",
@@ -7094,7 +7094,7 @@ dependencies = [
 
 [[package]]
 name = "savvagent-plugin-wasm"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -7120,14 +7120,14 @@ dependencies = [
 
 [[package]]
 name = "savvagent-plugin-wit"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "wit-parser 0.250.0",
 ]
 
 [[package]]
 name = "savvagent-protocol"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "schemars",
  "serde",
@@ -8654,7 +8654,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "tool-bash"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "rmcp",
@@ -8670,7 +8670,7 @@ dependencies = [
 
 [[package]]
 name = "tool-fs"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "globset",
@@ -8688,7 +8688,7 @@ dependencies = [
 
 [[package]]
 name = "tool-grep"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "grep-matcher",
@@ -8708,7 +8708,7 @@ dependencies = [
 
 [[package]]
 name = "tool-lsp"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8729,7 +8729,7 @@ dependencies = [
 
 [[package]]
 name = "tool-web"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "anyhow",
  "axum",

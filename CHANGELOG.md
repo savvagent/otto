@@ -8,6 +8,15 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.23.1 - 2026-09-06
+
+### Fixed
+
+- Release-note traceability for the `~/.savvagent/config.toml` consolidation shipped in #44. The
+  `0.23.0` changelog entry now explicitly documents the breaking removal of the legacy
+  `~/.savvagent/language.toml` and `~/.savvagent/theme.toml` files and the move to `[language]`,
+  `[theme]`, and `[update]` sections in the shared config file. (#21)
+
 ## 0.23.0 - 2026-09-06
 
 ### Added
