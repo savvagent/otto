@@ -2220,7 +2220,14 @@ mod connect_tests {
             &endpoints,
             Path::new("."),
             &SandboxConfig::default(),
-            Duration::from_millis(200),
+            // 200ms was too tight for slower/loaded CI runners (macOS in
+            // particular): the deadline could elapse before the fixture
+            // binary even finished spawning and writing its pid file,
+            // failing the test on an unrelated race rather than exercising
+            // the intended list_tools-hang timeout. 3s gives spawn/handshake
+            // ample headroom while still keeping the test fast, since the
+            // fixture hangs list_tools forever regardless of deadline length.
+            Duration::from_millis(3000),
             deny_resolver(),
             tx,
         )
