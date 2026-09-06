@@ -117,7 +117,6 @@ impl std::fmt::Display for IndexBuildError {
 impl std::error::Error for IndexBuildError {}
 
 impl Indexes {
-    const USER_SLASH_COMMANDS_PLUGIN_ID: &str = "internal:user-slash-commands";
     /// Look up the plugin id that owns the canonical content renderer for
     /// `block_type`. Returns `None` if no enabled plugin claims that type.
     #[allow(dead_code)] // used by Task 15+ (TUI canvas dispatch)
@@ -182,22 +181,6 @@ impl Indexes {
         pid: &PluginId,
     ) -> Result<(), IndexBuildError> {
         if let Some(existing) = idx.slash.get(&s.name).cloned() {
-            let existing_is_exit_shadow = Self::is_user_defined_exit_shadow(&s.name, &existing);
-            let new_is_exit_shadow = Self::is_user_defined_exit_shadow(&s.name, pid);
-
-            if existing_is_exit_shadow || new_is_exit_shadow {
-                tracing::warn!(
-                    slash = %s.name,
-                    existing = %existing.as_str(),
-                    incoming = %pid.as_str(),
-                    "user-defined /exit conflicts with an existing slash owner; keeping the builtin winner"
-                );
-                if existing_is_exit_shadow && !new_is_exit_shadow {
-                    idx.slash.insert(s.name, pid.clone());
-                }
-                return Ok(());
-            }
-
             return Err(IndexBuildError::SlashConflict {
                 name: s.name,
                 a: existing,
@@ -206,10 +189,6 @@ impl Indexes {
         }
         idx.slash.insert(s.name, pid.clone());
         Ok(())
-    }
-
-    fn is_user_defined_exit_shadow(name: &str, pid: &PluginId) -> bool {
-        pid.as_str() == Self::USER_SLASH_COMMANDS_PLUGIN_ID && name == "exit"
     }
 
     fn insert_screen(
