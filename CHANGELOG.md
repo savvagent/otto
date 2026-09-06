@@ -8,6 +8,12 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.22.1 - 2026-09-06
+
+### Fixed
+
+- **Ratatui footer busy indicator.** Replaced the static working-state status text treatment with a circular `tui-spinner` animation in the terminal footer while a model turn is in progress, while preserving the existing idle footer behavior and footer-slot styling. (#27)
+
 ## 0.22.0 - 2026-09-06
 
 ### Changed
