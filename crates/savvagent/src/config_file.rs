@@ -176,11 +176,16 @@ pub struct MigrationSection {
 }
 
 impl ConfigFile {
+    fn path_under(root: PathBuf) -> PathBuf {
+        root.join(".savvagent").join("config.toml")
+    }
+
+    pub fn default_path_if_home() -> Option<PathBuf> {
+        dirs::home_dir().map(Self::path_under)
+    }
+
     pub fn default_path() -> PathBuf {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".savvagent")
-            .join("config.toml")
+        Self::default_path_if_home().unwrap_or_else(|| Self::path_under(PathBuf::from(".")))
     }
 
     /// Load from `path`, falling back to [`Self::default`] on file-not-found
