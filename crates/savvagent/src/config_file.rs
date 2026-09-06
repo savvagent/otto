@@ -2,6 +2,7 @@
 //! Single source of truth for non-routing knobs (startup connect policy,
 //! per-provider connect timeout, migration_v1_done marker).
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::plugin::builtin::{
@@ -325,14 +326,20 @@ fn write_root(path: &Path, root: &Table) -> std::io::Result<()> {
 }
 
 fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("toml.tmp");
-    std::fs::write(&tmp, text)?;
-    match std::fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = std::fs::remove_file(&tmp);
-            Err(error)
-        }
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    tmp.write_all(text.as_bytes())?;
+    tmp.as_file().sync_all()?;
+    tmp.persist(path)?;
+    sync_parent_dir(dir);
+    Ok(())
+}
+
+fn sync_parent_dir(dir: &Path) {
+    if let Ok(parent) = std::fs::File::open(dir)
+        && let Err(error) = parent.sync_all()
+    {
+        tracing::debug!(parent = %dir.display(), %error, "config.toml parent-dir fsync skipped");
     }
 }
 
@@ -786,6 +793,25 @@ code = "en"
         assert!(
             !path.with_extension("toml.tmp").exists(),
             "atomic section save should rename away its sibling tmp file"
+        );
+    }
+
+    #[test]
+    fn save_replaces_existing_file_contents() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "stale = true\n").unwrap();
+
+        let mut cfg = ConfigFile::default();
+        cfg.language.code = "es".into();
+        cfg.save(&path).unwrap();
+
+        let loaded = ConfigFile::load_or_default(&path);
+        assert_eq!(loaded.language.code, "es");
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("stale = true")
         );
     }
 }
