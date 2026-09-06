@@ -122,6 +122,17 @@ recent released heading when the release PR (Task 9's final note) is actually op
       TransportKind, pub state: ConnectState }` to `tools.rs`.
 - [ ] Add a `statuses: Vec<ToolServerStatus>` field to `ToolRegistry`; populate it during `connect()`
       for every endpoint (success and failure); add `pub fn statuses(&self) -> &[ToolServerStatus]`.
+- [ ] **Timeout plumbing (blocking fix from plan-review round 1):** `ToolRegistry::connect`'s current
+      signature (`endpoints: &[ToolEndpoint], project_root: &Path, sandbox: &SandboxConfig,
+      bash_net_resolver: BashNetResolverHandle, resource_tx: mpsc::Sender<ResourceEvent>`) has no
+      timeout parameter. Add `connect_timeout: std::time::Duration` as a new parameter. Update all
+      three call sites in `crates/savvagent-host/src/session.rs` (`Host::start` ~line 577,
+      `Host::with_components` ~line 682, and the test-only construction ~line 3548) to pass
+      `Duration::from_millis(config.connect_timeout_ms)` (the field already exists on `HostConfig`,
+      currently used only for provider auto-connect — this reuses it for tool connect too, per spec
+      §2, rather than inventing a second timeout constant). The test call site (~3548) should pass
+      whatever duration that specific test needs (short, if it's exercising timeout behavior; the
+      existing default otherwise).
 - [ ] Rework `connect()`'s per-endpoint loop: replace the `?`-propagating `anyhow::bail!`/`with_context`
       chain for the non-bash `Stdio` arm with the two-stage `tokio::time::timeout_at` shape from the
       spec's §2 (bind `service` in an outer scope as soon as `serve()` returns; timeout/error before
@@ -207,10 +218,29 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `invalid_policy_string_falls_back_to_default`/`missing_file_returns_default` tests updated for
       the new `LoadedConfig` return shape (should still pass conceptually unchanged, just accessed via
       `.config`).
-- [ ] Update every caller of `ConfigFile::load_or_default` (`crates/savvagent/src/main.rs`'s
-      `bootstrap_app_and_host`, and any test fixtures) to destructure `LoadedConfig` — this is
-      compile-error-driven, so run `cargo check -p savvagent --all-targets` after the signature change
-      and fix every call site.
+- [ ] **Update every caller of `ConfigFile::load_or_default` (blocking fix from plan-review round 1
+      — the full caller list, not just `main.rs`):**
+      `crates/savvagent/src/main.rs:260` (`bootstrap_app_and_host`) — destructure `LoadedConfig`,
+      threading `mcp_server_diagnostics` into the startup-notes path (this is Task 6's job; here just
+      make it compile by taking `.config` and stashing diagnostics in a local the Task 6 change will
+      consume).
+      `crates/savvagent/src/egui_app/mod.rs:597` — same treatment as `main.rs` (destructure, forward
+      diagnostics wherever that path surfaces startup notes to the GUI).
+      `crates/savvagent/src/plugin/builtin/migration_picker/mod.rs:53,91,206` — three call sites; this
+      plugin both reads and rewrites `config.toml` for provider migration. Decide explicitly: (a) each
+      read site takes `.config` and ignores `mcp_server_diagnostics` (acceptable since migration_picker
+      only touches `startup`/`migration`, never `mcp_servers`), and (b) any site that calls
+      `cfg.save(path)` afterward must confirm `ConfigFile::save`'s reserialization does not corrupt or
+      drop `mcp_servers` entries that came from the tolerant decode — since `save` still round-trips
+      through the typed `Vec<McpServerEntry>` (only `/mcp`'s dedicated writer in Task 4 avoids that),
+      a migration_picker write will silently drop any row that failed tolerant parsing. Document this
+      as an accepted limitation in the PR body (migration_picker's writes are rare, one-time, opt-in
+      first-launch flows, not the routine add/remove path Task 4's regression test protects) — do not
+      attempt to route migration_picker's writes through Task 4's writer, since that would entangle two
+      unrelated features; simply confirm in a test that migration_picker's save path still preserves
+      all typed fields it's actually responsible for.
+      This is compile-error-driven, so run `cargo check -p savvagent --all-targets` after the signature
+      change and confirm no other call sites were missed.
 - [ ] Run `cargo test -p savvagent`. Confirm green.
 - [ ] Public-interface check: `ConfigFile::load_or_default`'s return-type change is internal-only per
       spec (no external callers; `crates/savvagent` is the TUI binary crate) — note this explicitly in
@@ -307,19 +337,69 @@ recent released heading when the release PR (Task 9's final note) is actually op
 - Create: `crates/savvagent/src/plugin/builtin/mcp/mod.rs`,
   `crates/savvagent/src/plugin/builtin/mcp/screen.rs`
 - Modify: `crates/savvagent/src/plugin/builtin/mod.rs`, `crates/savvagent/src/plugin/mod.rs`
+- Modify: `crates/savvagent-plugin/src/event.rs` — new `HostEvent::ToolServersReady` variant and a
+  new plain DTO type (plugin-ABI-visible; confirmed `savvagent-plugin` has zero dependency on
+  `savvagent-host` per its `Cargo.toml`'s "Intentionally NO ratatui, crossterm, tokio runtime,
+  anyhow" comment and WIT-portability rule — this DTO must not reference `savvagent-host` types).
+- Modify: `crates/savvagent/src/main.rs` — emit `HostEvent::ToolServersReady` once after
+  `Host::start` succeeds in bootstrap (mirroring the existing `HostEvent::ProviderRegistered`/
+  `Connect` dispatch calls in `perform_connect`, e.g. around `main.rs:2500`).
 
 - [ ] Read `crates/savvagent/src/plugin/builtin/connect/mod.rs` and `screen.rs` in full immediately
       before starting this task (already read once during spec drafting — re-read for exact ABI
       shape: `Manifest`/`Contributions`/`SlashSpec`/`ScreenSpec`/`ScreenLayout`/`Effect::OpenScreen`/
-      `create_screen`).
+      `create_screen`, and specifically the `candidates`-cache-via-`on_event` pattern the bridge
+      design below reuses).
+- [ ] **Plugin-ABI status bridge (blocking fix from plan-review round 1 — concrete design, not
+      deferred to implementation time):** `Plugin`/`Screen` trait methods have no direct `&Host`
+      access (confirmed: `Plugin::create_screen` takes only `(&self, id: &str, args: ScreenArgs)`,
+      and `savvagent-plugin` cannot depend on `savvagent-host`'s `ToolServerStatus`/`ConnectState`/
+      `TransportKind` types directly — that would violate the crate-boundary/WIT-portability rule).
+      The bridge is the same pattern `ConnectPlugin` already uses for `HostEvent::ProviderRegistered`
+      (`crates/savvagent/src/plugin/builtin/connect/mod.rs`'s `candidates: Vec<(ProviderId, String)>`
+      field, updated in `on_event` and read by `create_screen`):
+      1. Add plain (non-`savvagent-host`-dependent) types to `crates/savvagent-plugin/src/event.rs`:
+         `pub enum ToolTransportKind { Stdio, Http }`, `pub enum ToolConnectState { Connected, Failed
+         { reason: String } }`, `pub struct ToolServerStatusInfo { pub name: String, pub transport:
+         ToolTransportKind, pub state: ToolConnectState }` — all three deriving `Debug, Clone,
+         PartialEq, Eq` to match `HostEvent`'s own derive list — and a new
+         `HostEvent::ToolServersReady { statuses: Vec<ToolServerStatusInfo> }` variant (with its
+         `HookKind` mapping entry, mirroring every other `HostEvent` variant's treatment in
+         `event.rs`). **Public-interface check:** confirmed `HostEvent` (`crates/savvagent-plugin/
+         src/event.rs`) is **not** `#[non_exhaustive]` today, so adding this variant **is a breaking
+         change** for any external exhaustive `match HostEvent { ... }` (e.g. a WASM plugin compiled
+         against the old ABI) — this must be called out in the PR body per Rule 6 with the same
+         treatment as `ToolEndpoint` in Task 1, and folded into this feature's single MINOR version
+         bump (not a second separate bump). Do not mark `HostEvent` `#[non_exhaustive]` as part of
+         this change unless the spec is updated first — that's a separate, its own scope decision
+         and out of bounds for this plan; simply document the breakage.
+      2. In `crates/savvagent/src/main.rs`, after `Host::start(config).await` succeeds in
+         `bootstrap_pool_host` (and the equivalent GUI bootstrap path if one exists — check
+         `egui_app`), convert `host.tool_server_statuses()` (the `savvagent-host`-side type from
+         Task 2) into `Vec<ToolServerStatusInfo>` and dispatch `HostEvent::ToolServersReady` via
+         `crate::plugin::effects::dispatch_host_event` exactly like the existing
+         `ProviderRegistered`/`Connect` dispatches. Since v1 has no live reconnect, this fires exactly
+         once per app launch — no ongoing subscription/polling needed.
+      3. `McpPlugin` (this task) subscribes to `HookKind::ToolServersReady` in its `Manifest`
+         (mirroring `ConnectPlugin`'s `HookKind::ProviderRegistered` subscription), caches the
+         `Vec<ToolServerStatusInfo>` in a plugin-owned field on `on_event`, and passes a clone of that
+         cache to `McpManagerScreen` in `create_screen` — exactly the same shape as
+         `ConnectPlugin::candidates`/`ConnectPickerScreen::with_candidates`.
+      4. **Combine with configured-but-not-yet-connected servers (advisory note from plan-review
+         round 1, addressed here):** a server that failed `McpServerEntry::validate` or had an
+         unreadable keyring secret in Task 6 never became a `ToolEndpoint` at all, so it will never
+         appear in `tool_server_statuses()`. `McpManagerScreen` must show the full configured list
+         from `config_file.mcp_servers` (passed in alongside the status cache, sourced the same way
+         Task 6 already reads it) merged with the live status cache by name — entries present in
+         config but absent from the status cache are rendered as a distinct "not started: <reason>"
+         row (reusing whatever diagnostic string Task 6's skip-with-note path already produced),
+         never conflated with `ConnectState::Failed` (which means "we tried to connect and it
+         failed", a different condition from "we never tried because validation/secret-resolution
+         failed first").
 - [ ] `mod.rs`: `McpPlugin` registers slash command `"mcp"` (no args → open `mcp.manager` screen,
       matching `connect`'s no-arg behavior) and screen id `"mcp.manager"`. `create_screen` builds
-      `McpManagerScreen` seeded from `Host::tool_server_statuses()` (accessed via whatever the plugin
-      ABI's existing host-access pattern is — check how `connect`/other builtins reach `Host` state,
-      since `Plugin` trait methods may not have direct `&Host` access; this may require adding a new
-      `HostEvent`/hook or reading the pattern used by e.g. `splash`'s connect-status display, which
-      likely already solves an equivalent "screen needs live host state" problem — read `splash/`
-      before designing this).
+      `McpManagerScreen` from the cached `Vec<ToolServerStatusInfo>` plus the configured-server list,
+      per the bridge design above.
 - [ ] `screen.rs`: `McpManagerScreen` lists configured servers (name, transport, status) — reuse
       whatever list/table rendering helper `connect/screen.rs`'s `ConnectPickerScreen` or another
       existing picker screen already provides, rather than writing new ratatui rendering from scratch.
@@ -367,6 +447,14 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `toml_edit` dependency) and `### Changed`/`### Breaking` (per this repo's existing changelog
       section conventions — check the most recent `[Unreleased]` or prior release heading for the
       exact section names used) entries under `[Unreleased]`.
+- [ ] Validate: run `cargo test --doc -p savvagent-host -p savvagent` (catches broken doc-comment
+      code fences/links touched by this task, since `config.rs`/`session.rs` doc comments referenced
+      by README/PRD prose were touched in earlier tasks) and grep the modified docs for any now-stale
+      cross-references (e.g. confirm no remaining "`/connect` is the only writer" phrasing survives
+      outside the intended `CLAUDE.md` edit). This is the doc-equivalent of every other task's
+      pre-commit test run — there is no repo-specific markdown linter to invoke, so this substitutes
+      a targeted check for the kind of breakage doc edits can actually cause here (dead links, stale
+      invariant text, broken doc-tests).
 - [ ] Commit: `docs: document user-configured MCP servers`.
 
 ## Task 9: Final verification, PR, release
@@ -383,9 +471,14 @@ recent released heading when the release PR (Task 9's final note) is actually op
 - [ ] Open the PR referencing `savvagent/savvagent-cli#36`, following this repo's PR-description
       conventions (summary, spec/plan links, breaking-change callout, test-plan section). Run the
       mandatory review trio (Rust-expert + architecture via `general-purpose`, security via
-      `security-review`) and the review-response subagent loop per the skill's Phase 4 rules.
-- [ ] After merge, cut a **MINOR** release per `RELEASING.md` in a separate release worktree/PR,
-      confirming the exact next version number against `CHANGELOG.md` at that time (per this plan's
-      Release-line note above).
+      `security-review`) and the review-response subagent loop per the skill's Phase 4 rules. Merge
+      once reviews pass.
+- [ ] **Release cut (explicit committed step, not a bare post-merge action):** in a separate release
+      worktree/branch per `RELEASING.md`'s documented procedure, bump the version to the next
+      **MINOR** (confirming the exact number against `CHANGELOG.md`'s most recent released heading at
+      this point in time, not hardcoded earlier in this plan), move the `[Unreleased]` CHANGELOG
+      entries under the new version heading, run whatever verification `RELEASING.md` prescribes
+      (build/test/artifact checks), commit the version bump + CHANGELOG move, tag, and open/merge the
+      release PR per that document's process.
 - [ ] File a follow-up issue for OAuth 2.1 + PKCE + dynamic client registration support, referencing
       this spec's Scope section for what v1 explicitly deferred.
