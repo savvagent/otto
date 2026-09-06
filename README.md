@@ -201,6 +201,9 @@ The first time you invoke a project-local command that includes `!<cmd>`, Savvag
 
 After editing a command file, run `/reload-commands` to rescan all four directories.
 
+`/exit` is reserved by the built-in session-termination command, so a user-defined
+`commands/exit.md` is ignored and logged as a warning during command discovery.
+
 ### `allowed-tools`
 
 Parsed but not yet enforced; reserved for the upcoming agents sub-project.

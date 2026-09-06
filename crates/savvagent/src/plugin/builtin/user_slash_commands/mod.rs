@@ -108,6 +108,10 @@ impl Plugin for UserSlashCommandsPlugin {
             // session-termination command instead of failing the whole app on
             // a manifest conflict.
             if d.name == "exit" {
+                tracing::warn!(
+                    path = %d.path.display(),
+                    "skipping reserved user slash command `/exit`"
+                );
                 continue;
             }
             let summary = d
