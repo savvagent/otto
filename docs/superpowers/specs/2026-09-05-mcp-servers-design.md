@@ -2,6 +2,7 @@
 
 Date: 2026-09-05
 Status: pending review
+Source: savvagent/savvagent-cli#36
 Related: `PRD.md:117` ("3rd-party MCP servers" architecture diagram entry this closes the gap on)
 
 ## Problem
@@ -90,8 +91,16 @@ new.
 ### 1. `ToolEndpoint::Http` (`crates/savvagent-host/src/config.rs`)
 
 ```rust
+#[non_exhaustive]
 pub enum ToolEndpoint {
-    Stdio { command: PathBuf, args: Vec<String> },
+    Stdio {
+        command: PathBuf,
+        args: Vec<String>,
+        /// Resolved (never `"keyring"`-sentinel) environment variables to
+        /// set on the spawned child, merged over the process's inherited
+        /// environment. Empty for the bundled `ToolBins` endpoints today.
+        env: HashMap<String, String>,
+    },
     Http { url: String, auth: HttpAuth },
 }
 
@@ -101,26 +110,73 @@ pub enum HttpAuth {
 }
 ```
 
-`token` is always a resolved secret by the time it reaches `HostConfig` — `savvagent-host` never
-reads a keyring or a config file; the embedder (TUI) resolves secrets before constructing
-`ToolEndpoint` values, exactly as it already does for provider API keys. This keeps
+`token`/`env` values are always resolved secrets by the time they reach `HostConfig` —
+`savvagent-host` never reads a keyring or a config file; the embedder (TUI) resolves secrets before
+constructing `ToolEndpoint` values, exactly as it already does for provider API keys. This keeps
 `savvagent-host` free of a `keyring`/`toml` dependency, preserving the crate-boundary invariant
 (`savvagent-host` is a library with no OS-credential-store awareness).
 
+`ToolRegistry`'s stdio spawn path (`crates/savvagent-host/src/tools.rs`, the `tokio::process::Command`
+construction shared by both the eager and lazy-bash arms) is extended to call `.envs(&env)` on the
+built command before wrapping it in `TokioChildProcess::new`, merging over (not replacing) whatever
+environment the process already inherits — the existing sandbox environment handling is untouched,
+`env` is applied in addition to it.
+
 ### 2. `ToolRegistry::connect` (`crates/savvagent-host/src/tools.rs`)
 
-Add an arm alongside the existing `ToolEndpoint::Stdio` handling in `connect()` (near line 399):
+**Per-endpoint failure isolation (blocking fix from spec review).** `connect()` today propagates the
+first endpoint failure via `?`, which aborts `Host::start` entirely — acceptable when every endpoint
+is a trusted bundled binary, but wrong once a user-configured server can be unreachable. `connect()`
+changes shape: each `ToolEndpoint` in `self.tools` is attempted independently inside a `match` arm
+that captures `Result<ToolServer, ConnectError>` instead of using `?` at the top level; a failure is
+recorded (see status record below) and iteration continues to the next endpoint. Only a failure that
+indicates a genuine programming/config error the embedder must know about before anything runs (there
+is none identified for this change) would still abort — endpoint-reachability failures never do.
+This is a behavior change to the *bundled*-tool path too (a missing bundled binary today already
+degrades gracefully per `ToolBins`'s `Option<PathBuf>` — this makes the underlying registry consistent
+with that, not looser).
+
+**Status record.** Add:
+
+```rust
+pub struct ToolServerStatus {
+    pub name: String,          // ToolServer label / configured mcp_servers name
+    pub transport: TransportKind, // Stdio | Http
+    pub state: ConnectState,   // Connected | Failed { reason: String }
+}
+```
+
+`ToolRegistry` gains a `statuses: Vec<ToolServerStatus>` field populated during `connect()` (both
+success and failure cases), and a `fn statuses(&self) -> &[ToolServerStatus]` accessor. `Host` exposes
+this as `Host::tool_server_statuses()` (§6) — this is the authoritative data source the `/mcp` screen
+reads; it is not derived from `eager_servers` alone (which only holds successes) or from an
+approximation on the embedder side.
+
+**Connection timeout.** The `Http` arm wraps `handler.serve(transport).await` in
+`tokio::time::timeout(CONNECT_TIMEOUT, ...)` (constant, e.g. 5000ms, matching the existing
+`connect_timeout_ms` convention `HostConfig` already uses for provider auto-connect — reuse that
+field's value rather than inventing a second timeout constant) so a hung remote handshake can't block
+`Host::start` indefinitely; a timeout is recorded as `ConnectState::Failed { reason: "connect timed
+out" }`, not a panic or an indefinite hang.
+
+Add the `Http` arm itself:
 
 ```rust
 ToolEndpoint::Http { url, auth } => {
     let transport = StreamableHttpClientTransport::from_config(
         StreamableHttpClientTransportConfig::with_uri(url.clone()),
     );
-    // `auth` becomes an Authorization header via the transport's client builder
-    // when `HttpAuth::Bearer` — `None` builds the transport with no auth header.
-    let service = handler.serve(transport).await?;
-    // list_all_tools, register routes, push ToolServer { label, service } —
-    // identical to the stdio arm from here on.
+    // HttpAuth::Bearer sets an Authorization: Bearer <token> header via
+    // rmcp's StreamableHttpClientTransportConfig::auth_header (rmcp 1.6,
+    // transport/streamable_http_client.rs) at transport-construction time;
+    // HttpAuth::None builds the transport with no auth header. The token
+    // is never logged — only passed to the header builder.
+    match tokio::time::timeout(connect_timeout, handler.serve(transport)).await {
+        Ok(Ok(service)) => { /* list_all_tools, register routes, push ToolServer,
+                                 record ConnectState::Connected */ }
+        Ok(Err(e)) => { /* record ConnectState::Failed { reason: e.to_string() } */ }
+        Err(_) => { /* record ConnectState::Failed { reason: "connect timed out" } */ }
+    }
 }
 ```
 
@@ -130,11 +186,12 @@ call has no local process to sandbox). This is a scope decision worth a one-line
 
 **Tool-name collisions.** `routes: HashMap<String, usize>` is a flat namespace. Bundled `ToolBins`
 entries are pushed into `HostConfig::tools` before configured `mcp_servers` entries (established by
-`ToolBins::apply` running first in the bootstrap sequence — see §3). `connect()` iterates
+`ToolBins::apply` running first in the bootstrap sequence — see §4). `connect()` iterates
 `self.tools` in order and inserts into `routes`; change the insert to skip (with a logged warning,
-surfaced as an `app.push_note`) rather than overwrite when a tool name already has a route. This
-gives bundled tools priority deterministically, matching the issue's requirement for "a defined
-resolution."
+surfaced as an `app.push_note`, and recorded as a `ConnectState::Failed { reason: "tool name '<n>'
+already registered by an earlier endpoint" }` entry in `statuses`) rather than overwrite when a tool
+name already has a route. This gives bundled tools priority deterministically, matching the issue's
+requirement for "a defined resolution."
 
 ### 3. `McpServersSection` (`crates/savvagent/src/config_file.rs`)
 
@@ -154,6 +211,10 @@ auth = "bearer"
 ```
 
 ```rust
+/// The `ConfigFile` struct itself is unchanged in shape at the type level;
+/// `mcp_servers` decoding is tolerant at the loader level (see below), not
+/// via a raw `Vec<toml::Value>` field — downstream code still sees
+/// `Vec<McpServerEntry>`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
     pub startup: StartupSection,
@@ -191,24 +252,71 @@ pub enum McpAuthMode {
 }
 ```
 
+**Tolerant per-entry loading (blocking fix from spec review).** Today `ConfigFile::load_or_default`
+does one whole-document `toml::from_str::<ConfigFile>(&contents)` and falls back entirely to
+`ConfigFile::default()` on any error — acceptable when the only failure mode is "the whole file is
+garbage," wrong once one bad `[[mcp_servers]]` entry (an unknown `transport`/`auth` tag, a missing
+required field) must not also discard valid `startup`/`migration` settings and every *other* valid
+`mcp_servers` entry. `load_or_default` changes internally (its signature also changes — see below) to:
+
+1. Parse the file contents into a `toml::Value` first (`contents.parse::<toml::Value>()`). A
+   syntactically broken file (unparsable TOML at all) still falls back to `ConfigFile::default()`
+   with zero diagnostics — this failure mode is unchanged and out of scope for this fix, which
+   targets *semantically* invalid individual `mcp_servers` rows in an otherwise well-formed file.
+2. Deserialize `startup`/`migration` from that `Value` as today (a top-level `ConfigFile`-shaped
+   deserialize with `mcp_servers` temporarily treated as an opaque `Vec<toml::Value>` via a small
+   `#[serde(skip)]`-adjacent internal type, or simply extracting the `mcp_servers` key from the
+   parsed table before doing the strongly-typed remainder — implementation is free to pick either
+   as long as a bad `mcp_servers` row cannot fail this step).
+3. Extract the raw `mcp_servers` array (default empty if the key is absent or not an array) and
+   attempt `McpServerEntry::deserialize` on each element independently. A per-element failure
+   produces a diagnostic string (`"mcp_servers[<index>] (name = \"<name-if-present>\"): <serde
+   error>"`) and is skipped; a success is appended to the returned `Vec<McpServerEntry>`.
+4. Return both the assembled `ConfigFile` and the diagnostics:
+
+```rust
+pub struct LoadedConfig {
+    pub config: ConfigFile,
+    /// One line per skipped mcp_servers entry, ready to hand to app.push_note.
+    pub mcp_server_diagnostics: Vec<String>,
+}
+
+impl ConfigFile {
+    pub fn load_or_default(path: &Path) -> LoadedConfig { /* ... */ }
+}
+```
+
+`bootstrap_app_and_host` (§4) surfaces each `mcp_server_diagnostics` entry via `app.push_note`,
+exactly like the resolution-time skip notes from validation/keyring-lookup failures — both are the
+same "here's a server I couldn't register and why" UX, just triggered at different phases.
+
 **Validation** (new `McpServerEntry::validate(&self, seen_names: &HashSet<String>) -> Result<(),
-String>`, called during bootstrap before any tool is registered): name non-empty, unique across
-`mcp_servers` (case-sensitive — bundled tool names `fs`/`bash`/`grep`/`lsp`/`web` are a different
-namespace, see §2's collision handling at the tool-name level, not the server-name level), no `:`
-character (reserved for the keyring account separator), `auth != Oauth`, `transport` not `sse` or
-anything unrecognized (serde already rejects unknown `transport` values as a deserialize error — that
-error is caught and turned into a per-entry skip-with-note rather than aborting `ConfigFile::load`
-for the whole file), and at most one `env` value equal to `"keyring"` for `Stdio`.
+String>`, called during bootstrap on every successfully-*parsed* entry, before any tool is
+registered — this runs after the tolerant-decode step above, on the entries that step 3 already
+turned into typed `McpServerEntry` values): name non-empty, unique across `mcp_servers`
+(case-sensitive — bundled tool names `fs`/`bash`/`grep`/`lsp`/`web` are a different namespace, see
+§2's collision handling at the tool-name level, not the server-name level), no `:` character
+(reserved for the keyring account separator), `auth != Oauth`, and at most one `env` value equal to
+`"keyring"` for `Stdio`. (`transport = "sse"`/anything unrecognized is already rejected one step
+earlier, during the tolerant per-entry deserialize in step 3 above — an unknown `#[serde(tag =
+"transport")]` value is a deserialize error for that element, producing a diagnostic there; it never
+reaches `McpServerEntry::validate` as a typed value at all.)
 
 ### 4. Bootstrap wiring (`crates/savvagent/src/main.rs`)
 
-Near `bootstrap_app_and_host` / `ToolBins::apply` (main.rs:137-154): after the bundled `ToolBins` are
-applied, iterate `config_file.mcp_servers`, validate each, resolve secrets (`creds::mcp_load(name)`
-for `Bearer`/keyring-env), and append the resulting `ToolEndpoint` via the same `.with_tool(...)`
-builder. A server that fails validation or whose keyring secret is missing/unreadable is skipped
-with an `app.push_note` (mirroring `/connect`'s `notes.keyring-store-failed` pattern) — never a
-startup abort, matching the issue's "Failure mode" requirement and this repo's error-handling
-invariant (no `unwrap()`, no silent fallback, actionable message).
+Near `bootstrap_app_and_host` / `ToolBins::apply` (main.rs:137-154): `ConfigFile::load_or_default`
+now returns `LoadedConfig { config, mcp_server_diagnostics }` (§3) — bootstrap first pushes a note for
+each `mcp_server_diagnostics` entry (bad TOML rows caught at parse time), then, after the bundled
+`ToolBins` are applied, iterates `config.mcp_servers` (already-typed, already-parsed entries),
+validates each, resolves secrets (`creds::mcp_load(name)` for `Bearer`/keyring-env), and appends the
+resulting `ToolEndpoint` via the same `.with_tool(...)` builder. A server that fails validation or
+whose keyring secret is missing/unreadable is skipped with an `app.push_note` (mirroring `/connect`'s
+`notes.keyring-store-failed` pattern) — never a startup abort, matching the issue's "Failure mode"
+requirement and this repo's error-handling invariant (no `unwrap()`, no silent fallback, actionable
+message). Actual connection failures (unreachable HTTP server, timeout, tool-name collision) surface
+later, at `Host::start`, via `Host::tool_server_statuses()` (§2/§6) — bootstrap-time notes and
+startup-time statuses are deliberately two different signals for two different failure phases (config
+malformed vs. config valid but the server itself unreachable).
 
 ### 5. Keyring (`crates/savvagent/src/creds.rs`)
 
@@ -277,14 +385,34 @@ and out of scope).
 
 ## Public-interface changes
 
-- **Additive:** `ToolEndpoint::Http` variant (new enum arm on a `#[non_exhaustive]`-eligible type —
-  confirm `ToolEndpoint` is already `#[non_exhaustive]` or add it now so this and future variants
-  don't break downstream matches; if it is not already marked, adding it is itself listed as a task
-  below since match-exhaustiveness on a public host-config enum is exactly the kind of interface
-  surface Non-Negotiable Rule 6 cares about).
+- **Breaking (per Non-Negotiable Rule 6 — requires a MINOR version bump under this repo's pre-1.0
+  convention, not a PATCH):** `ToolEndpoint` is not `#[non_exhaustive]` today
+  (`crates/savvagent-host/src/config.rs`), so this change both (a) adds a new `Http` variant and (b)
+  adds a new `env` field to the existing `Stdio` variant — either alone breaks any exhaustive
+  `match`/struct-literal construction outside this workspace. This spec marks `ToolEndpoint` (and,
+  for consistency, `HttpAuth`) `#[non_exhaustive]` **as part of this same breaking release**, so this
+  is the last time adding a variant to `ToolEndpoint` requires a MINOR bump — this is a deliberate,
+  documented breaking change, not an incidental refactor side effect, called out explicitly here,
+  in the plan's release-line note, and in `CHANGELOG.md`. Every in-workspace construction site
+  (`ToolBins::apply`, tests) is updated in the same PR to use the new `Stdio { command, args, env }`
+  shape.
+- **Behavior change, not a type-level break:** `ToolRegistry::connect`'s error-handling contract
+  changes from "any endpoint failure aborts `Host::start`" to "endpoint failures are isolated and
+  recorded; `Host::start` continues." This is additive in the sense that it makes startup *more*
+  resilient, but any embedder code relying on `Host::start` failing when a single tool endpoint is
+  bad (none identified in this workspace) would need to switch to checking
+  `Host::tool_server_statuses()` instead. Called out explicitly since it changes an existing method's
+  observable behavior, even though its signature is unchanged.
 - **Additive:** `[[mcp_servers]]` TOML section — an unrecognized/absent section deserializes to the
   default empty vec (`#[serde(default)]`), so existing `config.toml` files keep working unchanged.
-- **Additive:** `/mcp` slash command, `creds::delete`/`mcp_save`/`mcp_load`/`mcp_delete` functions.
+  `ConfigFile::load_or_default`'s return type changing to `LoadedConfig` (§3) is an internal-only
+  signature change (this function has no callers outside `crates/savvagent`, which is the TUI binary
+  crate, not a published/embeddable library per `CLAUDE.md`'s workspace map) — not governed by Rule 6,
+  which concerns the SPP wire format, tool MCP schemas, the plugin ABI, slash commands, env vars, and
+  on-disk formats specifically. The on-disk `config.toml` format itself is unchanged for existing
+  users; only malformed-`mcp_servers`-row recovery is new.
+- **Additive:** `/mcp` slash command, `creds::delete`/`mcp_save`/`mcp_load`/`mcp_delete` functions,
+  `Host::tool_server_statuses()`.
 - **Documented behavior change, not a breaking wire/ABI change:** `CLAUDE.md`'s "`/connect` is the
   only writer" invariant becomes "two writers, namespaced" — this is a documentation update, not a
   format change; existing provider keyring entries (bare `<provider id>` accounts) are untouched.
@@ -324,6 +452,12 @@ and out of scope).
   server and both variable names.
 - Removing a server via `/mcp` whose keyring entry is already gone → `creds::mcp_delete` treats
   `NoEntry` as success (mirrors `load`'s existing `NoEntry` handling), so remove is idempotent.
+- HTTP connect handshake exceeds `connect_timeout_ms` → treated identically to a connection refusal:
+  `ConnectState::Failed { reason: "connect timed out" }`, never a hang.
+- Bearer token construction must never log the token. The plan's implementation task for §2's `Http`
+  arm includes a test asserting the resolved token reaches the transport's `Authorization: Bearer
+  <token>` header (via `StreamableHttpClientTransportConfig`'s auth-header builder, rmcp 1.6) without
+  appearing in any `tracing`/log output produced during `connect()`.
 
 ## Risks & Open Questions
 
