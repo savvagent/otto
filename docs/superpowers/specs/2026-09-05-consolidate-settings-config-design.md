@@ -1,7 +1,7 @@
 # Consolidate language, theme, and update settings into config.toml — design
 
 Date: 2026-09-05
-> **Status:** pending review
+> **Status:** IMPLEMENTED
 Related: `savvagent/savvagent-cli#21`
 
 ## Problem
