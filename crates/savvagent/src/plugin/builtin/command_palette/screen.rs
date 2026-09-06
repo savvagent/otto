@@ -281,7 +281,7 @@ mod tests {
         PaletteScreen::with_commands(vec![
             cmd("clear", false),
             cmd("demo", true),
-            cmd("quit", false),
+            cmd("exit", false),
             cmd("theme", false),
             cmd("zeta", true),
         ])
@@ -335,21 +335,21 @@ mod tests {
         }
     }
 
-    /// `quit` is reachable from the palette (post-v0.9 regression).
+    /// `exit` is reachable from the palette (post-v0.9 regression).
     #[tokio::test]
-    async fn quit_is_listed_and_runs_via_runslash() {
+    async fn exit_is_listed_and_runs_via_runslash() {
         let mut p = fixture();
-        for ch in "quit".chars() {
+        for ch in "exit".chars() {
             p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
         }
-        assert!(!p.filtered().is_empty(), "palette should list /quit");
+        assert!(!p.filtered().is_empty(), "palette should list /exit");
         let effs = p.on_key(key(KeyCodePortable::Enter)).await.unwrap();
         match effs.first() {
             Some(Effect::Stack(children)) => {
                 assert!(matches!(children[0], Effect::CloseScreen));
                 match &children[1] {
                     Effect::RunSlash { name, args } => {
-                        assert_eq!(name, "quit");
+                        assert_eq!(name, "exit");
                         assert!(args.is_empty());
                     }
                     other => panic!("expected RunSlash, got {other:?}"),

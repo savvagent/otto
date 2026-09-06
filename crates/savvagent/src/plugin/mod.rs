@@ -234,7 +234,7 @@ mod tests {
             "internal:model",
             "internal:plugins-manager",
             "internal:prompt-keybindings",
-            "internal:quit",
+            "internal:exit",
             "internal:resume",
             "internal:route",
             "internal:save",
