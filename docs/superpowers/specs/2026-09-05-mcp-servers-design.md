@@ -165,44 +165,64 @@ this as `Host::tool_server_statuses()` (§6) — this is the authoritative data 
 reads; it is not derived from `eager_servers` alone (which only holds successes) or from an
 approximation on the embedder side.
 
-**One deadline covers the whole per-endpoint sequence, both transports (blocking fix from round-2
-review).** A timeout scoped to only the transport handshake leaves `list_all_tools()` (and, for
-stdio, the child-process spawn + MCP initialization before the handshake even starts) unbounded — a
-server that connects but never answers `tools/list` could still hang `Host::start`. `connect()`
-instead wraps **spawn/connect + `serve()` + `list_all_tools()` together** in one
-`tokio::time::timeout(connect_timeout, async { ... })` block per endpoint, for both `Stdio` and
-`Http` arms (reusing `HostConfig::connect_timeout_ms` rather than inventing a second timeout
-constant). On timeout, on a post-`serve` failure (e.g. `list_all_tools()` errors), or when the
-endpoint is rejected for a tool-name collision (see below), `connect()` explicitly calls
-`service.cancel().await` on the just-created `RunningService` before recording the failure and moving
-to the next endpoint — this prevents leaking a live child process or open HTTP connection for an
-endpoint whose registration didn't fully succeed. A timeout is recorded as `ConnectState::Failed {
-reason: "connect timed out" }`.
+**Two-stage timeout so `service.cancel()` is always reachable (fix from round-3 review).** A timeout
+scoped to only the transport handshake leaves `list_all_tools()` (and, for stdio, the child-process
+spawn + MCP initialization before the handshake even starts) unbounded — a server that connects but
+never answers `tools/list` could still hang `Host::start`. An earlier draft wrapped `serve()` *and*
+`list_all_tools()` inside a single `async` block whose only externally-visible outcome was a
+`Result` — on a post-`serve` failure or timeout, the already-created `RunningService` was moved into
+that block and never escaped it, so there was nothing to call `.cancel()` on (a round-3 review
+finding). The corrected shape binds `service` in the *outer* scope as soon as `serve()` returns, then
+applies a second, independent `tokio::time::timeout_at` to `list_all_tools()` against the same overall
+deadline (both stages share one deadline derived from `HostConfig::connect_timeout_ms`, rather than
+inventing a second timeout constant), so every failure path after `serve()` succeeds has `service`
+available to cancel:
 
 ```rust
 ToolEndpoint::Http { name, url, auth } => {
-    let attempt = async {
-        let transport = StreamableHttpClientTransport::from_config(
-            StreamableHttpClientTransportConfig::with_uri(url.clone()),
-        );
-        // HttpAuth::Bearer sets an Authorization: Bearer <token> header via
-        // rmcp's StreamableHttpClientTransportConfig::auth_header (rmcp 1.6,
-        // transport/streamable_http_client.rs) at transport-construction time;
-        // HttpAuth::None builds the transport with no auth header. The token
-        // is never logged — only passed to the header builder.
-        let service = handler.serve(transport).await?;
-        let tools = service.list_all_tools().await?;
-        Ok::<_, ConnectError>((service, tools))
+    let deadline = Instant::now() + connect_timeout;
+    let transport = StreamableHttpClientTransport::from_config(
+        StreamableHttpClientTransportConfig::with_uri(url.clone()),
+    );
+    // HttpAuth::Bearer sets an Authorization: Bearer <token> header via
+    // rmcp's StreamableHttpClientTransportConfig::auth_header (rmcp 1.6,
+    // transport/streamable_http_client.rs) at transport-construction time;
+    // HttpAuth::None builds the transport with no auth header. The token
+    // is never logged — only passed to the header builder.
+    let serve_result = tokio::time::timeout_at(deadline, handler.serve(transport)).await;
+    let service = match serve_result {
+        Ok(Ok(service)) => service,
+        // `serve()` itself timed out or failed: nothing was ever bound to
+        // `service`, so there is nothing to cancel — record and move on.
+        Ok(Err(e)) => { /* record ConnectState::Failed { reason: e.to_string() }; continue */ }
+        Err(_) => { /* record ConnectState::Failed { reason: "connect timed out" }; continue */ }
     };
-    match tokio::time::timeout(connect_timeout, attempt).await {
-        Ok(Ok((service, tools))) => { /* register routes per-tool (see collision
-                                          handling below), push ToolServer { label: name, service },
-                                          record ConnectState::Connected */ }
-        Ok(Err(e)) => { /* record ConnectState::Failed { reason: e.to_string() } */ }
-        Err(_) => { /* record ConnectState::Failed { reason: "connect timed out" } */ }
+    match tokio::time::timeout_at(deadline, service.list_all_tools()).await {
+        Ok(Ok(tools)) => { /* register routes per-tool (see collision handling
+                               below), push ToolServer { label: name, service },
+                               record ConnectState::Connected */ }
+        Ok(Err(e)) => {
+            service.cancel().await;
+            /* record ConnectState::Failed { reason: e.to_string() } */
+        }
+        Err(_) => {
+            service.cancel().await;
+            /* record ConnectState::Failed { reason: "connect timed out" } */
+        }
     }
 }
 ```
+
+The `Stdio` arm follows the identical two-stage shape: bind the spawned/served `service` before
+attempting `list_all_tools()`, and call `.cancel().await` on it for any failure discovered after that
+point. A hung `initialize` handshake that never returns from `serve()` is covered by the first
+`timeout_at` — because nothing was bound yet in that case, there is nothing to cancel explicitly;
+`rmcp`'s `TokioChildProcess` kills its child on `Drop`, so dropping the abandoned `serve()` future
+(which owns the child process handle) is the backstop for that specific case. The implementation
+task must add a regression test using a stub MCP server that completes `initialize` successfully but
+never replies to `tools/list`, asserting (a) `connect()` returns within `connect_timeout_ms` rather
+than hanging, and (b) the server's child process is no longer running (or, for the HTTP case, its
+connection is closed) once `connect()` returns.
 
 No sandbox wrapping applies to HTTP endpoints (`SandboxConfig` governs process spawns; a remote HTTP
 call has no local process to sandbox). This is a scope decision worth a one-line callout in the
@@ -325,21 +345,35 @@ exactly like the resolution-time skip notes from validation/keyring-lookup failu
 same "here's a server I couldn't register and why" UX, just triggered at different phases.
 
 **Write-side contract: `/mcp`'s add/remove must never silently delete a row it couldn't parse
-(blocking fix from round-2 review).** If `/mcp` rewrote `config.toml` by reserializing
-`LoadedConfig::config.mcp_servers` (the typed, successfully-parsed entries only), any row that failed
-step 3's tolerant decode — a real row the user wrote, just with e.g. a typo'd `transport` value —
-would be silently dropped the next time the user added or removed an unrelated server, defeating the
-entire point of tolerant loading. `/mcp`'s write path therefore does **not** round-trip through the
-typed `Vec<McpServerEntry>`: it re-reads `config.toml` fresh, parses it as a raw `toml::Value`,
-locates the `mcp_servers` array as raw TOML tables, and edits that array directly — appending a new
-table for "add," or removing the table whose `name` key matches for "remove" — leaving every other
-raw table (parseable or not) byte-for-byte untouched, then serializes the whole modified `toml::Value`
-back to disk. This is the same raw-table representation step 3 above already parses `mcp_servers`
-into before attempting per-element `McpServerEntry::deserialize` — `/mcp`'s writer reuses that
-representation rather than introducing a second one. The plan's implementation task for this includes
-a regression test: a `config.toml` with one valid and one intentionally-malformed `[[mcp_servers]]`
-row, add a third server via the write path, then reload and confirm the malformed row's raw TOML
-text is still present unchanged.
+(blocking fix from round-2 review; mechanism corrected per round-3 review).** If `/mcp` rewrote
+`config.toml` by reserializing `LoadedConfig::config.mcp_servers` (the typed, successfully-parsed
+entries only), any row that failed step 3's tolerant decode — a real row the user wrote, just with
+e.g. a typo'd `transport` value — would be silently dropped the next time the user added or removed
+an unrelated server, defeating the entire point of tolerant loading. An earlier draft proposed
+parsing to `toml::Value` and serializing the whole document back — round-3 review correctly flagged
+that `toml::Value` does not retain lexical formatting (comments, blank lines, key order, or even a
+malformed table's original text), so "serialize the whole modified `toml::Value` back to disk" cannot
+actually deliver byte-for-byte preservation; it can only guarantee semantic preservation of whatever
+serde successfully modeled, which is exactly the data tolerant loading already excludes.
+
+`/mcp`'s write path therefore uses `toml_edit::DocumentMut` (a new dependency; not the existing
+`toml` crate, which does not preserve document structure) instead of `toml::Value`: it re-reads
+`config.toml` fresh into a `DocumentMut`, locates the `mcp_servers` array-of-tables node, and mutates
+only that node — appending a new `[[mcp_servers]]` table for "add" (built with `toml_edit::Table`/
+`Item` construction, not string formatting), or removing the specific table whose `name` key matches
+for "remove" via `ArrayOfTables::remove(index)` — while every other node in the document (valid or
+malformed, including comments and formatting) is left untouched because `DocumentMut` only rewrites
+the nodes it was asked to mutate. The document is then written back with `DocumentMut::to_string()`.
+This replaces step 3's `toml::Value`-based raw-table representation for the *write* path specifically
+— step 3's *read*-side tolerant decode (`toml::Value` → per-element `McpServerEntry::deserialize`)
+is unaffected and continues to use `toml::Value`/`toml::from_str`, since round-tripping fidelity is
+only required on write, not on read. `Cargo.toml` gains `toml_edit` as a new workspace dependency
+(`crates/savvagent`-only; `savvagent-host` does not gain a `toml_edit` dependency, consistent with
+the crate-boundary invariant in §1). The plan's implementation task for this includes a regression
+test: a `config.toml` with one valid `[[mcp_servers]]` row, one intentionally-malformed row (e.g. a
+row with an unrecognized `transport` value, plus a hand-written comment immediately above it), add a
+third server via the write path, then reload the raw file text and confirm the malformed row's
+original text *and* its preceding comment are byte-for-byte unchanged.
 
 **Validation** (new `McpServerEntry::validate(&self, seen_names: &HashSet<String>) -> Result<(),
 String>`, called during bootstrap on every successfully-*parsed* entry, before any tool is
@@ -418,10 +452,19 @@ New built-in plugin, structured like `connect/` (`mod.rs` + `screen.rs`):
   `tool_defs()` accessor, not a new mutation surface.
 - `screen.rs`: lists configured servers with status; `a` opens an add form (name, transport,
   command/args or url, optional secret — masked input identical to `/connect`'s API-key prompt) and
-  appends the new entry via §3's raw-`toml::Value` write path; `d`/`Delete` removes a server (calls
-  `creds::mcp_delete`, then removes its raw table via that same write path, preserving every other
-  row — including any that failed to parse — untouched, and pushes a note "Restart savvagent to
-  apply changes"); `r` is a no-op in v1 beyond re-reading status (no live reconnect — see Scope).
+  appends the new entry via §3's `toml_edit`-based write path; `d`/`Delete` removes a server —
+  **config-then-credential ordering (non-blocking fix from round-3 review):** it first removes the
+  server's raw table via that write path (preserving every other row — including any that failed to
+  parse — untouched) and pushes a note "Restart savvagent to apply changes," and only *then* calls
+  `creds::mcp_delete`. Removing the config row first means that if the config write itself fails
+  (e.g. a permissions error on `config.toml`), the server is untouched end-to-end — nothing is left
+  half-removed with a missing secret. If the config write succeeds but the subsequent
+  `creds::mcp_delete` fails, the server is already gone from `config.toml` (so it will not be
+  reloaded on restart) and the screen reports "server removed; stale credential could not be deleted"
+  rather than silently leaving an orphaned keyring entry unmentioned; a leftover `mcp:<server>`
+  keyring entry in that state is inert (nothing references it) and can be cleaned up by re-adding and
+  re-removing the same server name, or manually via the OS credential manager. `r` is a no-op in v1
+  beyond re-reading status (no live reconnect — see Scope).
 - Failure surfaces inline per-row ("failed: connection refused") rather than a global note, so
   multiple failing servers are all visible at once.
 
@@ -465,6 +508,10 @@ and out of scope).
   users; only malformed-`mcp_servers`-row recovery is new.
 - **Additive:** `/mcp` slash command, `creds::delete`/`mcp_save`/`mcp_load`/`mcp_delete` functions,
   `Host::tool_server_statuses()`.
+- **New dependency (round-3 review):** `toml_edit` is added to root `Cargo.toml` as a new workspace
+  dependency, used only by `crates/savvagent` (§3's `/mcp` write path). The existing `toml` crate is
+  retained unchanged for read-side parsing/serialization everywhere else; `toml_edit` is not a
+  replacement for it. `savvagent-host` gains no new dependency.
 - **Documented behavior change, not a breaking wire/ABI change:** `CLAUDE.md`'s "`/connect` is the
   only writer" invariant becomes "two writers, namespaced" — this is a documentation update, not a
   format change; existing provider keyring entries (bare `<provider id>` accounts) are untouched.
