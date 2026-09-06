@@ -2804,9 +2804,12 @@ async fn run_app(
     //
     // - `next_turn_id`: incremented at each new turn (the first
     //   `IterationStarted` after `current_turn_id` is `None`).
-    // - `current_turn_id`: the id assigned to the in-flight turn, used to
-    //   match `TurnStart`/`TurnEnd` payloads. Cleared on terminal turn
-    //   outcomes and WorkerMsg::Error.
+    // - `current_turn_id`: the id assigned once the host starts the turn,
+    //   used to match `TurnStart`/`TurnEnd` payloads. Cleared on terminal
+    //   turn outcomes and WorkerMsg::Error.
+    // - `footer_pending_turn_id`: predicted next turn id shown in the TUI
+    //   footer after prompt submission but before the first
+    //   `IterationStarted` arrives. `/bash` does not toggle it.
     // - `next_tool_call_id`: minted per `ToolCallStarted`.
     // - `last_tool_call_id`: tracks the most recent unfinished tool call so
     //   that the matching `ToolCallFinished` emits the same `call_id`.
@@ -2816,6 +2819,7 @@ async fn run_app(
     //   payload so we only emit when the value actually moves.
     let mut next_turn_id: u32 = 0;
     let mut current_turn_id: Option<u32> = None;
+    let mut footer_pending_turn_id: Option<u32> = None;
     let mut next_tool_call_id: u64 = 0;
     let mut last_tool_call_id: Option<u64> = None;
     let mut last_emitted_ctx: u32 = 0;
@@ -2887,13 +2891,25 @@ async fn run_app(
 
         let frame_area = terminal.get_frame().area();
         let frame_data = ui::compute_home_frame_data(app, frame_area).await;
-        terminal.draw(|f| ui::render(app, f, &frame_data, render_tick, current_turn_id.is_some()))?;
+        let footer_turn_id = current_turn_id.or(footer_pending_turn_id);
+        terminal.draw(|f| ui::render(app, f, &frame_data, render_tick, footer_turn_id))?;
         render_tick = render_tick.wrapping_add(1);
 
         while let Ok(msg) = worker_rx.try_recv() {
             match msg {
                 WorkerMsg::Event(e) => {
                     let was_complete = matches!(e, TurnEvent::TurnComplete { .. });
+                    if matches!(
+                        &e,
+                        TurnEvent::IterationStarted { iteration } if *iteration == 1
+                    ) || matches!(
+                        e,
+                        TurnEvent::TurnComplete { .. }
+                            | TurnEvent::Cancelled { .. }
+                            | TurnEvent::AbortedAfterGrace { .. }
+                    ) {
+                        footer_pending_turn_id = None;
+                    }
                     // Capture the canvas id before apply_turn_event consumes
                     // the event and removes the index from html_block_index_to_id.
                     let html_block_stop_id = if let TurnEvent::HtmlBlockStop { index } = &e {
@@ -2965,6 +2981,7 @@ async fn run_app(
                 }
                 WorkerMsg::Error(msg) => {
                     app.is_loading = false;
+                    footer_pending_turn_id = None;
                     app.entries.push(Entry::Note(format!("Error: {msg}")));
                     app.update_metrics();
                     // A runner error terminates the turn without a
@@ -3360,19 +3377,7 @@ async fn run_app(
                                 app.pending_prompt_prefix = None;
                                 continue;
                             }
-                            next_turn_id = next_turn_id.saturating_add(1);
-                            current_turn_id = Some(next_turn_id);
-                            if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                                app,
-                                savvagent_plugin::HostEvent::TurnStart {
-                                    turn_id: next_turn_id,
-                                },
-                                0,
-                            )
-                            .await
-                            {
-                                tracing::warn!(error = %err, "TurnStart dispatch failed");
-                            }
+                            footer_pending_turn_id = Some(next_turn_id.saturating_add(1));
                             let prefix = app.pending_prompt_prefix.take();
 
                             // Consume the one-turn model override (if any)

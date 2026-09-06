@@ -151,10 +151,7 @@ async fn render_footer_center_slot(
         };
         let rendered = plugin.render_slot("home.footer.center", region);
         if pid.as_str() == "internal:home-footer" {
-            turn_line_idx = rendered
-                .iter()
-                .position(|line| !line.spans.is_empty())
-                .map(|idx| out.len() + idx);
+            turn_line_idx = (!rendered.is_empty()).then_some(out.len());
         }
         out.extend(rendered);
     }
@@ -227,7 +224,7 @@ pub fn render(
     frame: &mut Frame,
     frame_data: &HomeFrameData,
     tick: u64,
-    turn_active: bool,
+    footer_turn_id: Option<u32>,
 ) {
     let area = frame.area();
 
@@ -358,7 +355,7 @@ pub fn render(
     let footer_center = footer_center_lines(
         &frame_data.footer_center,
         frame_data.footer_center_turn_line,
-        turn_active,
+        footer_turn_id,
         tick,
         palette,
     );
@@ -1356,7 +1353,7 @@ fn compose_footer_ratatui_line(
 fn footer_center_lines(
     center: &[savvagent_plugin::StyledLine],
     turn_line_idx: Option<usize>,
-    turn_active: bool,
+    footer_turn_id: Option<u32>,
     tick: u64,
     palette: Palette,
 ) -> Vec<Line<'static>> {
@@ -1365,8 +1362,29 @@ fn footer_center_lines(
         .cloned()
         .enumerate()
         .map(|(idx, line)| {
-            let mut line = crate::plugin::convert::styled_line_to_ratatui(line, &palette);
-            if !turn_active || Some(idx) != turn_line_idx || line.spans.is_empty() {
+            let mut line = if Some(idx) == turn_line_idx {
+                footer_turn_id
+                    .map(|turn_id| {
+                        crate::plugin::convert::styled_line_to_ratatui(
+                            savvagent_plugin::StyledLine {
+                                spans: vec![savvagent_plugin::StyledSpan {
+                                    text: rust_i18n::t!("footer.turn-working", id = turn_id)
+                                        .to_string(),
+                                    fg: Some(savvagent_plugin::ThemeColor::Accent),
+                                    bg: None,
+                                    modifiers: savvagent_plugin::TextMods::default(),
+                                }],
+                            },
+                            &palette,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        crate::plugin::convert::styled_line_to_ratatui(line, &palette)
+                    })
+            } else {
+                crate::plugin::convert::styled_line_to_ratatui(line, &palette)
+            };
+            if footer_turn_id.is_none() || Some(idx) != turn_line_idx || line.spans.is_empty() {
                 return line;
             }
 
@@ -1613,7 +1631,7 @@ mod tests {
         let center = vec![one_span_line("idle")];
         let palette = palette();
 
-        let out = footer_center_lines(&center, Some(0), false, 0, palette);
+        let out = footer_center_lines(&center, Some(0), None, 0, palette);
         let expected = vec![crate::plugin::convert::styled_line_to_ratatui(
             center[0].clone(),
             &palette,
@@ -1634,13 +1652,26 @@ mod tests {
             }],
         }];
 
-        let out = footer_center_lines(&center, Some(0), true, 0, palette());
+        let out = footer_center_lines(&center, Some(0), Some(3), 0, palette());
 
         assert_eq!(out.len(), 1);
         assert!(
             joined_ratatui(&out[0]).contains(&working),
             "busy footer should keep the localized working label"
         );
+    }
+
+    #[test]
+    fn footer_center_lines_busy_override_idle_label_during_submit_gap() {
+        let idle = rust_i18n::t!("footer.idle").to_string();
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let center = vec![one_span_line(&idle)];
+
+        let out = footer_center_lines(&center, Some(0), Some(3), 0, palette());
+        let rendered = joined_ratatui(&out[0]);
+
+        assert!(rendered.starts_with(&working));
+        assert!(!rendered.starts_with(&idle));
     }
 
     #[test]
@@ -1655,7 +1686,7 @@ mod tests {
             }],
         }];
 
-        let out = footer_center_lines(&center, Some(0), true, 0, palette());
+        let out = footer_center_lines(&center, Some(0), Some(3), 0, palette());
         let rendered = joined_ratatui(&out[0]);
         let spinner = rendered
             .strip_prefix(&format!("{working} "))
@@ -1681,7 +1712,7 @@ mod tests {
         }];
         let palette = palette();
 
-        let out = footer_center_lines(&center, Some(0), true, 0, palette);
+        let out = footer_center_lines(&center, Some(0), Some(3), 0, palette);
         let spinner_spans: Vec<_> = out[0]
             .spans
             .iter()
@@ -1718,8 +1749,8 @@ mod tests {
         }];
         let palette = palette();
 
-        let a = footer_center_lines(&center, Some(0), true, 0, palette);
-        let b = footer_center_lines(&center, Some(0), true, 1, palette);
+        let a = footer_center_lines(&center, Some(0), Some(3), 0, palette);
+        let b = footer_center_lines(&center, Some(0), Some(3), 1, palette);
 
         assert_ne!(joined_ratatui(&a[0]), joined_ratatui(&b[0]));
     }
@@ -1728,7 +1759,7 @@ mod tests {
     fn footer_center_lines_busy_do_not_invent_text_for_empty_center_slot() {
         let center: Vec<StyledLine> = vec![];
 
-        let out = footer_center_lines(&center, None, true, 0, palette());
+        let out = footer_center_lines(&center, None, Some(3), 0, palette());
 
         assert!(out.is_empty());
     }
@@ -1738,7 +1769,7 @@ mod tests {
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let center = vec![StyledLine { spans: vec![] }, one_span_line(&working)];
 
-        let out = footer_center_lines(&center, Some(1), true, 0, palette());
+        let out = footer_center_lines(&center, Some(1), Some(3), 0, palette());
         assert!(out[0].spans.is_empty());
 
         let rendered = joined_ratatui(&out[1]);
