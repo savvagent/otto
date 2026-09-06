@@ -4368,6 +4368,41 @@ mod canvas_key_tests {
         App::new("test-model".into(), PathBuf::from("/tmp"), "en".to_string())
     }
 
+    #[cfg(test)]
+    mod startup_user_slash_command_tests {
+        use super::*;
+        use crate::test_helpers::{HOME_LOCK, HomeGuard};
+        use savvagent_plugin::PluginId;
+
+        #[tokio::test(flavor = "current_thread")]
+        async fn build_app_startup_skips_conflicting_user_exit_command() {
+            let _lock = HOME_LOCK.lock().unwrap();
+            let _home = HomeGuard::new();
+            let project = tempfile::TempDir::new().unwrap();
+            let dir = project.path().join(".savvagent/commands");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("exit.md"), "shadowed exit").unwrap();
+
+            let (app, _host_slot, _project_root, _tool_bins) =
+                build_app_with_host(None, project.path().to_path_buf(), ToolBins::default())
+                    .await
+                    .expect("startup should not fail on a conflicting user /exit command");
+
+            let indexes_handle = app.plugin_indexes.expect("plugin indexes installed");
+            let indexes = indexes_handle.read().await;
+            assert_eq!(
+                indexes.slash.get("exit").map(PluginId::as_str),
+                Some("internal:exit"),
+                "startup must keep the built-in /exit command registered"
+            );
+            assert_eq!(
+                indexes.slash.get("reload-commands").map(PluginId::as_str),
+                Some("internal:user-slash-commands"),
+                "startup must still register /reload-commands"
+            );
+        }
+    }
+
     /// Empty host slot — Esc/Tab paths never touch it.
     fn empty_host_slot() -> HostSlot {
         Arc::new(RwLock::new(None))
