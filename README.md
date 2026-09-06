@@ -157,7 +157,7 @@ provider has a key on file.
 | `/bash <cmd>` | Run a shell command through `tool-bash`. `--net` / `--no-net` toggle network access for that single call. |
 | `/sandbox` | Show or change OS-level sandbox settings; `/sandbox on` / `/sandbox off` persist to `~/.savvagent/sandbox.toml`. |
 | `/prompt-keybindings` | Modal listing the keybindings active in the main prompt input. |
-| `/quit` | Exit. |
+| `/exit` | Exit. |
 
 `@` opens a file picker that inserts `@path` into the prompt.
 
@@ -200,6 +200,9 @@ The first time you invoke a project-local command that includes `!<cmd>`, Savvag
 ### Reload
 
 After editing a command file, run `/reload-commands` to rescan all four directories.
+
+`/exit` is reserved by the built-in session-termination command, so a user-defined
+`commands/exit.md` is ignored and logged as a warning during command discovery.
 
 ### `allowed-tools`
 

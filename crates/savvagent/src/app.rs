@@ -542,7 +542,8 @@ pub struct App {
     pub live_text: String,
     /// True while a turn is in flight.
     pub is_loading: bool,
-    /// Set by `/quit` or Ctrl-C to break the event loop.
+    /// Set when the app handles [`savvagent_plugin::Effect::Quit`] so the
+    /// event loop exits on the next tick.
     pub should_quit: bool,
     /// Approximate context size (chars / 4) — naive token estimate.
     pub context_size: usize,
@@ -1424,8 +1425,8 @@ impl App {
                 needs_arg: true,
             },
             Command {
-                name: "/quit".into(),
-                description: "Quit".into(),
+                name: "/exit".into(),
+                description: "Exit".into(),
                 needs_arg: false,
             },
         ];
@@ -1691,7 +1692,7 @@ impl App {
     /// `SelectingProvider` InputMode for `/connect`) or are genuinely
     /// unknown.
     ///
-    /// The legacy arms for `/clear`, `/save`, `/view`, `/edit`, `/quit`
+    /// The legacy arms for `/clear`, `/save`, `/view`, `/edit`, `/exit`
     /// were removed once their plugin counterparts shipped (PR 5, PR 4,
     /// PR 8 hotfix): leaving the legacy arms intact meant disabling the
     /// owning plugin in `/plugins` had no effect — the slash was still

@@ -180,10 +180,10 @@ impl Indexes {
         s: SlashSpec,
         pid: &PluginId,
     ) -> Result<(), IndexBuildError> {
-        if let Some(existing) = idx.slash.get(&s.name) {
+        if let Some(existing) = idx.slash.get(&s.name).cloned() {
             return Err(IndexBuildError::SlashConflict {
                 name: s.name,
-                a: existing.clone(),
+                a: existing,
                 b: pid.clone(),
             });
         }
@@ -355,6 +355,10 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use savvagent_plugin::{Contributions, Manifest, Plugin, PluginKind};
+    use tokio::sync::RwLock;
+
+    use crate::plugin::builtin::quit::ExitPlugin;
+    use crate::plugin::builtin::user_slash_commands::UserSlashCommandsPlugin;
 
     /// Test plugin with optionally a slash and/or slot contribution.
     struct WithSlash(String, String);
@@ -389,6 +393,66 @@ mod tests {
         ]);
         let err = Indexes::build(&reg).await.unwrap_err();
         assert!(matches!(err, IndexBuildError::SlashConflict { ref name, .. } if name == "theme"));
+    }
+
+    #[tokio::test]
+    async fn user_slash_exit_conflict_keeps_builtin_exit_and_builds_indexes() {
+        let proj = tempfile::TempDir::new().unwrap();
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = proj.path().join(".savvagent/commands");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("exit.md"), "shadowed").unwrap();
+        std::fs::write(dir.join("hello.md"), "Hello").unwrap();
+
+        let trust = std::sync::Arc::new(RwLock::new(std::collections::BTreeMap::new()));
+        let reg = PluginRegistry::from_plugins(vec![
+            Box::new(ExitPlugin::new()),
+            Box::new(UserSlashCommandsPlugin::with_roots(
+                proj.path().to_path_buf(),
+                home.path().to_path_buf(),
+                trust,
+            )),
+        ]);
+
+        let idx = Indexes::build(&reg).await.expect("build should succeed");
+        assert_eq!(
+            idx.slash.get("exit").map(PluginId::as_str),
+            Some("internal:exit"),
+            "the built-in /exit command must keep ownership"
+        );
+        assert_eq!(
+            idx.slash.get("reload-commands").map(PluginId::as_str),
+            Some("internal:user-slash-commands"),
+            "the user slash plugin's built-in reload command must remain indexed"
+        );
+        assert_eq!(
+            idx.slash.get("hello").map(PluginId::as_str),
+            Some("internal:user-slash-commands"),
+            "non-conflicting user commands must still be indexed"
+        );
+    }
+
+    #[tokio::test]
+    async fn user_slash_reload_commands_conflict_is_hard_error() {
+        let proj = tempfile::TempDir::new().unwrap();
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = proj.path().join(".savvagent/commands");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("reload-commands.md"), "shadowed").unwrap();
+
+        let trust = std::sync::Arc::new(RwLock::new(std::collections::BTreeMap::new()));
+        let reg =
+            PluginRegistry::from_plugins(vec![Box::new(UserSlashCommandsPlugin::with_roots(
+                proj.path().to_path_buf(),
+                home.path().to_path_buf(),
+                trust,
+            ))]);
+
+        let err = Indexes::build(&reg).await.unwrap_err();
+        assert!(
+            matches!(err, IndexBuildError::SlashConflict { ref name, .. } if name == "reload-commands"),
+            "the built-in /reload-commands surface must remain a hard-error conflict"
+        );
     }
 
     struct WithSlots(String, Vec<(String, i32)>);

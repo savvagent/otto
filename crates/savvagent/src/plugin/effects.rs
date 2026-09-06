@@ -1198,8 +1198,8 @@ mod tests {
     }
 
     /// Regression test for the post-v0.9 hotfix that wired `Effect::Quit`
-    /// (emitted by the new `internal:quit` plugin) into `App::request_quit`.
-    /// Before the fix, `/quit` from the palette landed on the `_ => warn`
+    /// (emitted by the new `internal:exit` plugin) into `App::request_quit`.
+    /// Before the fix, `/exit` from the palette landed on the `_ => warn`
     /// arm and silently dropped the request.
     #[tokio::test]
     async fn quit_effect_sets_should_quit() {
