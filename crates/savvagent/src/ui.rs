@@ -6,15 +6,18 @@ use crate::providers::effective_providers;
 use crate::splash;
 use ratatui::{
     Frame,
+    buffer::Buffer,
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Clear, FrameExt, List, ListItem, Padding, Paragraph, Wrap,
+        Block, BorderType, Borders, Clear, FrameExt, List, ListItem, Padding, Paragraph, Widget,
+        Wrap,
     },
 };
 use savvagent_host::ToolCallStatus;
 use savvagent_plugin::ContentBlockId;
+use tui_spinner::CircleSpinner;
 
 /// Rows reserved in the conversation paragraph for each `Entry::Canvas`
 /// placeholder. The image (or source-code fallback) is overlaid on top of
@@ -41,6 +44,7 @@ pub struct HomeFrameData {
     pub tips: Vec<savvagent_plugin::StyledLine>,
     pub footer_left: Vec<savvagent_plugin::StyledLine>,
     pub footer_center: Vec<savvagent_plugin::StyledLine>,
+    pub footer_center_turn_line: Option<usize>,
     pub footer_right: Vec<savvagent_plugin::StyledLine>,
     /// One entry per `Entry::Tool` in `app.entries`, in order. The Nth
     /// `Entry::Tool` encountered while iterating `app.entries` maps to the
@@ -56,6 +60,7 @@ impl HomeFrameData {
             tips: vec![],
             footer_left: vec![],
             footer_center: vec![],
+            footer_center_turn_line: None,
             footer_right: vec![],
             tool_entries: vec![],
         }
@@ -91,7 +96,8 @@ pub async fn compute_home_frame_data(app: &crate::app::App, area: Rect) -> HomeF
     let banner = router.render("home.banner", full_row).await;
     let tips = router.render("home.tips", full_row).await;
     let footer_left = router.render("home.footer.left", full_row).await;
-    let footer_center = router.render("home.footer.center", full_row).await;
+    let (footer_center, footer_center_turn_line) =
+        render_footer_center_slot(&router, full_row).await;
     let footer_right = router.render("home.footer.right", full_row).await;
 
     // The registry and index read-locks (`reg_guard`/`idx_guard`) are
@@ -112,9 +118,45 @@ pub async fn compute_home_frame_data(app: &crate::app::App, area: Rect) -> HomeF
         tips,
         footer_left,
         footer_center,
+        footer_center_turn_line,
         footer_right,
         tool_entries,
     }
+}
+
+async fn render_footer_center_slot(
+    router: &crate::plugin::slots::SlotRouter<'_>,
+    region: savvagent_plugin::Region,
+) -> (Vec<savvagent_plugin::StyledLine>, Option<usize>) {
+    let mut out = Vec::new();
+    let mut turn_line_idx = None;
+    for pid in router.contributors("home.footer.center") {
+        let Some(handle) = router.registry.get(pid) else {
+            tracing::error!(
+                plugin_id = %pid.as_str(),
+                slot_id = "home.footer.center",
+                "contributor in slot index but missing from registry — index/registry divergence"
+            );
+            continue;
+        };
+        let Ok(plugin) = handle.try_lock() else {
+            tracing::trace!(
+                plugin_id = %pid.as_str(),
+                slot_id = "home.footer.center",
+                "slot contributor busy; skipping for this frame"
+            );
+            continue;
+        };
+        let rendered = plugin.render_slot("home.footer.center", region);
+        if pid.as_str() == "internal:home-footer" {
+            turn_line_idx = rendered
+                .iter()
+                .position(|line| !line.spans.is_empty())
+                .map(|idx| out.len() + idx);
+        }
+        out.extend(rendered);
+    }
+    (out, turn_line_idx)
 }
 
 /// Compute `ToolEntryRender`s for every `Entry::Tool` in `entries` by
@@ -178,7 +220,14 @@ async fn compute_tool_entries(
     tool_entries
 }
 
-pub fn render(app: &mut App, frame: &mut Frame, frame_data: &HomeFrameData) {
+pub fn render(
+    app: &mut App,
+    frame: &mut Frame,
+    frame_data: &HomeFrameData,
+    tick: u64,
+    active_turn_id: Option<u32>,
+    pending_turn_id: Option<u32>,
+) {
     let area = frame.area();
 
     if app.show_splash {
@@ -305,16 +354,29 @@ pub fn render(app: &mut App, frame: &mut Frame, frame_data: &HomeFrameData) {
         bg: None,
         modifiers: savvagent_plugin::TextMods::default(),
     };
-    let footer_line = crate::plugin::convert::styled_line_to_ratatui(
-        compose_footer_line(
-            [
-                &frame_data.footer_left,
-                &frame_data.footer_center,
-                &frame_data.footer_right,
-            ],
-            &separator,
-        ),
-        &palette,
+    let footer_center = footer_center_lines(
+        &frame_data.footer_center,
+        frame_data.footer_center_turn_line,
+        active_turn_id,
+        pending_turn_id,
+        tick,
+        palette,
+    );
+    let footer_left: Vec<Line<'static>> = frame_data
+        .footer_left
+        .iter()
+        .cloned()
+        .map(|line| crate::plugin::convert::styled_line_to_ratatui(line, &palette))
+        .collect();
+    let footer_right: Vec<Line<'static>> = frame_data
+        .footer_right
+        .iter()
+        .cloned()
+        .map(|line| crate::plugin::convert::styled_line_to_ratatui(line, &palette))
+        .collect();
+    let footer_line = compose_footer_ratatui_line(
+        [&footer_left, &footer_center, &footer_right],
+        &crate::plugin::convert::styled_span_to_ratatui(separator, &palette),
     );
     frame.render_widget(
         Paragraph::new(footer_line).style(palette.base_style()),
@@ -1272,23 +1334,11 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Flatten the three home-footer slot groups into a single styled line
-/// that flows left-to-right.
-///
-/// Output reads like:
-///   `provider · turn-state · cwd · ~N ctx · $0.00 · vX.Y.Z`
-///
-/// `separator` is inserted between every non-empty `StyledLine` across
-/// all groups, in slot order — including multiple contributors to the
-/// same slot (the `SlotRouter` concatenates each plugin's output, so a
-/// future second contributor to `home.footer.left` shares the slot
-/// without its content being silently dropped). Lines with no spans are
-/// skipped and never introduce a stray separator.
-fn compose_footer_line(
-    groups: [&[savvagent_plugin::StyledLine]; 3],
-    separator: &savvagent_plugin::StyledSpan,
-) -> savvagent_plugin::StyledLine {
-    let mut spans: Vec<savvagent_plugin::StyledSpan> = Vec::new();
+fn compose_footer_ratatui_line<const N: usize>(
+    groups: [&[Line<'static>]; N],
+    separator: &Span<'static>,
+) -> Line<'static> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
     for group in groups {
         for line in group {
             if line.spans.is_empty() {
@@ -1300,12 +1350,103 @@ fn compose_footer_line(
             spans.extend(line.spans.iter().cloned());
         }
     }
-    savvagent_plugin::StyledLine { spans }
+    Line::from(spans)
+}
+
+fn footer_center_lines(
+    center: &[savvagent_plugin::StyledLine],
+    turn_line_idx: Option<usize>,
+    active_turn_id: Option<u32>,
+    pending_turn_id: Option<u32>,
+    tick: u64,
+    palette: Palette,
+) -> Vec<Line<'static>> {
+    center
+        .iter()
+        .cloned()
+        .enumerate()
+        .map(|(idx, line)| {
+            let busy_turn_id = active_turn_id.or(pending_turn_id);
+            let rewrite_for_pending =
+                active_turn_id.is_none() && pending_turn_id.is_some() && Some(idx) == turn_line_idx;
+            let use_busy_line =
+                busy_turn_id.is_some() && Some(idx) == turn_line_idx && !line.spans.is_empty();
+            let mut line = if rewrite_for_pending && !line.spans.is_empty() {
+                crate::plugin::convert::styled_line_to_ratatui(
+                    savvagent_plugin::StyledLine {
+                        spans: vec![savvagent_plugin::StyledSpan {
+                            text: rust_i18n::t!(
+                                "footer.turn-working",
+                                id = pending_turn_id.expect("checked is_some above")
+                            )
+                            .to_string(),
+                            fg: Some(savvagent_plugin::ThemeColor::Accent),
+                            bg: None,
+                            modifiers: savvagent_plugin::TextMods::default(),
+                        }],
+                    },
+                    &palette,
+                )
+            } else {
+                crate::plugin::convert::styled_line_to_ratatui(line, &palette)
+            };
+            if !use_busy_line || line.spans.is_empty() {
+                return line;
+            }
+
+            let spinner = footer_spinner_spans(tick, palette);
+            if spinner.is_empty() {
+                return line;
+            }
+            line.spans.push(Span::raw(" "));
+            line.spans.extend(spinner);
+            line
+        })
+        .collect()
+}
+
+fn footer_spinner_spans(tick: u64, palette: Palette) -> Vec<Span<'static>> {
+    let area = Rect::new(0, 0, 2, 1);
+    let mut buffer = Buffer::empty(area);
+    CircleSpinner::new(tick)
+        .radius(1)
+        .arc_color(palette.accent)
+        .dim_color(palette.muted)
+        .render(area, &mut buffer);
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut current_text = String::new();
+    let mut current_style: Option<Style> = None;
+
+    for cell in buffer.content().iter().take(area.width as usize) {
+        let symbol = cell.symbol();
+        if symbol == " " {
+            continue;
+        }
+
+        let style = cell.style();
+        if current_style.as_ref() == Some(&style) {
+            current_text.push_str(symbol);
+            continue;
+        }
+
+        if let Some(style) = current_style.replace(style) {
+            spans.push(Span::styled(std::mem::take(&mut current_text), style));
+        }
+        current_text.push_str(symbol);
+    }
+
+    if let Some(style) = current_style {
+        spans.push(Span::styled(current_text, style));
+    }
+
+    spans
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::builtin::themes::catalog::Theme;
     use savvagent_plugin::{StyledLine, StyledSpan, TextMods, ThemeColor};
 
     fn span(text: &str) -> StyledSpan {
@@ -1323,17 +1464,29 @@ mod tests {
         }
     }
 
-    fn sep() -> StyledSpan {
-        StyledSpan {
-            text: " · ".into(),
-            fg: Some(ThemeColor::Muted),
-            bg: None,
-            modifiers: TextMods::default(),
-        }
+    fn rline(text: &str) -> Line<'static> {
+        Line::from(vec![Span::raw(text.to_string())])
     }
 
-    fn joined(line: &StyledLine) -> String {
-        line.spans.iter().map(|s| s.text.clone()).collect()
+    fn rsep() -> Span<'static> {
+        Span::styled(" · ".to_string(), Style::default().fg(palette().muted))
+    }
+
+    fn palette() -> Palette {
+        Palette::for_theme(Theme::Dark)
+    }
+
+    fn locale_lock() -> std::sync::MutexGuard<'static, ()> {
+        let guard = crate::test_helpers::HOME_LOCK.lock().unwrap();
+        rust_i18n::set_locale("en");
+        guard
+    }
+
+    fn joined_ratatui(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
     }
 
     #[test]
@@ -1408,43 +1561,43 @@ mod tests {
 
     #[test]
     fn compose_footer_all_three_groups_populated() {
-        let l = vec![one_span_line("Anthropic")];
-        let c = vec![one_span_line("idle")];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&l, &c, &r], &sep());
-        assert_eq!(joined(&out), "Anthropic · idle · cwd");
+        let l = vec![rline("Anthropic")];
+        let c = vec![rline("idle")];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&l, &c, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · idle · cwd");
     }
 
     #[test]
     fn compose_footer_only_right_has_no_leading_separator() {
-        let empty: Vec<StyledLine> = vec![];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&empty, &empty, &r], &sep());
-        assert_eq!(joined(&out), "cwd");
+        let empty: Vec<Line<'static>> = vec![];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&empty, &empty, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "cwd");
     }
 
     #[test]
     fn compose_footer_left_and_right_only_single_separator() {
-        let l = vec![one_span_line("Anthropic")];
-        let empty: Vec<StyledLine> = vec![];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&l, &empty, &r], &sep());
-        assert_eq!(joined(&out), "Anthropic · cwd");
+        let l = vec![rline("Anthropic")];
+        let empty: Vec<Line<'static>> = vec![];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&l, &empty, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · cwd");
     }
 
     #[test]
     fn compose_footer_empty_spans_line_treated_as_no_content() {
-        let l = vec![StyledLine { spans: vec![] }];
-        let c = vec![one_span_line("idle")];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&l, &c, &r], &sep());
-        assert_eq!(joined(&out), "idle · cwd");
+        let l = vec![Line::default()];
+        let c = vec![rline("idle")];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&l, &c, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "idle · cwd");
     }
 
     #[test]
     fn compose_footer_all_groups_empty_returns_empty_line() {
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&empty, &empty, &empty], &sep());
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&empty, &empty, &empty], &rsep());
         assert!(out.spans.is_empty());
     }
 
@@ -1452,20 +1605,20 @@ mod tests {
     fn compose_footer_multiple_contributors_share_a_slot_with_separators() {
         // Two plugins both contributing to `home.footer.left` flow as
         // peers, separated like any other groups.
-        let l = vec![one_span_line("Anthropic"), one_span_line("Local")];
-        let c = vec![one_span_line("idle")];
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&l, &c, &empty], &sep());
-        assert_eq!(joined(&out), "Anthropic · Local · idle");
+        let l = vec![rline("Anthropic"), rline("Local")];
+        let c = vec![rline("idle")];
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&l, &c, &empty], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · Local · idle");
     }
 
     #[test]
     fn compose_footer_skips_empty_lines_within_a_group() {
-        let l = vec![StyledLine { spans: vec![] }, one_span_line("Anthropic")];
-        let c = vec![one_span_line("idle")];
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&l, &c, &empty], &sep());
-        assert_eq!(joined(&out), "Anthropic · idle");
+        let l = vec![Line::default(), rline("Anthropic")];
+        let c = vec![rline("idle")];
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&l, &c, &empty], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · idle");
     }
 
     #[test]
@@ -1473,18 +1626,175 @@ mod tests {
         // A single contributor emitting multiple spans (e.g. the
         // home_footer right slot's `cwd · ~N ctx · $0.00 · vX.Y.Z`)
         // must not gain extra separators between its own spans.
-        let r = vec![StyledLine {
-            spans: vec![
-                span("cwd"),
-                span(" · "),
-                span("~22 ctx"),
-                span(" · "),
-                span("$0.00"),
-            ],
+        let r = vec![Line::from(vec![
+            Span::raw("cwd".to_string()),
+            Span::raw(" · ".to_string()),
+            Span::raw("~22 ctx".to_string()),
+            Span::raw(" · ".to_string()),
+            Span::raw("$0.00".to_string()),
+        ])];
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&empty, &empty, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "cwd · ~22 ctx · $0.00");
+    }
+
+    #[test]
+    fn footer_turn_state_lines_idle_are_unchanged() {
+        let _lock = locale_lock();
+        let turn_state = vec![one_span_line("idle")];
+        let palette = palette();
+
+        let out = footer_center_lines(&turn_state, Some(0), None, None, 0, palette);
+        let expected = vec![crate::plugin::convert::styled_line_to_ratatui(
+            turn_state[0].clone(),
+            &palette,
+        )];
+
+        assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn footer_turn_state_lines_busy_include_working_label() {
+        let _lock = locale_lock();
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let turn_state = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working.clone(),
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
         }];
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&empty, &empty, &r], &sep());
-        assert_eq!(joined(&out), "cwd · ~22 ctx · $0.00");
+
+        let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
+
+        assert_eq!(out.len(), 1);
+        assert!(
+            joined_ratatui(&out[0]).contains(&working),
+            "busy footer should keep the localized working label"
+        );
+    }
+
+    #[test]
+    fn footer_turn_state_lines_busy_override_idle_label_during_submit_gap() {
+        let _lock = locale_lock();
+        let idle = rust_i18n::t!("footer.idle").to_string();
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let turn_state = vec![one_span_line(&idle)];
+
+        let out = footer_center_lines(&turn_state, Some(0), None, Some(3), 0, palette());
+        let rendered = joined_ratatui(&out[0]);
+
+        assert!(rendered.starts_with(&working));
+        assert!(!rendered.starts_with(&idle));
+    }
+
+    #[test]
+    fn footer_turn_state_lines_busy_include_spinner_glyph_output() {
+        let _lock = locale_lock();
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let turn_state = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working.clone(),
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }];
+
+        let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
+        let rendered = joined_ratatui(&out[0]);
+        let spinner = rendered
+            .strip_prefix(&format!("{working} "))
+            .unwrap_or_default()
+            .trim();
+
+        assert!(
+            !spinner.is_empty(),
+            "expected spinner glyphs after the working label, got: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn footer_turn_state_lines_busy_use_accent_and_muted_spinner_colors() {
+        let _lock = locale_lock();
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let turn_state = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working.clone(),
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }];
+        let palette = palette();
+
+        let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);
+        let spinner_spans: Vec<_> = out[0]
+            .spans
+            .iter()
+            .filter(|span| {
+                let text = span.content.as_ref();
+                !text.trim().is_empty() && text != working
+            })
+            .collect();
+
+        assert!(
+            spinner_spans
+                .iter()
+                .any(|span| span.style.fg == Some(palette.accent)),
+            "expected an accent-colored spinner arc"
+        );
+        assert!(
+            spinner_spans
+                .iter()
+                .any(|span| span.style.fg == Some(palette.muted)),
+            "expected a muted-colored spinner ring"
+        );
+    }
+
+    #[test]
+    fn footer_turn_state_lines_busy_change_spinner_frame_across_ticks() {
+        let _lock = locale_lock();
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let turn_state = vec![StyledLine {
+            spans: vec![StyledSpan {
+                text: working,
+                fg: Some(ThemeColor::Accent),
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }];
+        let palette = palette();
+
+        let a = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);
+        let b = footer_center_lines(&turn_state, Some(0), Some(3), None, 1, palette);
+
+        assert_ne!(joined_ratatui(&a[0]), joined_ratatui(&b[0]));
+    }
+
+    #[test]
+    fn footer_turn_state_lines_busy_do_not_invent_text_for_empty_turn_slot() {
+        let _lock = locale_lock();
+        let turn_state: Vec<StyledLine> = vec![];
+
+        let out = footer_center_lines(&turn_state, None, Some(3), None, 0, palette());
+
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn footer_turn_state_lines_skip_empty_leader_before_attaching_spinner() {
+        let _lock = locale_lock();
+        let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
+        let turn_state = vec![StyledLine { spans: vec![] }, one_span_line(&working)];
+
+        let out = footer_center_lines(&turn_state, Some(1), Some(3), None, 0, palette());
+        assert!(out[0].spans.is_empty());
+
+        let rendered = joined_ratatui(&out[1]);
+        assert!(rendered.starts_with(&working));
+        assert_ne!(rendered, working);
     }
 
     // Canvas overlay row math --------------------------------------------

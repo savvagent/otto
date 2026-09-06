@@ -6998,6 +6998,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tui-markdown",
+ "tui-spinner",
  "tui-textarea-2",
  "which",
  "zip 5.1.1",
@@ -8884,6 +8885,15 @@ dependencies = [
  "ratatui 0.29.0",
  "rstest",
  "tracing",
+]
+
+[[package]]
+name = "tui-spinner"
+version = "0.4.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f64d1f5cd083a354bd19e8b40bf9355768822eaf9122e6371e4cb2d77a9df8e2"
+dependencies = [
+ "ratatui 0.30.0",
 ]
 
 [[package]]
