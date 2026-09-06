@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use savvagent_host::StartupConnectPolicy;
 use savvagent_protocol::ProviderId;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 /// Typed version of the `startup.policy` config key. Serialises to/from
@@ -151,17 +152,7 @@ impl ConfigFile {
         let Ok(contents) = std::fs::read_to_string(path) else {
             return Self::default();
         };
-        match toml::from_str::<ConfigFile>(&contents) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "config.toml parse failed; falling back to defaults"
-                );
-                Self::default()
-            }
-        }
+        Self::load_from_toml_str(path, &contents)
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -208,6 +199,50 @@ impl ConfigFile {
 
     pub fn effective_update_periodic_interval_secs(&self) -> u64 {
         self.update.effective_periodic_interval_secs()
+    }
+
+    fn load_from_toml_str(path: &Path, contents: &str) -> Self {
+        let root = match toml::from_str::<toml::Table>(contents) {
+            Ok(root) => root,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "config.toml parse failed; falling back to defaults"
+                );
+                return Self::default();
+            }
+        };
+
+        Self {
+            startup: parse_section(path, &root, "startup"),
+            language: parse_section(path, &root, "language"),
+            theme: parse_section(path, &root, "theme"),
+            update: parse_section(path, &root, "update"),
+            migration: parse_section(path, &root, "migration"),
+        }
+    }
+}
+
+fn parse_section<T>(path: &Path, root: &toml::Table, section: &'static str) -> T
+where
+    T: DeserializeOwned + Default,
+{
+    let Some(value) = root.get(section) else {
+        return T::default();
+    };
+
+    match value.clone().try_into() {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                section,
+                error = %error,
+                "config.toml section parse failed; falling back to section defaults"
+            );
+            T::default()
+        }
     }
 }
 
@@ -328,17 +363,43 @@ mod tests {
     }
 
     #[test]
-    fn malformed_theme_entry_falls_back_to_defaults() {
+    fn malformed_theme_entry_preserves_other_sections() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("config.toml");
-        std::fs::write(&path, "[theme]\nname = 42\n").unwrap();
+        std::fs::write(
+            &path,
+            r#"
+[startup]
+policy = "last-used"
+startup_providers = ["anthropic"]
+connect_timeout_ms = 5000
+
+[language]
+code = "es"
+
+[theme]
+name = 42
+
+[update]
+periodic_interval_secs = 900
+disabled = true
+
+[migration]
+v1_done = true
+"#,
+        )
+        .unwrap();
 
         let cfg = ConfigFile::load_or_default(&path);
 
-        assert_eq!(cfg.language.code, "en");
+        assert_eq!(cfg.startup.policy, StartupPolicyKind::LastUsed);
+        assert_eq!(cfg.startup.startup_providers, vec!["anthropic"]);
+        assert_eq!(cfg.startup.connect_timeout_ms, 5000);
+        assert_eq!(cfg.language.code, "es");
         assert_eq!(cfg.theme.name, "dark");
-        assert_eq!(cfg.update.periodic_interval_secs, 300);
-        assert!(!cfg.update.disabled);
+        assert_eq!(cfg.update.periodic_interval_secs, 900);
+        assert!(cfg.update.disabled);
+        assert!(cfg.migration.v1_done);
     }
 
     #[test]
