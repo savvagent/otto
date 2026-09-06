@@ -22,6 +22,7 @@
 - `crates/savvagent/Cargo.toml` — opt the `savvagent` crate into `tui-spinner`.
 - `crates/savvagent/src/ui.rs` — add the busy-footer spinner composition/rendering helper(s) and unit tests.
 - `crates/savvagent/src/main.rs` — thread a render tick and `current_turn_id.is_some()` through the ratatui render call.
+- `Cargo.lock` — capture the resolved `tui-spinner` dependency after the targeted/test and full-workspace cargo runs.
 
 ## Task 1: Add the dependency and implement/test the TUI footer spinner
 
@@ -30,10 +31,10 @@
 - Modify: `crates/savvagent/Cargo.toml`
 - Modify: `crates/savvagent/src/ui.rs`
 
-- [ ] Add/adjust unit tests in `crates/savvagent/src/ui.rs` first so the new busy-footer helper is covered directly: idle footer unchanged, busy footer includes the working label, busy footer includes spinner glyph output, and two different ticks produce different spinner frames.
+- [ ] Add/adjust unit tests in `crates/savvagent/src/ui.rs` first so the new busy-footer helper is covered directly: idle footer unchanged, busy footer includes the working label, busy footer includes spinner glyph output, the busy footer uses accent/muted-themed spinner colors, two different ticks produce different spinner frames, and `turn_active == true` with an empty center slot still produces no invented busy text.
 - [ ] Run `cargo test -p savvagent --bin savvagent ui::tests` and expect the new footer-focused tests to fail before implementation because the spinner helper/render path does not exist yet.
-- [ ] Add `tui-spinner = "0.4.17"` to the root `Cargo.toml` `[workspace.dependencies]` and `tui-spinner.workspace = true` to `crates/savvagent/Cargo.toml`, preserving the existing dependency ordering/comments style.
-- [ ] In `crates/savvagent/src/ui.rs`, add a small TUI-only helper that converts `CircleSpinner::new(tick).radius(1)` into the footer's center segment while preserving the existing localized working label as text alongside the spinner and falling back to the prior text-only path if the spinner output is unexpectedly empty.
+- [ ] Add `tui-spinner = "0.4.17"` to the root `Cargo.toml` `[workspace.dependencies]` and `tui-spinner.workspace = true` to `crates/savvagent/Cargo.toml`, preserving the existing dependency ordering/comments style; make sure the subsequent cargo run updates `Cargo.lock` and that the lockfile is committed with the change.
+- [ ] In `crates/savvagent/src/ui.rs`, add a small TUI-only helper that converts `CircleSpinner::new(tick).radius(1)` into the footer's center segment, explicitly styling the arc with the footer accent color and the dim ring with the footer muted color while preserving the existing localized working label as text alongside the spinner and falling back to the prior text-only path if the spinner output is unexpectedly empty.
 - [ ] In `crates/savvagent/src/ui.rs`, keep the existing footer-slot flattening semantics for left/right groups, and scope the spinner to the busy center segment only when `turn_active == true`; idle rendering must stay byte-for-byte equivalent to today's footer line.
 - [ ] Run `cargo test -p savvagent --bin savvagent ui::tests` again and expect the new/updated footer tests to pass.
 - [ ] Public-interface check: record in the task notes/PR body that this task does **not** change the SPP wire format, any tool schema, plugin ABI, slash command, env var, or on-disk format; the new dependency is internal only.
