@@ -284,6 +284,8 @@ pub(crate) async fn build_app_with_host(
 
     let transcript_dir = transcript_dir();
 
+    // `/language` still controls the same runtime surface; only the
+    // persisted on-disk source moved to `~/.savvagent/config.toml`.
     let initial_locale = crate::plugin::builtin::language::catalog::detect_initial();
     rust_i18n::set_locale(&initial_locale);
     let mut app = App::new(header_model, transcript_dir, initial_locale);

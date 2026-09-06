@@ -2,10 +2,10 @@
 //!
 //! Themes are runtime-selectable palettes applied at the render-path
 //! boundary; switching themes does not restructure the widget tree.
-//! Selection is loaded from `~/.savvagent/theme.toml` at startup and
-//! persisted on every successful `/theme <name>` invocation. The render
-//! path itself stays in `app.rs` / `ui.rs`; this module owns only the
-//! type, serialization, and disk I/O.
+//! Selection is loaded from `~/.savvagent/config.toml`'s `[theme]`
+//! section at startup and persisted on every successful `/theme <name>`
+//! invocation. The render path itself stays in `app.rs` / `ui.rs`; this
+//! module owns only the type, serialization, and disk I/O.
 //!
 //! # Catalog
 //!
@@ -23,6 +23,7 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use crate::config_file::{ConfigFile, ThemeSection};
 use ratatui_themes::ThemeName;
 use savvagent_plugin::{ThemeColor, ThemeEntry, ThemePalette};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -50,7 +51,7 @@ pub enum Theme {
 }
 
 impl Theme {
-    /// Stable wire name used in `theme.toml` and `/theme <name>`. For
+    /// Stable wire name used in `[theme].name` and `/theme <name>`. For
     /// upstream themes this is the slug (`dracula`, `tokyo-night`, …)
     /// from `ratatui_themes::ThemeName::slug`.
     #[must_use]
@@ -71,7 +72,7 @@ impl Theme {
         !matches!(self, Theme::Upstream(_))
     }
 
-    /// Parse a slug from `theme.toml` or `/theme <slug>`. Case-sensitive
+    /// Parse a slug from `config.toml` or `/theme <slug>`. Case-sensitive
     /// to match the wire format. Returns `None` for unknown inputs —
     /// the caller decides how to surface the failure.
     #[must_use]
@@ -217,23 +218,14 @@ impl std::fmt::Display for UnknownTheme {
 
 impl std::error::Error for UnknownTheme {}
 
-/// On-disk shape of `~/.savvagent/theme.toml`. Single key
-/// (`theme = "<slug>"`) so a missing file or missing key falls back to
-/// [`Theme::default()`].
-#[derive(Debug, Serialize, Deserialize)]
-struct ThemeConfig {
-    #[serde(default)]
-    theme: Theme,
-}
-
-/// Compute `~/.savvagent/theme.toml`. Returns `None` if `$HOME` is unset
-/// or empty (matches the convention in `sandbox.rs::sandbox_toml_path`).
-fn config_path() -> Option<PathBuf> {
+/// Compute `~/.savvagent/config.toml`. Returns `None` if `$HOME` is unset
+/// or empty so save-path behavior matches the old standalone-file helpers.
+fn default_config_path() -> Option<PathBuf> {
     let raw = std::env::var_os("HOME")?;
     if raw.is_empty() {
         return None;
     }
-    Some(PathBuf::from(raw).join(".savvagent").join("theme.toml"))
+    Some(PathBuf::from(raw).join(".savvagent").join("config.toml"))
 }
 
 /// Load the user's theme selection. Returns [`Theme::default()`] if the
@@ -242,7 +234,7 @@ fn config_path() -> Option<PathBuf> {
 /// Parse errors are logged at `warn!` level. Missing-file is silent
 /// (expected on first run).
 pub fn load() -> Theme {
-    match config_path() {
+    match default_config_path() {
         Some(path) => load_from_path(&path),
         None => Theme::default(),
     }
@@ -251,37 +243,25 @@ pub fn load() -> Theme {
 /// Load the theme selection from an explicit path. Pure inner used by
 /// [`load`] and tests.
 pub(crate) fn load_from_path(path: &Path) -> Theme {
-    match std::fs::read_to_string(path) {
-        Ok(text) => match toml::from_str::<ThemeConfig>(&text) {
-            Ok(cfg) => cfg.theme,
-            Err(e) => {
-                tracing::warn!(
-                    "theme.toml at {} failed to parse: {e}. Falling back to default.",
-                    path.display()
-                );
-                Theme::default()
-            }
-        },
-        Err(_) => Theme::default(),
-    }
+    Theme::from_name(&ConfigFile::load_or_default(path).theme.name).unwrap_or_default()
 }
 
 /// Persist the selected theme. Returns `Ok(())` on success or if `$HOME`
 /// is unset (silent no-op; matches `sandbox.rs::save` behavior for now).
 pub fn save(theme: Theme) -> std::io::Result<()> {
-    match config_path() {
+    match default_config_path() {
         Some(path) => save_to_path(&path, theme),
         None => Ok(()),
     }
 }
 
 pub(crate) fn save_to_path(path: &Path, theme: Theme) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let config = ThemeConfig { theme };
-    let text = toml::to_string(&config).expect("ThemeConfig serialization is infallible");
-    std::fs::write(path, text)
+    ConfigFile::save_theme_section(
+        path,
+        ThemeSection {
+            name: theme.name().to_string(),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -382,41 +362,45 @@ mod tests {
     // --- Serde adapter ---
 
     #[test]
-    fn theme_config_round_trips_built_ins() {
+    fn theme_section_round_trips_built_ins() {
         for t in [Theme::Dark, Theme::Light, Theme::HighContrast] {
-            let config = ThemeConfig { theme: t };
-            let text = toml::to_string(&config).unwrap();
-            let parsed: ThemeConfig = toml::from_str(&text).unwrap();
-            assert_eq!(parsed.theme, t);
+            let section = ThemeSection {
+                name: t.name().to_string(),
+            };
+            let text = toml::to_string(&section).unwrap();
+            let parsed: ThemeSection = toml::from_str(&text).unwrap();
+            assert_eq!(parsed.name, t.name());
         }
     }
 
     #[test]
-    fn theme_config_round_trips_every_upstream_theme() {
+    fn theme_section_round_trips_every_upstream_theme() {
         for upstream in ThemeName::all() {
             let theme = Theme::Upstream(*upstream);
-            let config = ThemeConfig { theme };
-            let text = toml::to_string(&config).unwrap();
+            let section = ThemeSection {
+                name: theme.name().to_string(),
+            };
+            let text = toml::to_string(&section).unwrap();
             assert!(
                 text.contains(upstream.slug()),
                 "serialized form must contain the slug `{}`: {text}",
                 upstream.slug()
             );
-            let parsed: ThemeConfig = toml::from_str(&text).unwrap();
-            assert_eq!(parsed.theme, theme);
+            let parsed: ThemeSection = toml::from_str(&text).unwrap();
+            assert_eq!(parsed.name, theme.name());
         }
     }
 
     #[test]
-    fn theme_config_missing_field_defaults_to_dark() {
-        let parsed: ThemeConfig = toml::from_str("").unwrap();
-        assert_eq!(parsed.theme, Theme::Dark);
+    fn theme_section_missing_field_defaults_to_dark() {
+        let parsed: ThemeSection = toml::from_str("").unwrap();
+        assert_eq!(parsed.name, Theme::Dark.name());
     }
 
     #[test]
-    fn theme_config_with_unknown_name_is_a_loud_parse_error() {
+    fn theme_section_with_unknown_name_is_a_loud_parse_error() {
         // Unknown slug → serde::de::Error::custom (NOT a silent default).
-        let r: Result<ThemeConfig, _> = toml::from_str(r#"theme = "totally-bogus""#);
+        let r: Result<ThemeSection, _> = toml::from_str(r#"name = "totally-bogus""#);
         let err = r.unwrap_err().to_string();
         assert!(
             err.contains("totally-bogus"),
@@ -429,15 +413,15 @@ mod tests {
     #[test]
     fn load_from_path_returns_default_when_file_absent() {
         let td = TempDir::new().unwrap();
-        let missing = td.path().join("theme.toml");
+        let missing = td.path().join("config.toml");
         assert_eq!(load_from_path(&missing), Theme::Dark);
     }
 
     #[test]
     fn load_from_path_returns_default_on_parse_error() {
         let td = TempDir::new().unwrap();
-        let path = td.path().join("theme.toml");
-        std::fs::write(&path, r#"theme = "totally-bogus""#).unwrap();
+        let path = td.path().join("config.toml");
+        std::fs::write(&path, "[theme]\nname = \"totally-bogus\"\n").unwrap();
         assert_eq!(
             load_from_path(&path),
             Theme::Dark,
@@ -448,15 +432,25 @@ mod tests {
     #[test]
     fn save_then_load_round_trips_built_in() {
         let td = TempDir::new().unwrap();
-        let path = td.path().join("nested").join("theme.toml");
+        let path = td.path().join("nested").join("config.toml");
         save_to_path(&path, Theme::HighContrast).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[theme]"), "saved config: {text}");
+        assert!(
+            text.contains(r#"name = "high-contrast""#),
+            "saved config: {text}"
+        );
+        assert!(
+            !path.with_file_name("theme.toml").exists(),
+            "save should stop creating standalone theme.toml"
+        );
         assert_eq!(load_from_path(&path), Theme::HighContrast);
     }
 
     #[test]
     fn save_then_load_round_trips_upstream_theme() {
         let td = TempDir::new().unwrap();
-        let path = td.path().join("theme.toml");
+        let path = td.path().join("config.toml");
         let theme = Theme::Upstream(ThemeName::TokyoNight);
         save_to_path(&path, theme).unwrap();
         assert_eq!(load_from_path(&path), theme);
@@ -465,7 +459,7 @@ mod tests {
     #[test]
     fn save_overwrites_previous_value() {
         let td = TempDir::new().unwrap();
-        let path = td.path().join("theme.toml");
+        let path = td.path().join("config.toml");
         save_to_path(&path, Theme::Light).unwrap();
         save_to_path(&path, Theme::Upstream(ThemeName::Nord)).unwrap();
         assert_eq!(load_from_path(&path), Theme::Upstream(ThemeName::Nord));
