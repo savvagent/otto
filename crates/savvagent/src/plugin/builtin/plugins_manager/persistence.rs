@@ -7,9 +7,9 @@
 //!   don't try to upgrade older shapes silently).
 //! * unknown plugin id -> warn + skip that entry.
 //!
-//! Layout convention matches `theme.toml` in the same directory: keyed by
-//! the full plugin id (e.g. `"internal:provider-anthropic"`) so the file
-//! stays stable across releases that add/remove plugins.
+//! Layout is keyed by the full plugin id (e.g.
+//! `"internal:provider-anthropic"`) so the file stays stable across
+//! releases that add/remove plugins.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
