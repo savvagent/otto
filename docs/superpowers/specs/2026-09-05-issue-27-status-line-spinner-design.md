@@ -35,9 +35,13 @@ Implement the change at the TUI render layer, not in the plugin ABI:
    GUI frontend and plugin-slot model stay stable.
 2. Teach the ratatui footer renderer in `crates/savvagent/src/ui.rs` to replace
    the working-state text presentation with a spinner-backed variant only while
-   the app is busy. This preserves the existing slot architecture (`StyledLine`
-   plugin output → ratatui conversion) and avoids pushing ratatui widget types
-   into `savvagent-plugin`.
+   a model turn is active. The busy gate should come from the TUI loop
+   (`current_turn_id.is_some()` in `crates/savvagent/src/main.rs`), matching
+   the `TurnStart`/`TurnEnd` semantics that `internal:home-footer` already uses
+   for its text. This preserves the existing slot architecture (`StyledLine`
+   plugin output → ratatui conversion), keeps `/bash`-only activity on the idle
+   footer path, and avoids pushing ratatui widget types into
+   `savvagent-plugin`.
 3. Drive the spinner with a monotonic render tick passed from
    `crates/savvagent/src/main.rs`. The TUI already redraws once per loop before
    `event::poll(Duration::from_millis(50))`
@@ -102,9 +106,10 @@ new user-facing or agent-facing interface.
   replaced by a glyph-only indicator.** Rationale: this preserves the existing
   turn-id/status text, improves accessibility, and still satisfies the request
   to swap the busy-state indicator to a spinner-backed presentation.
-- **`app.is_loading` is the correct render-time busy gate.** Rationale: it is
-  already the TUI's authoritative loading flag for active turns and `/bash`
-  work, and it resets on success/failure/cancel paths.
+- **The spinner should track active model turns, not every `is_loading` case.**
+  Rationale: the existing footer state comes from `TurnStart`/`TurnEnd`; `/bash`
+  direct execution can set `is_loading` without making the footer's center text non-idle, so the spinner gate should match `current_turn_id` /
+  footer turn semantics rather than all loading states.
 - **The unconditional 50 ms ratatui redraw loop is sufficient animation cadence
   for this change.** Rationale: it already exists; this task should reuse it,
   not redesign it.
@@ -120,7 +125,7 @@ unchanged and preserving existing architecture boundaries.
 
 - [ ] `crates/savvagent` depends on `tui-spinner`, with ratatui-version
       compatibility documented by the spec/plan.
-- [ ] While `app.is_loading` is true, the ratatui footer renders a circular
+- [ ] While a model turn is active, the ratatui footer renders a circular
       spinner in the center status segment using the current theme's accent and
       muted colors.
 - [ ] While idle, the footer still renders the existing localized `footer.idle`
@@ -135,6 +140,9 @@ unchanged and preserving existing architecture boundaries.
 
 - If the footer center slot is empty for any reason, the TUI should not invent
   new text; it should render the remaining footer groups exactly as today.
+- Non-turn busy states (for example a direct `/bash` invocation that toggles
+  `is_loading` without a `TurnStart`) should stay on the idle footer path; this
+  change is scoped to the model-turn working indicator.
 - If the spinner output ever resolves to an empty line (unexpected for
   `CircleSpinner::radius(1)`), the footer should fall back to the existing text
   path rather than rendering a blank busy segment.
@@ -149,6 +157,10 @@ unchanged and preserving existing architecture boundaries.
   behavior makes the spinner easy to animate, but it means this change should
   avoid introducing expensive per-frame allocations beyond the tiny footer
   spinner/text composition.
+- Runtime verification matters more than usual for this change because the core
+  value is visible animation rather than pure data transformation; Phase 5
+  should include a manual `cargo run -p savvagent` check if the environment can
+  launch the TUI.
 - Because the footer data model is shared with egui, the implementation must
   keep the spinner injection TUI-local; otherwise it would leak ratatui-specific
   concerns into the shared render model.
