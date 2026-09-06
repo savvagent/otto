@@ -114,7 +114,7 @@ flowchart TB
     subgraph Tools["Tool MCP Servers — stdio"]
         TF["tool-fs<br/>(read_file, write_file, list_dir, glob)"]
         TB["tool-bash (post-v0.1)"]
-        T3["3rd-party MCP servers"]
+        T3["3rd-party MCP servers<br/>(user-configured stdio + Streamable HTTP)"]
     end
 
     TUI <-->|in-process| Engine
@@ -128,6 +128,10 @@ flowchart TB
     TR -.uses.-> MCP
 
     PC -->|in-process<br/>or SPP/MCP HTTP| PA
+
+As of this release, the "3rd-party MCP servers" path is implemented for user-configured local stdio
+servers and remote Streamable HTTP servers. Exact v1 scope, plus the explicit OAuth/SSE deferrals,
+lives in [`docs/superpowers/specs/2026-09-05-mcp-servers-design.md`](docs/superpowers/specs/2026-09-05-mcp-servers-design.md).
     PC -->|in-process<br/>or SPP/MCP HTTP| PG
     PC -.->|future| PO
     PC -.->|future| PL

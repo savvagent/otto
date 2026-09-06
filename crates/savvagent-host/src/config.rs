@@ -1,5 +1,6 @@
 //! Host configuration types.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -22,17 +23,98 @@ pub enum ProviderEndpoint {
     },
 }
 
+/// How to authenticate to a remote HTTP MCP server.
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum HttpAuth {
+    /// No authentication header is sent.
+    None,
+    /// Send `Authorization: Bearer <token>` (rmcp adds the `Bearer ` scheme
+    /// itself; `token` must not include it).
+    Bearer {
+        /// The bearer token, without the `Bearer ` prefix.
+        token: String,
+    },
+}
+
+impl std::fmt::Debug for HttpAuth {
+    // Manual impl (instead of `#[derive(Debug)]`) so the bearer token is
+    // never printed in cleartext by an incidental `{:?}`/`{:#?}` format —
+    // e.g. via a panic payload, `tracing::debug!`, or `dbg!()` on a value
+    // that transitively contains this (see `HostConfig`'s `tools` field).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HttpAuth::None => write!(f, "None"),
+            HttpAuth::Bearer { .. } => f
+                .debug_struct("Bearer")
+                .field("token", &"<redacted>")
+                .finish(),
+        }
+    }
+}
+
 /// How to launch a tool MCP server.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+#[non_exhaustive]
 pub enum ToolEndpoint {
     /// Spawn `command` with `args` as a child process and speak MCP over its
     /// stdin/stdout pipes.
     Stdio {
+        /// Stable display/identity name for this endpoint (e.g. `"fs"`,
+        /// `"bash"`, or a user-configured server's name).
+        name: String,
         /// Path to the binary (anything `tokio::process::Command::new` accepts).
         command: PathBuf,
         /// Arguments forwarded verbatim.
         args: Vec<String>,
+        /// Extra environment variables to set on the spawned child (and any
+        /// later lazy respawn of the same logical server). May carry a
+        /// resolved keyring secret (e.g. an API key), so values are never
+        /// printed in `Debug` output — only the variable names are.
+        env: HashMap<String, String>,
     },
+    /// Speak MCP over a remote Streamable HTTP endpoint.
+    Http {
+        /// Stable display/identity name for this endpoint.
+        name: String,
+        /// Full URL ending in the MCP path.
+        url: String,
+        /// Authentication to attach to requests.
+        auth: HttpAuth,
+    },
+}
+
+impl std::fmt::Debug for ToolEndpoint {
+    // Manual impl (instead of `#[derive(Debug)]`): `Stdio.env` may carry a
+    // resolved keyring secret and `Http.auth` may carry a bearer token —
+    // neither should ever be printed in cleartext by an incidental
+    // `{:?}`/`{:#?}` format. Variable *names* are shown (useful for
+    // debugging which vars were set); values are redacted.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ToolEndpoint::Stdio {
+                name,
+                command,
+                args,
+                env,
+            } => {
+                let redacted_env: HashMap<&str, &str> =
+                    env.keys().map(|k| (k.as_str(), "<redacted>")).collect();
+                f.debug_struct("Stdio")
+                    .field("name", name)
+                    .field("command", command)
+                    .field("args", args)
+                    .field("env", &redacted_env)
+                    .finish()
+            }
+            ToolEndpoint::Http { name, url, auth } => f
+                .debug_struct("Http")
+                .field("name", name)
+                .field("url", url)
+                .field("auth", auth)
+                .finish(),
+        }
+    }
 }
 
 /// A connected provider handed to the host at construction time (or
@@ -450,5 +532,100 @@ mod tests {
         let runtime_value: String = format!("{}.{}.{}", 1, 2, 3);
         let c = cfg().with_app_version(runtime_value);
         assert_eq!(c.app_version.as_deref(), Some("1.2.3"));
+    }
+
+    #[test]
+    fn tool_endpoint_http_constructs_with_no_auth() {
+        let ep = ToolEndpoint::Http {
+            name: "example".to_string(),
+            url: "https://example.com/mcp".to_string(),
+            auth: HttpAuth::None,
+        };
+        match ep {
+            ToolEndpoint::Http { name, url, auth } => {
+                assert_eq!(name, "example");
+                assert_eq!(url, "https://example.com/mcp");
+                assert!(matches!(auth, HttpAuth::None));
+            }
+            _ => panic!("expected Http variant"),
+        }
+    }
+
+    #[test]
+    fn tool_endpoint_http_constructs_with_bearer_auth() {
+        let ep = ToolEndpoint::Http {
+            name: "example".to_string(),
+            url: "https://example.com/mcp".to_string(),
+            auth: HttpAuth::Bearer {
+                token: "secret-token".to_string(),
+            },
+        };
+        match ep {
+            ToolEndpoint::Http {
+                auth: HttpAuth::Bearer { token },
+                ..
+            } => assert_eq!(token, "secret-token"),
+            _ => panic!("expected Http variant with Bearer auth"),
+        }
+    }
+
+    #[test]
+    fn tool_endpoint_stdio_carries_name_and_env() {
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "bar".to_string());
+        let ep = ToolEndpoint::Stdio {
+            name: "custom".to_string(),
+            command: PathBuf::from("/bin/echo"),
+            args: vec![],
+            env: env.clone(),
+        };
+        match ep {
+            ToolEndpoint::Stdio {
+                name, env: got_env, ..
+            } => {
+                assert_eq!(name, "custom");
+                assert_eq!(got_env, env);
+            }
+            _ => panic!("expected Stdio variant"),
+        }
+    }
+
+    #[test]
+    fn http_auth_bearer_debug_never_prints_the_token() {
+        let auth = HttpAuth::Bearer {
+            token: "super-secret-token".to_string(),
+        };
+        let rendered = format!("{auth:?}");
+        assert!(!rendered.contains("super-secret-token"));
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn tool_endpoint_stdio_debug_never_prints_env_values() {
+        let mut env = HashMap::new();
+        env.insert("API_KEY".to_string(), "super-secret-value".to_string());
+        let ep = ToolEndpoint::Stdio {
+            name: "custom".to_string(),
+            command: PathBuf::from("/bin/echo"),
+            args: vec![],
+            env,
+        };
+        let rendered = format!("{ep:?}");
+        assert!(!rendered.contains("super-secret-value"));
+        assert!(rendered.contains("API_KEY"));
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn tool_endpoint_http_debug_never_prints_bearer_token() {
+        let ep = ToolEndpoint::Http {
+            name: "example".to_string(),
+            url: "https://example.com/mcp".to_string(),
+            auth: HttpAuth::Bearer {
+                token: "super-secret-token".to_string(),
+            },
+        };
+        let rendered = format!("{ep:?}");
+        assert!(!rendered.contains("super-secret-token"));
     }
 }

@@ -47,8 +47,10 @@ async fn main() -> ExitCode {
 
     let config = HostConfig::new(ProviderEndpoint::StreamableHttp { url }, model)
         .with_tool(ToolEndpoint::Stdio {
+            name: "fs".to_string(),
             command: tool_bin,
             args: vec![],
+            env: Default::default(),
         })
         .with_project_root(std::env::current_dir().unwrap_or_else(|_| ".".into()));
 

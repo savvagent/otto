@@ -8,6 +8,25 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Added
+
+- User-configured `[[mcp_servers]]` in `~/.savvagent/config.toml`, covering local stdio MCP tool
+  servers and remote Streamable HTTP MCP servers.
+- `/mcp`, a built-in manager screen for listing configured MCP servers, adding/removing entries, and
+  showing startup connect status.
+- Host-side HTTP tool transport support plus per-endpoint MCP tool-server startup status reporting.
+- Keyring support for MCP server secrets under the `mcp:<server name>` account namespace.
+
+### Changed
+
+- **Breaking (`savvagent-host` public API):** `ToolEndpoint::Stdio` gained `name`/`env` fields, a new
+  `Http { name, url, auth }` variant was added, and `ToolEndpoint`/the new `HttpAuth` enum are now
+  `#[non_exhaustive]`. Any external struct-literal construction of `ToolEndpoint::Stdio` or
+  exhaustive `match ToolEndpoint { .. }` must be updated.
+- The public host config surface for tool servers now covers both stdio and HTTP transports, and
+  the TUI preserves malformed neighboring `[[mcp_servers]]` rows/comments when `/mcp` edits
+  `config.toml`.
+
 ## 0.22.1 - 2026-09-06
 
 ### Fixed

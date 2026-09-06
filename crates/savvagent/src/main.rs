@@ -40,6 +40,7 @@ mod canvas_input;
 mod config_file;
 mod creds;
 mod egui_app;
+mod mcp_config_writer;
 mod migration;
 mod models_pref;
 mod palette;
@@ -65,7 +66,7 @@ use app::{
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use providers::{ProviderSpec, effective_providers};
 use savvagent_host::{
-    BashNetworkChoice, Host, HostConfig, LegacyModelResolution, PermissionDecision,
+    BashNetworkChoice, Host, HostConfig, HttpAuth, LegacyModelResolution, PermissionDecision,
     ProviderEndpoint, ProviderRegistration, ProviderView, SandboxConfig, SandboxMode,
     ToolCallStatus, ToolEndpoint, TranscriptError, TurnEvent, resolve_legacy_model,
 };
@@ -124,19 +125,21 @@ pub(crate) struct ToolBins {
 impl ToolBins {
     /// Append every populated entry as a stdio [`ToolEndpoint`] on `config`.
     fn apply(&self, mut config: HostConfig) -> HostConfig {
-        for path in [
-            self.fs.as_deref(),
-            self.bash.as_deref(),
-            self.grep.as_deref(),
-            self.lsp.as_deref(),
-            self.web.as_deref(),
+        for (name, path) in [
+            ("fs", self.fs.as_deref()),
+            ("bash", self.bash.as_deref()),
+            ("grep", self.grep.as_deref()),
+            ("lsp", self.lsp.as_deref()),
+            ("web", self.web.as_deref()),
         ]
         .into_iter()
-        .flatten()
+        .filter_map(|(name, path)| path.map(|p| (name, p)))
         {
             config = config.with_tool(ToolEndpoint::Stdio {
+                name: name.to_string(),
                 command: path.to_path_buf(),
                 args: vec![],
+                env: Default::default(),
             });
         }
         config
@@ -214,6 +217,7 @@ async fn main() -> Result<()> {
 /// background Tokio worker to the UI thread. A named struct (rather than a bare
 /// 4-tuple) so the two `String`/`Vec<String>`-family members can't be
 /// transposed at a decode site.
+#[allow(dead_code)]
 pub(crate) struct HostBoot {
     /// The started provider-pool host.
     pub host: Arc<Host>,
@@ -224,6 +228,22 @@ pub(crate) struct HostBoot {
     /// One-shot startup notes (timeouts, build failures, routing parse errors)
     /// to surface once `App` exists.
     pub startup_notes: Vec<String>,
+    /// Seed data for the `/mcp` manager screen.
+    pub mcp_manager_seed: McpManagerSeed,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct McpManagerSeed {
+    pub configured: Vec<McpServerSummary>,
+    pub skip_notes: Vec<(String, String)>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub(crate) struct McpServerSummary {
+    pub name: String,
+    pub transport: &'static str,
 }
 
 /// Resolve the bundled tool binaries. Cheap, local, and `Send`.
@@ -245,8 +265,15 @@ pub(crate) async fn bootstrap_host_only(
     project_root: PathBuf,
     tool_bins: ToolBins,
     config_file: config_file::ConfigFile,
+    mcp_server_diagnostics: Vec<String>,
 ) -> Option<HostBoot> {
-    bootstrap_pool_host(&project_root, &tool_bins, &config_file).await
+    bootstrap_pool_host(
+        &project_root,
+        &tool_bins,
+        &config_file,
+        mcp_server_diagnostics,
+    )
+    .await
 }
 
 /// Full bootstrap: build the host (network) then `App` (local), run
@@ -256,9 +283,17 @@ pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path
 {
     let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let tool_bins = build_tool_bins();
-    let config_file =
+    let loaded_config =
         config_file::ConfigFile::load_or_default(&config_file::ConfigFile::default_path());
-    let initial = bootstrap_host_only(project_root.clone(), tool_bins.clone(), config_file).await;
+    let mcp_server_diagnostics = loaded_config.mcp_server_diagnostics;
+    let config_file = loaded_config.config;
+    let initial = bootstrap_host_only(
+        project_root.clone(),
+        tool_bins.clone(),
+        config_file,
+        mcp_server_diagnostics,
+    )
+    .await;
     build_app_with_host(initial, project_root, tool_bins).await
 }
 
@@ -271,16 +306,27 @@ pub(crate) async fn build_app_with_host(
     project_root: std::path::PathBuf,
     tool_bins: ToolBins,
 ) -> Result<(App, HostSlot, std::path::PathBuf, ToolBins)> {
-    let (header_model, initial_provider, startup_notes) = match &initial {
+    let (header_model, initial_provider, startup_notes, mcp_manager_seed) = match &initial {
         Some(boot) => (
             boot.header_model.clone(),
             boot.provider_id,
             boot.startup_notes.clone(),
+            boot.mcp_manager_seed.clone(),
         ),
-        None => ("(disconnected)".to_string(), None, Vec::new()),
+        None => (
+            "(disconnected)".to_string(),
+            None,
+            Vec::new(),
+            McpManagerSeed::default(),
+        ),
     };
 
     let host_slot: HostSlot = Arc::new(RwLock::new(initial.map(|boot| boot.host)));
+    let mcp_statuses = if let Some(host) = current_host(&host_slot).await {
+        host.tool_server_statuses().await
+    } else {
+        vec![]
+    };
 
     let transcript_dir = transcript_dir();
 
@@ -315,11 +361,14 @@ pub(crate) async fn build_app_with_host(
         let wasm_theme = savvagent_plugin_wasm::host_imports::theme::provider(Vec::new());
         let home_dir = dirs::home_dir();
         let (set, external_warnings) = plugin::register_builtins_with_external(
+            host_slot.clone(),
             app.trust_levels.clone(),
             app.user_hooks_index.clone(),
             app.session_id.clone(),
             project_root.clone(),
             app.transcript_path.clone(),
+            mcp_manager_seed,
+            mcp_statuses,
             home_dir.as_deref(),
             wasm_theme,
         )
@@ -446,6 +495,7 @@ async fn bootstrap_pool_host(
     project_root: &Path,
     tool_bins: &ToolBins,
     config_file: &config_file::ConfigFile,
+    mcp_server_diagnostics: Vec<String>,
 ) -> Option<HostBoot> {
     // Legacy MCP-over-HTTP debug path. When this env var is set the host
     // connects to a remote provider binary instead of using the in-process
@@ -461,6 +511,7 @@ async fn bootstrap_pool_host(
                     header_model: model,
                     provider_id: None,
                     startup_notes: notes,
+                    mcp_manager_seed: McpManagerSeed::default(),
                 });
             }
             Err(e) => {
@@ -476,7 +527,7 @@ async fn bootstrap_pool_host(
 
     let timeout_dur = Duration::from_millis(config_file.startup.connect_timeout_ms);
     let mut providers: Vec<ProviderRegistration> = Vec::new();
-    let mut deferred_notes: Vec<String> = Vec::new();
+    let mut deferred_notes: Vec<String> = mcp_server_diagnostics;
 
     // Try each provider plugin in priority order. Timeout and build errors
     // are non-fatal: the user can `/connect` any provider later.
@@ -648,6 +699,11 @@ async fn bootstrap_pool_host(
     config.startup_connect = startup_policy;
     config.connect_timeout_ms = config_file.startup.connect_timeout_ms;
     config.routing_rules_path = crate::routing_pref::routing_toml_path();
+    let (mcp_tools, mcp_manager_seed) =
+        resolve_configured_mcp_servers(config_file, &mut deferred_notes);
+    for endpoint in mcp_tools {
+        config.tools.push(endpoint);
+    }
 
     match Host::start(config).await {
         Ok(host) => {
@@ -662,11 +718,124 @@ async fn bootstrap_pool_host(
                 header_model: initial_model,
                 provider_id: initial_provider_id,
                 startup_notes: deferred_notes,
+                mcp_manager_seed,
             })
         }
         Err(e) => {
             eprintln!("warning: pool host start failed: {e:#}");
             None
+        }
+    }
+}
+
+fn resolve_configured_mcp_servers(
+    config_file: &config_file::ConfigFile,
+    deferred_notes: &mut Vec<String>,
+) -> (Vec<ToolEndpoint>, McpManagerSeed) {
+    let mut configured = Vec::new();
+    let mut skip_notes = Vec::new();
+    let mut seen_names = std::collections::HashSet::new();
+    let mut endpoints = Vec::new();
+
+    for entry in &config_file.mcp_servers {
+        let (name, transport) = match entry {
+            config_file::McpServerEntry::Stdio { name, .. } => (name.clone(), "stdio"),
+            config_file::McpServerEntry::Http { name, .. } => (name.clone(), "http"),
+        };
+        configured.push(McpServerSummary {
+            name: name.clone(),
+            transport,
+        });
+
+        if let Err(reason) = entry.validate(&seen_names) {
+            deferred_notes.push(format!("mcp server `{name}` skipped: {reason}"));
+            skip_notes.push((name, reason));
+            continue;
+        }
+        seen_names.insert(name.clone());
+
+        let endpoint = match entry {
+            config_file::McpServerEntry::Stdio {
+                name,
+                command,
+                args,
+                env,
+            } => match resolve_mcp_stdio_env(name, env) {
+                Ok(env) => ToolEndpoint::Stdio {
+                    name: name.clone(),
+                    command: PathBuf::from(command),
+                    args: args.clone(),
+                    env,
+                },
+                Err(reason) => {
+                    deferred_notes.push(format!("mcp server `{name}` skipped: {reason}"));
+                    skip_notes.push((name.clone(), reason));
+                    continue;
+                }
+            },
+            config_file::McpServerEntry::Http { name, url, auth } => {
+                match resolve_mcp_http_auth(name, auth) {
+                    Ok(auth) => ToolEndpoint::Http {
+                        name: name.clone(),
+                        url: url.clone(),
+                        auth,
+                    },
+                    Err(reason) => {
+                        deferred_notes.push(format!("mcp server `{name}` skipped: {reason}"));
+                        skip_notes.push((name.clone(), reason));
+                        continue;
+                    }
+                }
+            }
+        };
+        endpoints.push(endpoint);
+    }
+
+    (
+        endpoints,
+        McpManagerSeed {
+            configured,
+            skip_notes,
+        },
+    )
+}
+
+fn resolve_mcp_stdio_env(
+    server_name: &str,
+    env: &std::collections::HashMap<String, String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut resolved = std::collections::HashMap::new();
+    for (key, value) in env {
+        if value == "keyring" {
+            let Some(secret) = creds::mcp_load(server_name)
+                .map_err(|err| format!("failed to read keyring secret: {err}"))?
+            else {
+                return Err(format!("missing keyring secret for `mcp:{server_name}`"));
+            };
+            resolved.insert(key.clone(), secret);
+        } else {
+            resolved.insert(key.clone(), value.clone());
+        }
+    }
+    Ok(resolved)
+}
+
+fn resolve_mcp_http_auth(
+    server_name: &str,
+    auth: &config_file::McpAuthMode,
+) -> Result<HttpAuth, String> {
+    match auth {
+        config_file::McpAuthMode::None => Ok(HttpAuth::None),
+        config_file::McpAuthMode::Bearer => {
+            let Some(token) = creds::mcp_load(server_name)
+                .map_err(|err| format!("failed to read keyring secret: {err}"))?
+            else {
+                return Err(format!("missing keyring secret for `mcp:{server_name}`"));
+            };
+            Ok(HttpAuth::Bearer { token })
+        }
+        config_file::McpAuthMode::Oauth => {
+            Err("oauth is not yet supported; use auth = \"bearer\" or omit auth".into())
         }
     }
 }
@@ -4035,6 +4204,74 @@ mod model_validation_tests {
             }
             other => panic!("expected Proceed with warning, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod mcp_bootstrap_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn resolve_configured_mcp_servers_builds_seed_and_endpoint_for_valid_stdio_entry() {
+        let config_file = crate::config_file::ConfigFile {
+            startup: Default::default(),
+            migration: Default::default(),
+            mcp_servers: vec![crate::config_file::McpServerEntry::Stdio {
+                name: "fixture".into(),
+                command: "/bin/echo".into(),
+                args: vec!["hello".into()],
+                env: HashMap::from([("TOKEN".into(), "literal".into())]),
+            }],
+        };
+        let mut notes = Vec::new();
+        let (endpoints, seed) = resolve_configured_mcp_servers(&config_file, &mut notes);
+
+        assert!(notes.is_empty());
+        assert_eq!(seed.configured.len(), 1);
+        assert!(seed.skip_notes.is_empty());
+        assert_eq!(seed.configured[0].name, "fixture");
+        assert_eq!(seed.configured[0].transport, "stdio");
+        assert_eq!(endpoints.len(), 1);
+        match &endpoints[0] {
+            ToolEndpoint::Stdio {
+                name,
+                command,
+                args,
+                env,
+            } => {
+                assert_eq!(name, "fixture");
+                assert_eq!(*command, PathBuf::from("/bin/echo"));
+                assert_eq!(*args, vec!["hello".to_string()]);
+                assert_eq!(env.get("TOKEN").map(String::as_str), Some("literal"));
+            }
+            other => panic!("expected stdio endpoint, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_configured_mcp_servers_records_skip_note_for_missing_secret() {
+        let config_file = crate::config_file::ConfigFile {
+            startup: Default::default(),
+            migration: Default::default(),
+            mcp_servers: vec![crate::config_file::McpServerEntry::Http {
+                name: "remote".into(),
+                url: "https://example.test/mcp".into(),
+                auth: crate::config_file::McpAuthMode::Bearer,
+            }],
+        };
+        let mut notes = Vec::new();
+        let (endpoints, seed) = resolve_configured_mcp_servers(&config_file, &mut notes);
+
+        assert!(endpoints.is_empty());
+        assert_eq!(seed.configured.len(), 1);
+        assert_eq!(seed.configured[0].name, "remote");
+        assert_eq!(seed.configured[0].transport, "http");
+        assert_eq!(seed.skip_notes.len(), 1);
+        assert_eq!(seed.skip_notes[0].0, "remote");
+        assert!(seed.skip_notes[0].1.contains("missing keyring secret"));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("mcp server `remote` skipped"));
     }
 }
 

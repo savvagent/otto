@@ -606,8 +606,21 @@ fn apply_macos(
     let allow_net = config.net_allowed_for(tool_bin);
     let extra_binds = config.extra_binds_for(tool_bin);
 
+    // `sandbox-exec`'s `subpath` profile predicate only matches absolute
+    // paths — a relative `project_root` (e.g. ".") silently fails to match
+    // anything, denying every file write. Canonicalize the same way the
+    // bwrap (Linux) path already does, so relative roots resolve against the
+    // process's actual cwd instead of being compared literally.
+    let canonical_root =
+        canonical_or_original(project_root).unwrap_or_else(|| project_root.to_path_buf());
+    let canonical_binds: Vec<PathBuf> = extra_binds
+        .iter()
+        .map(|b| canonical_or_original(b).unwrap_or_else(|| b.to_path_buf()))
+        .collect();
+    let canonical_bind_refs: Vec<&Path> = canonical_binds.iter().map(PathBuf::as_path).collect();
+
     // Build the sandbox-exec(1) TinyScheme profile via the testable helper.
-    let profile = build_macos_profile(project_root, allow_net, &extra_binds);
+    let profile = build_macos_profile(&canonical_root, allow_net, &canonical_bind_refs);
 
     // Collect original program, args, envs, and cwd before we mutate `cmd`.
     // The rewrite (`*cmd = Command::new(sandbox_exec)`) replaces the entire
@@ -743,7 +756,7 @@ fn which_binary(name: &str) -> Option<PathBuf> {
 
 /// Try `canonicalize`; fall back to the original path if that fails (e.g.
 /// the path doesn't exist yet at sandbox-apply time).
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code))]
 fn canonical_or_original(p: &Path) -> Option<PathBuf> {
     if p.as_os_str().is_empty() {
         return None;
@@ -1184,6 +1197,57 @@ mod tests {
                 !output.status.success(),
                 "expected write outside project root to fail; exit={:?}",
                 output.status
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    mod macos {
+        use super::*;
+
+        /// Regression test for a bug where `apply_macos` passed a relative
+        /// `project_root` (e.g. ".") straight into the sandbox-exec profile.
+        /// `sandbox-exec`'s `subpath` predicate only matches absolute paths,
+        /// so a relative root silently denied *every* file write — tools
+        /// spawned with a relative project root (as several tests, and any
+        /// caller resolving cwd lazily, do) would fail to write anywhere,
+        /// including their own stdout/session files, closing the connection
+        /// before the MCP handshake even completed.
+        #[test]
+        fn relative_project_root_is_canonicalized_before_building_profile() {
+            if which_binary("sandbox-exec").is_none() {
+                // sandbox-exec is built into macOS, but skip gracefully if a
+                // future runner image ever lacks it.
+                return;
+            }
+            let mut cmd = make_cmd("/bin/echo");
+            let cfg = SandboxConfig::default();
+            apply_macos(&mut cmd, Path::new("/bin/echo"), Path::new("."), &cfg);
+
+            let args: Vec<String> = cmd
+                .as_std()
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            // argv is `["-p", "<profile>", "/bin/echo"]` after the rewrite.
+            let profile = args
+                .iter()
+                .position(|a| a == "-p")
+                .and_then(|i| args.get(i + 1))
+                .expect("sandbox-exec argv should contain -p <profile>");
+
+            assert!(
+                !profile.contains("(subpath \".\")"),
+                "profile still contains the unresolved relative root:\n{profile}"
+            );
+            let cwd = std::env::current_dir().expect("current dir");
+            let expected = format!(
+                "(allow file-write* (subpath \"{}\"))",
+                scheme_quote(&cwd.to_string_lossy())
+            );
+            assert!(
+                profile.contains(&expected),
+                "expected canonicalized cwd allow-rule in profile:\n{profile}\nexpected:\n{expected}"
             );
         }
     }

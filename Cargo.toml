@@ -86,6 +86,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
 toml = { version = "0.8", default-features = false, features = ["parse", "display"] }
+toml_edit = "0.25"
 schemars = { version = "1.2", features = ["preserve_order"] }
 
 # HTTP / MCP
