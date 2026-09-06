@@ -14,23 +14,23 @@ use savvagent_plugin::{
 /// Registered as [`PluginKind::Core`] so the plugins-manager screen
 /// refuses to disable it — disabling `/exit` would leave the user with no
 /// in-band way to leave the TUI from the command palette.
-pub struct QuitPlugin;
+pub struct ExitPlugin;
 
-impl QuitPlugin {
-    /// Construct a new [`QuitPlugin`].
+impl ExitPlugin {
+    /// Construct a new [`ExitPlugin`].
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for QuitPlugin {
+impl Default for ExitPlugin {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl Plugin for QuitPlugin {
+impl Plugin for ExitPlugin {
     fn manifest(&self) -> Manifest {
         let mut contributions = Contributions::default();
         contributions.slash_commands = vec![SlashSpec {
@@ -65,7 +65,7 @@ mod tests {
     /// the palette hit `SlashError::Unknown`.
     #[tokio::test]
     async fn exit_returns_quit_effect() {
-        let mut p = QuitPlugin::new();
+        let mut p = ExitPlugin::new();
         let effs = p.handle_slash("exit", vec![]).await.unwrap();
         assert_eq!(effs.len(), 1);
         assert!(matches!(effs[0], Effect::Quit));
@@ -73,7 +73,7 @@ mod tests {
 
     #[tokio::test]
     async fn manifest_marks_exit_as_core() {
-        let p = QuitPlugin::new();
+        let p = ExitPlugin::new();
         let m = p.manifest();
         assert_eq!(m.id.as_str(), "internal:exit");
         assert!(matches!(m.kind, PluginKind::Core));

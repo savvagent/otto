@@ -542,7 +542,8 @@ pub struct App {
     pub live_text: String,
     /// True while a turn is in flight.
     pub is_loading: bool,
-    /// Set by `/exit` or Ctrl-C to break the event loop.
+    /// Set when the app handles [`savvagent_plugin::Effect::Quit`] so the
+    /// event loop exits on the next tick.
     pub should_quit: bool,
     /// Approximate context size (chars / 4) — naive token estimate.
     pub context_size: usize,

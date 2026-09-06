@@ -114,7 +114,7 @@ pub(crate) fn register_builtins(
         Box::new(builtin::model::ModelPlugin::new()),
         Box::new(builtin::plugins_manager::PluginsManagerPlugin::new()),
         Box::new(builtin::prompt_keybindings::PromptKeybindingsPlugin::new()),
-        Box::new(builtin::quit::QuitPlugin::new()),
+        Box::new(builtin::quit::ExitPlugin::new()),
         Box::new(builtin::resume::ResumePlugin::new()),
         Box::new(builtin::route::RoutePlugin::new()),
         Box::new(builtin::save::SavePlugin::new()),

@@ -357,7 +357,7 @@ mod tests {
     use savvagent_plugin::{Contributions, Manifest, Plugin, PluginKind};
     use tokio::sync::RwLock;
 
-    use crate::plugin::builtin::quit::QuitPlugin;
+    use crate::plugin::builtin::quit::ExitPlugin;
     use crate::plugin::builtin::user_slash_commands::UserSlashCommandsPlugin;
 
     /// Test plugin with optionally a slash and/or slot contribution.
@@ -406,7 +406,7 @@ mod tests {
 
         let trust = std::sync::Arc::new(RwLock::new(std::collections::BTreeMap::new()));
         let reg = PluginRegistry::from_plugins(vec![
-            Box::new(QuitPlugin::new()),
+            Box::new(ExitPlugin::new()),
             Box::new(UserSlashCommandsPlugin::with_roots(
                 proj.path().to_path_buf(),
                 home.path().to_path_buf(),
