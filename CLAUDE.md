@@ -54,7 +54,7 @@ The `Host` only sees `Box<dyn ProviderClient>` and doesn't know which path is in
 
 ### Tool transport
 
-Tools are always stdio child processes owned by `ToolRegistry`. They're reaped on shutdown. The TUI bakes in one (`savvagent-tool-fs`, locatable via `$PATH` or `SAVVAGENT_TOOL_FS_BIN`); additional tools can be added via `HostConfig::with_tool` in `crates/savvagent/src/main.rs`.
+Bundled tools are stdio child processes owned by `ToolRegistry` and reaped on shutdown. User-configured `/mcp` entries can add either more stdio tool servers or remote Streamable HTTP MCP servers alongside them. The TUI bakes in one (`savvagent-tool-fs`, locatable via `$PATH` or `SAVVAGENT_TOOL_FS_BIN`); additional built-in tools can still be added via `HostConfig::with_tool` in `crates/savvagent/src/main.rs`.
 
 ### `rmcp` ProgressDispatcher gotcha
 
@@ -64,7 +64,7 @@ Tools are always stdio child processes owned by `ToolRegistry`. They're reaped o
 
 | Crate | Owns |
 |---|---|
-| `crates/savvagent` | TUI binary, `/connect`, file picker, transcript persistence, the `PROVIDERS` registry. |
+| `crates/savvagent` | TUI binary, `/connect`, `/mcp`, file picker, transcript persistence, the `PROVIDERS` registry. |
 | `crates/savvagent-host` | `Host`, `ToolRegistry`, session state, project context (`SAVVAGENT.md`). |
 | `crates/savvagent-protocol` | Pure types: `CompleteRequest`, `CompleteResponse`, `StreamEvent`, content blocks. |
 | `crates/savvagent-mcp` | `ProviderClient` / `ProviderHandler` traits and the `InProcessProviderClient` bridge. |
@@ -77,11 +77,12 @@ The README has step-by-step recipes — the short version:
 
 - **New provider:** mirror `provider-gemini`, implement `ProviderHandler`, then append a `ProviderSpec` entry (and `build_*` factory) in `crates/savvagent/src/providers.rs::PROVIDERS`. The host needs no changes.
 - **New tool:** mirror `crates/tool-fs` (stdio MCP server) and register it via `HostConfig::with_tool` in `crates/savvagent/src/main.rs`.
+- **New user-configured MCP server:** use `/mcp` or add a `[[mcp_servers]]` entry in `~/.savvagent/config.toml`; secrets live in the keyring under `mcp:<server name>`.
 
 ## Persistence
 
 - Transcripts: `~/.savvagent/transcripts/<unix>.json` (auto on `TurnComplete`, manual on `/save`).
-- API keys: OS keyring under service `savvagent`, account `<provider id>`. Never written to disk in plaintext — `/connect` is the only writer.
+- API keys and MCP-server secrets: OS keyring under service `savvagent`, account `<provider id>` or `mcp:<server name>`. Never written to disk in plaintext — `/connect` and `/mcp` are the only writers.
 
 ## Claude Code skills
 

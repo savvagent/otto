@@ -463,21 +463,21 @@ recent released heading when the release PR (Task 9's final note) is actually op
 **Files:**
 - Modify: `README.md`, `PRD.md`, `CLAUDE.md`, `CHANGELOG.md`
 
-- [ ] `README.md`: add a "New MCP server (user-configured)" recipe next to the existing "New
+- [x] `README.md`: add a "New MCP server (user-configured)" recipe next to the existing "New
       provider"/"New tool" recipes in the "Extending" section, documenting the `[[mcp_servers]]` TOML
       shape, the `/mcp` command, and the `mcp:<server>` keyring namespace. Add `/mcp` to whatever
       slash-command reference table/list already documents `/connect` etc.
-- [ ] `PRD.md`: update the "3rd-party MCP servers" architecture-diagram entry (`PRD.md:117`) to note
+- [x] `PRD.md`: update the "3rd-party MCP servers" architecture-diagram entry (`PRD.md:117`) to note
       it's implemented as of this release, pointing at the spec file for the exact scope (stdio +
       Streamable HTTP only, no OAuth/SSE — link the spec's Scope section).
-- [ ] `CLAUDE.md`: update the "`/connect` is the only writer" keyring invariant sentence under
+- [x] `CLAUDE.md`: update the "`/connect` is the only writer" keyring invariant sentence under
       Persistence to "two writers, namespaced (`/connect` for provider keys, `/mcp` for
       `mcp:<server>` secrets)".
-- [ ] `CHANGELOG.md`: add `### Added` (Http tool transport, `/mcp`, `mcp_servers` config,
+- [x] `CHANGELOG.md`: add `### Added` (Http tool transport, `/mcp`, `mcp_servers` config,
       `toml_edit` dependency) and `### Changed`/`### Breaking` (per this repo's existing changelog
       section conventions — check the most recent `[Unreleased]` or prior release heading for the
       exact section names used) entries under `[Unreleased]`.
-- [ ] Validate: run `cargo test --doc -p savvagent-host -p savvagent` (catches broken doc-comment
+- [x] Validate: run `cargo test --doc -p savvagent-host -p savvagent` (catches broken doc-comment
       code fences/links touched by this task, since `config.rs`/`session.rs` doc comments referenced
       by README/PRD prose were touched in earlier tasks) and grep the modified docs for any now-stale
       cross-references (e.g. confirm no remaining "`/connect` is the only writer" phrasing survives

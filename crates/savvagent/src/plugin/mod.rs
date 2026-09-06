@@ -322,15 +322,16 @@ mod tests {
         // tool-web-summary adds 1 more, bringing non-provider count to 30;
         // removing view-file, edit-file, and editor-keybindings drops the
         // non-provider count from 30 back down to 27;
+        // `/mcp` adds 1 more, bringing non-provider count to 28;
         // sub-project B (user-hooks) moves to `hook_entries` (not counted
         // in the plugins Vec) but still surfaces in the registry's plugins
         // map via the dual-Arc HookEntry, contributing 1 more registry
-        // entry; total registry size is 27 + 4 + 1 = 32.
+        // entry; total registry size is 28 + 4 + 1 = 33.
         let reg = PluginRegistry::new(set);
         assert_eq!(
             reg.len(),
-            32,
-            "registry should have 27 non-provider + 4 provider + 1 hook plugin"
+            33,
+            "registry should have 28 non-provider + 4 provider + 1 hook plugin"
         );
         assert_eq!(
             reg.provider_count(),

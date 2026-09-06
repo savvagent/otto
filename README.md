@@ -53,7 +53,7 @@ The workspace is a small set of focused crates:
 
 | Crate | Purpose |
 |---|---|
-| [`crates/savvagent`](crates/savvagent) | All seven shipping binaries (`savvagent` TUI plus the `savvagent-tool-{fs,bash,grep}` tool shims and the `savvagent-{anthropic,gemini,openai}` provider shims). Owns `/connect`, file picker, transcript persistence, the plugin runtime. |
+| [`crates/savvagent`](crates/savvagent) | All seven shipping binaries (`savvagent` TUI plus the `savvagent-tool-{fs,bash,grep}` tool shims and the `savvagent-{anthropic,gemini,openai}` provider shims). Owns `/connect`, `/mcp`, file picker, transcript persistence, the plugin runtime. |
 | [`crates/savvagent-host`](crates/savvagent-host) | Agent engine consumed as a library. Drives the tool-use loop, manages provider/tool sessions, owns the OS-level sandbox and per-tool stderr capture, exposes `Host::run_turn` and `run_turn_streaming`. |
 | [`crates/savvagent-protocol`](crates/savvagent-protocol) | Pure-types crate: `CompleteRequest`, `CompleteResponse`, `StreamEvent`, content blocks, `ListModelsResponse`. SPP wire spec in [`SPEC.md`](crates/savvagent-protocol/SPEC.md). |
 | [`crates/savvagent-mcp`](crates/savvagent-mcp) | The `ProviderClient` / `ProviderHandler` traits and the `InProcessProviderClient` bridge that makes provider crates linkable as libraries. |
@@ -142,6 +142,7 @@ provider has a key on file.
 | Command | What it does |
 |---|---|
 | `/connect [<provider>] [--rekey]` | Add a provider to the connection pool. Silent when the keyring already has a stored key — the API-key modal only opens when a key is missing or `--rekey` is passed. Multiple providers can be connected simultaneously; switch with `/use <provider>`. |
+| `/mcp` | Open the MCP-server manager. Lists configured user MCP servers, their transport (`stdio` or Streamable HTTP), and whether startup connected them successfully. `a` adds a server, `d` removes one, `r` refreshes the status snapshot; add/remove update `~/.savvagent/config.toml` and require a restart to take effect. |
 | `/disconnect <provider> [--force]` | Remove a provider from the pool. Default (drain) mode waits for any in-flight turn to finish. `--force` signals a cooperative cancel, waits 500 ms, then aborts. |
 | `/use <provider>` | Switch the active provider. As of v0.17.0 the conversation history is preserved across the switch — `tool_use_id`s are provider-namespaced so subsequent turns on the new provider can safely see prior tool calls. For one-off routing without changing the active provider, use the `@<provider>` prefix. |
 | `/model` | Open the model picker (no args), or switch directly: `/model gemini-2.5-pro`. As of v0.17.0 the picker lists every connected provider's models; selecting a model from a different provider switches the active provider too. Selection persists per provider to `~/.savvagent/models.toml`. |
@@ -689,6 +690,39 @@ Tools are stdio MCP servers. Mirror `crates/tool-fs`:
    additional tools you can extend `HostConfig::with_tool` calls in
    `crates/savvagent/src/main.rs`.
 
+## Adding a new MCP server (user-configured)
+
+For user-installed MCP servers, prefer config over rebuilding the binary.
+
+1. Open `/mcp` inside savvagent and add either:
+   - a local stdio server (`name`, `command`, optional `args`, optional one-secret env var), or
+   - a remote Streamable HTTP server (`name`, `url`, optional bearer token).
+2. Savvagent persists the raw entry into `~/.savvagent/config.toml` under `[[mcp_servers]]`.
+3. If a secret is provided, it is written to the OS keyring under service `savvagent`, account
+   `mcp:<server name>` — never inline in TOML.
+4. Restart savvagent to apply the change. The `/mcp` screen shows whether startup connected the
+   server or skipped it (for example, missing secret or connection failure).
+
+The equivalent TOML looks like:
+
+```toml
+[[mcp_servers]]
+name = "github"
+transport = "stdio"
+command = "/usr/local/bin/github-mcp-server"
+args = ["--read-only"]
+env = { GITHUB_TOKEN = "keyring" }
+
+[[mcp_servers]]
+name = "sentry"
+transport = "http"
+url = "https://mcp.sentry.dev/mcp"
+auth = "bearer"
+```
+
+`env = { ... = "keyring" }` and `auth = "bearer"` mean "load the secret from the keyring account
+`mcp:<server name>` during startup."
+
 
 ### `read_resource` (built-in)
 
@@ -906,7 +940,7 @@ args = []
 |---|---|---|
 | `~/.savvagent/transcripts/<unix_secs>.json` | TUI | One pretty-printed `Vec<spp::Message>` per save (auto on `TurnComplete`, manual on `/save`). |
 | `~/.savvagent/canvases/<unix>-<turn>-<block>.html` | `internal:html-canvas` plugin | Auto-exported HTML source for each finalized canvas. Written with `0o600` permissions. Present only when the plugin is enabled. |
-| `~/.savvagent/config.toml` | TUI startup | Startup connection policy (`opt-in` / `all` / `last-used` / `none`), `startup_providers` list, per-provider `connect_timeout_ms`, and one-time migration flag. Created automatically on first launch when multiple keyring entries are found. |
+| `~/.savvagent/config.toml` | TUI startup + `/mcp` | Startup connection policy (`opt-in` / `all` / `last-used` / `none`), `startup_providers`, `connect_timeout_ms`, one-time migration flag, and `[[mcp_servers]]` entries for user-configured stdio/HTTP MCP servers. Created automatically on first launch when multiple keyring entries are found. |
 | `~/.savvagent/models.toml` | `/model` | `{ providers: { id = model } }`. Re-applied at `/connect`. |
 | `~/.savvagent/theme.toml` | `/theme` | Selected theme slug. |
 | `~/.savvagent/language.toml` | `/language` | Selected locale code. |
@@ -919,7 +953,7 @@ args = []
 | `~/.savvagent/trusted-projects.json` | user-defined slash commands | Project-trust persistence; only "trust always" decisions are stored. |
 | `~/.savvagent/commands/` | user-defined slash commands | User-wide slash command markdown files. |
 | `.savvagent/commands/` (per project) | user-defined slash commands | Project-local slash command markdown files. |
-| OS keyring (`service=savvagent`, `account=<provider id>`) | `/connect` | Provider API keys. Never written to disk in plaintext. |
+| OS keyring (`service=savvagent`, `account=<provider id>` or `mcp:<server name>`) | `/connect`, `/mcp` | Provider API keys and MCP-server bearer/env secrets. Never written to disk in plaintext. |
 
 ## Project context: `SAVVAGENT.md`
 
