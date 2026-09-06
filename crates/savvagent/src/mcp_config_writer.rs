@@ -53,7 +53,7 @@ pub fn entry_table(entry: &McpServerEntry) -> Table {
             if !env.is_empty() {
                 let mut inline = InlineTable::new();
                 let mut pairs: Vec<_> = env.iter().collect();
-                pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
+                pairs.sort_by_key(|(left, _)| left.as_str());
                 for (key, value) in pairs {
                     inline.insert(key.as_str(), Value::from(value.as_str()));
                 }

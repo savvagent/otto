@@ -67,6 +67,7 @@ use crate::providers::{ProviderSpec, install_external_providers};
 /// `Err`. In that case we log the error and proceed with built-ins
 /// only — the alternative would be a silent reset of every prior trust
 /// decision, which the spec forbids.
+#[allow(clippy::too_many_arguments)] // Each arg is a distinct bootstrap-time dependency.
 pub(crate) async fn register_builtins_with_external(
     host_slot: crate::HostSlot,
     trust_levels: builtin::user_slash_commands::TrustMap,

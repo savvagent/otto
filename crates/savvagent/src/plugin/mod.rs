@@ -83,6 +83,7 @@ pub(crate) use external::register_builtins_with_external;
 /// `take_client` map, so both code paths mutate the same state — the
 /// dual-instance bug that previously broke `/connect <provider>` is now
 /// architecturally impossible.
+#[allow(clippy::too_many_arguments)] // Each arg is a distinct bootstrap-time dependency.
 pub(crate) fn register_builtins(
     host_slot: crate::HostSlot,
     trust_levels: builtin::user_slash_commands::TrustMap,
