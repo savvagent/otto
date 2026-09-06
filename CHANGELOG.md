@@ -12,7 +12,7 @@ boundary changes and PATCH captures fixes).
 
 ### Changed
 
-- **Breaking slash-command rename: `/quit` -> `/exit`.** Savvagent now uses `/exit` as the built-in session-termination command to match common agentic CLI conventions. `/quit` was removed outright (no deprecated alias) under this repo's pre-1.0 SemVer policy, so this ships as a MINOR release. User-defined `commands/exit.md` remains reserved for the built-in command and is skipped with a warning during discovery. (#20)
+- **Breaking slash-command rename: `/quit` -> `/exit`.** Savvagent now uses `/exit` as the built-in session-termination command to match common agentic CLI conventions. `/quit` was removed outright (no deprecated alias) under this repo's pre-1.0 SemVer policy, so this ships as a MINOR release. User-defined `commands/exit.md` is now reserved for the built-in command and is skipped with a warning during discovery. (#20)
 
 ## 0.21.0 - 2026-09-05
 
