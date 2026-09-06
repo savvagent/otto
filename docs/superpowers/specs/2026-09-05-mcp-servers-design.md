@@ -94,6 +94,12 @@ new.
 #[non_exhaustive]
 pub enum ToolEndpoint {
     Stdio {
+        /// Stable identity for this endpoint — `"fs"`/`"bash"`/`"grep"`/`"lsp"`/`"web"`
+        /// for bundled `ToolBins` entries, or the configured `[[mcp_servers]].name`
+        /// for user-configured servers. This is what `ToolServerStatus::name` (§2)
+        /// and `/mcp`'s listing (§6) key on — never derived from `command`/`url`,
+        /// which are ambiguous when two entries share a binary or endpoint.
+        name: String,
         command: PathBuf,
         args: Vec<String>,
         /// Resolved (never `"keyring"`-sentinel) environment variables to
@@ -101,7 +107,13 @@ pub enum ToolEndpoint {
         /// environment. Empty for the bundled `ToolBins` endpoints today.
         env: HashMap<String, String>,
     },
-    Http { url: String, auth: HttpAuth },
+    Http {
+        /// Same role as `Stdio::name` above — the configured server's stable
+        /// identity, independent of `url`.
+        name: String,
+        url: String,
+        auth: HttpAuth,
+    },
 }
 
 pub enum HttpAuth {
@@ -120,29 +132,30 @@ constructing `ToolEndpoint` values, exactly as it already does for provider API 
 construction shared by both the eager and lazy-bash arms) is extended to call `.envs(&env)` on the
 built command before wrapping it in `TokioChildProcess::new`, merging over (not replacing) whatever
 environment the process already inherits — the existing sandbox environment handling is untouched,
-`env` is applied in addition to it.
+`env` is applied in addition to it. `ToolServer.label` (`tools.rs:301-304`) is populated from
+`name`, not derived from `command`, closing the identity-ambiguity gap flagged in spec review.
 
 ### 2. `ToolRegistry::connect` (`crates/savvagent-host/src/tools.rs`)
 
-**Per-endpoint failure isolation (blocking fix from spec review).** `connect()` today propagates the
-first endpoint failure via `?`, which aborts `Host::start` entirely — acceptable when every endpoint
-is a trusted bundled binary, but wrong once a user-configured server can be unreachable. `connect()`
-changes shape: each `ToolEndpoint` in `self.tools` is attempted independently inside a `match` arm
-that captures `Result<ToolServer, ConnectError>` instead of using `?` at the top level; a failure is
-recorded (see status record below) and iteration continues to the next endpoint. Only a failure that
-indicates a genuine programming/config error the embedder must know about before anything runs (there
-is none identified for this change) would still abort — endpoint-reachability failures never do.
-This is a behavior change to the *bundled*-tool path too (a missing bundled binary today already
-degrades gracefully per `ToolBins`'s `Option<PathBuf>` — this makes the underlying registry consistent
-with that, not looser).
+**Per-endpoint failure isolation.** `connect()` today propagates the first endpoint failure via `?`,
+which aborts `Host::start` entirely — acceptable when every endpoint is a trusted bundled binary, but
+wrong once a user-configured server can be unreachable. `connect()` changes shape: each
+`ToolEndpoint` in `self.tools` is attempted independently inside a `match` arm that captures
+`Result<ToolServer, ConnectError>` instead of using `?` at the top level; a failure is recorded (see
+status record below) and iteration continues to the next endpoint. Only a failure that indicates a
+genuine programming/config error the embedder must know about before anything runs (there is none
+identified for this change) would still abort — endpoint-reachability failures never do. This is a
+behavior change to the *bundled*-tool path too (a missing bundled binary today already degrades
+gracefully per `ToolBins`'s `Option<PathBuf>` — this makes the underlying registry consistent with
+that, not looser).
 
 **Status record.** Add:
 
 ```rust
 pub struct ToolServerStatus {
-    pub name: String,          // ToolServer label / configured mcp_servers name
+    pub name: String,             // ToolEndpoint::name — see §1
     pub transport: TransportKind, // Stdio | Http
-    pub state: ConnectState,   // Connected | Failed { reason: String }
+    pub state: ConnectState,      // Connected | Failed { reason: String }
 }
 ```
 
@@ -152,28 +165,39 @@ this as `Host::tool_server_statuses()` (§6) — this is the authoritative data 
 reads; it is not derived from `eager_servers` alone (which only holds successes) or from an
 approximation on the embedder side.
 
-**Connection timeout.** The `Http` arm wraps `handler.serve(transport).await` in
-`tokio::time::timeout(CONNECT_TIMEOUT, ...)` (constant, e.g. 5000ms, matching the existing
-`connect_timeout_ms` convention `HostConfig` already uses for provider auto-connect — reuse that
-field's value rather than inventing a second timeout constant) so a hung remote handshake can't block
-`Host::start` indefinitely; a timeout is recorded as `ConnectState::Failed { reason: "connect timed
-out" }`, not a panic or an indefinite hang.
-
-Add the `Http` arm itself:
+**One deadline covers the whole per-endpoint sequence, both transports (blocking fix from round-2
+review).** A timeout scoped to only the transport handshake leaves `list_all_tools()` (and, for
+stdio, the child-process spawn + MCP initialization before the handshake even starts) unbounded — a
+server that connects but never answers `tools/list` could still hang `Host::start`. `connect()`
+instead wraps **spawn/connect + `serve()` + `list_all_tools()` together** in one
+`tokio::time::timeout(connect_timeout, async { ... })` block per endpoint, for both `Stdio` and
+`Http` arms (reusing `HostConfig::connect_timeout_ms` rather than inventing a second timeout
+constant). On timeout, on a post-`serve` failure (e.g. `list_all_tools()` errors), or when the
+endpoint is rejected for a tool-name collision (see below), `connect()` explicitly calls
+`service.cancel().await` on the just-created `RunningService` before recording the failure and moving
+to the next endpoint — this prevents leaking a live child process or open HTTP connection for an
+endpoint whose registration didn't fully succeed. A timeout is recorded as `ConnectState::Failed {
+reason: "connect timed out" }`.
 
 ```rust
-ToolEndpoint::Http { url, auth } => {
-    let transport = StreamableHttpClientTransport::from_config(
-        StreamableHttpClientTransportConfig::with_uri(url.clone()),
-    );
-    // HttpAuth::Bearer sets an Authorization: Bearer <token> header via
-    // rmcp's StreamableHttpClientTransportConfig::auth_header (rmcp 1.6,
-    // transport/streamable_http_client.rs) at transport-construction time;
-    // HttpAuth::None builds the transport with no auth header. The token
-    // is never logged — only passed to the header builder.
-    match tokio::time::timeout(connect_timeout, handler.serve(transport)).await {
-        Ok(Ok(service)) => { /* list_all_tools, register routes, push ToolServer,
-                                 record ConnectState::Connected */ }
+ToolEndpoint::Http { name, url, auth } => {
+    let attempt = async {
+        let transport = StreamableHttpClientTransport::from_config(
+            StreamableHttpClientTransportConfig::with_uri(url.clone()),
+        );
+        // HttpAuth::Bearer sets an Authorization: Bearer <token> header via
+        // rmcp's StreamableHttpClientTransportConfig::auth_header (rmcp 1.6,
+        // transport/streamable_http_client.rs) at transport-construction time;
+        // HttpAuth::None builds the transport with no auth header. The token
+        // is never logged — only passed to the header builder.
+        let service = handler.serve(transport).await?;
+        let tools = service.list_all_tools().await?;
+        Ok::<_, ConnectError>((service, tools))
+    };
+    match tokio::time::timeout(connect_timeout, attempt).await {
+        Ok(Ok((service, tools))) => { /* register routes per-tool (see collision
+                                          handling below), push ToolServer { label: name, service },
+                                          record ConnectState::Connected */ }
         Ok(Err(e)) => { /* record ConnectState::Failed { reason: e.to_string() } */ }
         Err(_) => { /* record ConnectState::Failed { reason: "connect timed out" } */ }
     }
@@ -184,14 +208,18 @@ No sandbox wrapping applies to HTTP endpoints (`SandboxConfig` governs process s
 call has no local process to sandbox). This is a scope decision worth a one-line callout in the
 `/mcp` screen's help text ("remote servers are not sandboxed; only add ones you trust").
 
-**Tool-name collisions.** `routes: HashMap<String, usize>` is a flat namespace. Bundled `ToolBins`
-entries are pushed into `HostConfig::tools` before configured `mcp_servers` entries (established by
-`ToolBins::apply` running first in the bootstrap sequence — see §4). `connect()` iterates
-`self.tools` in order and inserts into `routes`; change the insert to skip (with a logged warning,
-surfaced as an `app.push_note`, and recorded as a `ConnectState::Failed { reason: "tool name '<n>'
-already registered by an earlier endpoint" }` entry in `statuses`) rather than overwrite when a tool
-name already has a route. This gives bundled tools priority deterministically, matching the issue's
-requirement for "a defined resolution."
+**Tool-name collisions are per-tool, not per-endpoint (clarified per round-2 review).** `routes:
+HashMap<String, usize>` is a flat namespace, but one endpoint can expose several tools. Bundled
+`ToolBins` entries are pushed into `HostConfig::tools` before configured `mcp_servers` entries
+(established by `ToolBins::apply` running first in the bootstrap sequence — see §4). After a
+successful `list_all_tools()`, `connect()` registers each returned tool name into `routes`
+individually; a name already present is skipped (not overwritten) and logged as a `app.push_note`
+warning naming both the tool and the endpoint that lost the race, but this **does not** mark the
+whole endpoint `Failed` — an endpoint with 5 tools where 1 collides is still `ConnectState::Connected`
+overall (the other 4 tools are registered and usable), with the collision reported as a separate
+per-tool note, not folded into the endpoint's own status reason. `ConnectState::Failed` is reserved
+for "the endpoint itself never came up" (timeout, transport/handshake error, `list_all_tools` error),
+not "some of its tools lost a name collision."
 
 ### 3. `McpServersSection` (`crates/savvagent/src/config_file.rs`)
 
@@ -214,10 +242,16 @@ auth = "bearer"
 /// The `ConfigFile` struct itself is unchanged in shape at the type level;
 /// `mcp_servers` decoding is tolerant at the loader level (see below), not
 /// via a raw `Vec<toml::Value>` field — downstream code still sees
-/// `Vec<McpServerEntry>`.
+/// `Vec<McpServerEntry>`. `startup`/`migration` keep the `#[serde(default)]`
+/// they already carry today (round-2 review flagged their omission here as
+/// a drafting slip, not an intended change) — a `config.toml` containing
+/// only `[[mcp_servers]]` entries, or only `[startup]`, or only
+/// `[migration]`, all still load correctly.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigFile {
+    #[serde(default)]
     pub startup: StartupSection,
+    #[serde(default)]
     pub migration: MigrationSection,
     #[serde(default)]
     pub mcp_servers: Vec<McpServerEntry>,
@@ -289,6 +323,23 @@ impl ConfigFile {
 `bootstrap_app_and_host` (§4) surfaces each `mcp_server_diagnostics` entry via `app.push_note`,
 exactly like the resolution-time skip notes from validation/keyring-lookup failures — both are the
 same "here's a server I couldn't register and why" UX, just triggered at different phases.
+
+**Write-side contract: `/mcp`'s add/remove must never silently delete a row it couldn't parse
+(blocking fix from round-2 review).** If `/mcp` rewrote `config.toml` by reserializing
+`LoadedConfig::config.mcp_servers` (the typed, successfully-parsed entries only), any row that failed
+step 3's tolerant decode — a real row the user wrote, just with e.g. a typo'd `transport` value —
+would be silently dropped the next time the user added or removed an unrelated server, defeating the
+entire point of tolerant loading. `/mcp`'s write path therefore does **not** round-trip through the
+typed `Vec<McpServerEntry>`: it re-reads `config.toml` fresh, parses it as a raw `toml::Value`,
+locates the `mcp_servers` array as raw TOML tables, and edits that array directly — appending a new
+table for "add," or removing the table whose `name` key matches for "remove" — leaving every other
+raw table (parseable or not) byte-for-byte untouched, then serializes the whole modified `toml::Value`
+back to disk. This is the same raw-table representation step 3 above already parses `mcp_servers`
+into before attempting per-element `McpServerEntry::deserialize` — `/mcp`'s writer reuses that
+representation rather than introducing a second one. The plan's implementation task for this includes
+a regression test: a `config.toml` with one valid and one intentionally-malformed `[[mcp_servers]]`
+row, add a third server via the write path, then reload and confirm the malformed row's raw TOML
+text is still present unchanged.
 
 **Validation** (new `McpServerEntry::validate(&self, seen_names: &HashSet<String>) -> Result<(),
 String>`, called during bootstrap on every successfully-*parsed* entry, before any tool is
@@ -366,10 +417,11 @@ New built-in plugin, structured like `connect/` (`mod.rs` + `screen.rs`):
   `Connected`/`Failed { reason }`) — a small addition to `Host`/`ToolRegistry` alongside the existing
   `tool_defs()` accessor, not a new mutation surface.
 - `screen.rs`: lists configured servers with status; `a` opens an add form (name, transport,
-  command/args or url, optional secret — masked input identical to `/connect`'s API-key prompt);
-  `d`/`Delete` removes a server (calls `creds::mcp_delete`, rewrites `config.toml` without the entry,
-  and pushes a note "Restart savvagent to apply changes"); `r` is a no-op in v1 beyond re-reading
-  status (no live reconnect — see Scope).
+  command/args or url, optional secret — masked input identical to `/connect`'s API-key prompt) and
+  appends the new entry via §3's raw-`toml::Value` write path; `d`/`Delete` removes a server (calls
+  `creds::mcp_delete`, then removes its raw table via that same write path, preserving every other
+  row — including any that failed to parse — untouched, and pushes a note "Restart savvagent to
+  apply changes"); `r` is a no-op in v1 beyond re-reading status (no live reconnect — see Scope).
 - Failure surfaces inline per-row ("failed: connection refused") rather than a global note, so
   multiple failing servers are all visible at once.
 
