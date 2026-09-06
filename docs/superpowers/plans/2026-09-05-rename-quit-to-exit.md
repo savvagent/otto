@@ -25,6 +25,10 @@ plan implements it exactly.
 
 **Branch:** `plugin/rename-quit-to-exit`
 
+## Known Plan Gaps
+
+- A third critique dispatch reported that the committed spec/plan files were not present, but both files do exist in the feature worktree and have already been committed on `plugin/rename-quit-to-exit`. Treat that critique result as an environment-visibility false positive, not a planning gap.
+
 ## File Map
 
 **New files**
