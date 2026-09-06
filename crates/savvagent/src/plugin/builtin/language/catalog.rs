@@ -5,7 +5,7 @@
 
 use crate::config_file::{ConfigFile, LanguageSection, deserialize_language_code};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Shipped language entry. Static; the catalog is a const slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,24 +74,13 @@ fn normalize_env_locale(raw: &str) -> Option<String> {
     Some(head.to_ascii_lowercase())
 }
 
-/// Compute `~/.savvagent/config.toml`. Returns `None` if `$HOME` is unset or
-/// empty so save-path behavior matches the old standalone-file helpers.
-fn default_config_path() -> Option<PathBuf> {
-    let raw = std::env::var("HOME").ok()?;
-    if raw.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(raw).join(".savvagent").join("config.toml"))
-}
-
 /// Load the saved language code from `~/.savvagent/config.toml`.
 ///
 /// Returns `None` if the file is missing, fails to parse, or its
 /// `[language]` section is missing or invalid. Logs a one-line
 /// warning to stderr on parse failure or unsupported value.
 pub fn load() -> Option<String> {
-    let path = default_config_path()?;
-    load_from_path(&path)
+    load_from_path(&ConfigFile::default_path())
 }
 
 fn load_from_path(path: &Path) -> Option<String> {
@@ -138,14 +127,9 @@ struct PersistedLanguageSection {
 }
 
 /// Persist `code` to `~/.savvagent/config.toml`'s `[language]` section.
-/// Silent no-op if
-/// `$HOME` is unset (matches `themes::catalog::save`).
 pub fn save(code: &str) -> std::io::Result<()> {
-    let Some(path) = default_config_path() else {
-        return Ok(());
-    };
     ConfigFile::save_language_section(
-        &path,
+        &ConfigFile::default_path(),
         LanguageSection {
             code: code.to_string(),
         },
@@ -339,32 +323,6 @@ mod tests {
                 std::env::remove_var(v);
             }
         }
-    }
-
-    #[test]
-    fn save_no_home_is_silent_ok_and_writes_nothing() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        let prev = std::env::var("HOME").ok();
-        // SAFETY: HOME_LOCK serialises env mutation; the env-touching tests in
-        // this module all hold the lock for their duration.
-        unsafe {
-            std::env::remove_var("HOME");
-        }
-
-        let result = save("es");
-        // Restore HOME before any assert that could panic — we don't want a
-        // failing assertion to leave the env in a bad state for sibling tests.
-        if let Some(p) = prev {
-            // SAFETY: same as above.
-            unsafe {
-                std::env::set_var("HOME", p);
-            }
-        }
-
-        assert!(
-            result.is_ok(),
-            "save with unset HOME must be a silent Ok(())"
-        );
     }
 
     #[test]

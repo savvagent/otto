@@ -20,7 +20,7 @@
 //! returns `None`; callers fall back to the active theme and emit a
 //! warning line.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 
 use crate::config_file::{ConfigFile, ThemeSection};
@@ -218,26 +218,13 @@ impl std::fmt::Display for UnknownTheme {
 
 impl std::error::Error for UnknownTheme {}
 
-/// Compute `~/.savvagent/config.toml`. Returns `None` if `$HOME` is unset
-/// or empty so save-path behavior matches the old standalone-file helpers.
-fn default_config_path() -> Option<PathBuf> {
-    let raw = std::env::var_os("HOME")?;
-    if raw.is_empty() {
-        return None;
-    }
-    Some(PathBuf::from(raw).join(".savvagent").join("config.toml"))
-}
-
 /// Load the user's theme selection. Returns [`Theme::default()`] if the
-/// file is absent, unparseable, or `$HOME` is unset.
+/// file is absent or unparseable.
 ///
 /// Parse errors are logged at `warn!` level. Missing-file is silent
 /// (expected on first run).
 pub fn load() -> Theme {
-    match default_config_path() {
-        Some(path) => load_from_path(&path),
-        None => Theme::default(),
-    }
+    load_from_path(&ConfigFile::default_path())
 }
 
 /// Load the theme selection from an explicit path. Pure inner used by
@@ -246,13 +233,9 @@ pub(crate) fn load_from_path(path: &Path) -> Theme {
     Theme::from_name(&ConfigFile::load_or_default(path).theme.name).unwrap_or_default()
 }
 
-/// Persist the selected theme. Returns `Ok(())` on success or if `$HOME`
-/// is unset (silent no-op; matches `sandbox.rs::save` behavior for now).
+/// Persist the selected theme.
 pub fn save(theme: Theme) -> std::io::Result<()> {
-    match default_config_path() {
-        Some(path) => save_to_path(&path, theme),
-        None => Ok(()),
-    }
+    save_to_path(&ConfigFile::default_path(), theme)
 }
 
 pub(crate) fn save_to_path(path: &Path, theme: Theme) -> std::io::Result<()> {

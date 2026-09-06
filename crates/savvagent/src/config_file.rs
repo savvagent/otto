@@ -197,7 +197,7 @@ impl ConfigFile {
         }
         let text = toml::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        std::fs::write(path, text)
+        write_atomic(path, &text)
     }
 
     pub fn save_language_section(path: &Path, language: LanguageSection) -> std::io::Result<()> {
@@ -299,7 +299,19 @@ where
     }
     let text = toml::to_string_pretty(&root)
         .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
-    std::fs::write(path, text)
+    write_atomic(path, &text)
+}
+
+fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("toml.tmp");
+    std::fs::write(&tmp, text)?;
+    match std::fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(error)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -642,6 +654,44 @@ name = "not-a-real-theme"
         assert!(
             text.contains(r#"code = "hi""#),
             "language save should still update its own section: {text}"
+        );
+    }
+
+    #[test]
+    fn save_cleans_up_atomic_tmp_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        let mut cfg = ConfigFile::default();
+        cfg.theme.name = "light".into();
+        cfg.save(&path).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            toml::to_string_pretty(&cfg).unwrap()
+        );
+        assert!(
+            !path.with_extension("toml.tmp").exists(),
+            "atomic save should rename away its sibling tmp file"
+        );
+    }
+
+    #[test]
+    fn save_section_cleans_up_atomic_tmp_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        ConfigFile::save_theme_section(
+            &path,
+            ThemeSection {
+                name: "light".into(),
+            },
+        )
+        .unwrap();
+
+        assert!(
+            !path.with_extension("toml.tmp").exists(),
+            "atomic section save should rename away its sibling tmp file"
         );
     }
 }
