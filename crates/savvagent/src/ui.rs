@@ -1287,38 +1287,6 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Flatten the three home-footer slot groups into a single styled line
-/// that flows left-to-right.
-///
-/// Output reads like:
-///   `provider · turn-state · cwd · ~N ctx · $0.00 · vX.Y.Z`
-///
-/// `separator` is inserted between every non-empty `StyledLine` across
-/// all groups, in slot order — including multiple contributors to the
-/// same slot (the `SlotRouter` concatenates each plugin's output, so a
-/// future second contributor to `home.footer.left` shares the slot
-/// without its content being silently dropped). Lines with no spans are
-/// skipped and never introduce a stray separator.
-#[cfg(test)]
-fn compose_footer_line(
-    groups: [&[savvagent_plugin::StyledLine]; 3],
-    separator: &savvagent_plugin::StyledSpan,
-) -> savvagent_plugin::StyledLine {
-    let mut spans: Vec<savvagent_plugin::StyledSpan> = Vec::new();
-    for group in groups {
-        for line in group {
-            if line.spans.is_empty() {
-                continue;
-            }
-            if !spans.is_empty() {
-                spans.push(separator.clone());
-            }
-            spans.extend(line.spans.iter().cloned());
-        }
-    }
-    savvagent_plugin::StyledLine { spans }
-}
-
 fn compose_footer_ratatui_line(
     groups: [&[Line<'static>]; 3],
     separator: &Span<'static>,
@@ -1444,17 +1412,12 @@ mod tests {
         }
     }
 
-    fn sep() -> StyledSpan {
-        StyledSpan {
-            text: " · ".into(),
-            fg: Some(ThemeColor::Muted),
-            bg: None,
-            modifiers: TextMods::default(),
-        }
+    fn rline(text: &str) -> Line<'static> {
+        Line::from(vec![Span::raw(text.to_string())])
     }
 
-    fn joined(line: &StyledLine) -> String {
-        line.spans.iter().map(|s| s.text.clone()).collect()
+    fn rsep() -> Span<'static> {
+        Span::styled(" · ".to_string(), Style::default().fg(palette().muted))
     }
 
     fn palette() -> Palette {
@@ -1540,43 +1503,43 @@ mod tests {
 
     #[test]
     fn compose_footer_all_three_groups_populated() {
-        let l = vec![one_span_line("Anthropic")];
-        let c = vec![one_span_line("idle")];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&l, &c, &r], &sep());
-        assert_eq!(joined(&out), "Anthropic · idle · cwd");
+        let l = vec![rline("Anthropic")];
+        let c = vec![rline("idle")];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&l, &c, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · idle · cwd");
     }
 
     #[test]
     fn compose_footer_only_right_has_no_leading_separator() {
-        let empty: Vec<StyledLine> = vec![];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&empty, &empty, &r], &sep());
-        assert_eq!(joined(&out), "cwd");
+        let empty: Vec<Line<'static>> = vec![];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&empty, &empty, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "cwd");
     }
 
     #[test]
     fn compose_footer_left_and_right_only_single_separator() {
-        let l = vec![one_span_line("Anthropic")];
-        let empty: Vec<StyledLine> = vec![];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&l, &empty, &r], &sep());
-        assert_eq!(joined(&out), "Anthropic · cwd");
+        let l = vec![rline("Anthropic")];
+        let empty: Vec<Line<'static>> = vec![];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&l, &empty, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · cwd");
     }
 
     #[test]
     fn compose_footer_empty_spans_line_treated_as_no_content() {
-        let l = vec![StyledLine { spans: vec![] }];
-        let c = vec![one_span_line("idle")];
-        let r = vec![one_span_line("cwd")];
-        let out = compose_footer_line([&l, &c, &r], &sep());
-        assert_eq!(joined(&out), "idle · cwd");
+        let l = vec![Line::default()];
+        let c = vec![rline("idle")];
+        let r = vec![rline("cwd")];
+        let out = compose_footer_ratatui_line([&l, &c, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "idle · cwd");
     }
 
     #[test]
     fn compose_footer_all_groups_empty_returns_empty_line() {
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&empty, &empty, &empty], &sep());
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&empty, &empty, &empty], &rsep());
         assert!(out.spans.is_empty());
     }
 
@@ -1584,20 +1547,20 @@ mod tests {
     fn compose_footer_multiple_contributors_share_a_slot_with_separators() {
         // Two plugins both contributing to `home.footer.left` flow as
         // peers, separated like any other groups.
-        let l = vec![one_span_line("Anthropic"), one_span_line("Local")];
-        let c = vec![one_span_line("idle")];
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&l, &c, &empty], &sep());
-        assert_eq!(joined(&out), "Anthropic · Local · idle");
+        let l = vec![rline("Anthropic"), rline("Local")];
+        let c = vec![rline("idle")];
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&l, &c, &empty], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · Local · idle");
     }
 
     #[test]
     fn compose_footer_skips_empty_lines_within_a_group() {
-        let l = vec![StyledLine { spans: vec![] }, one_span_line("Anthropic")];
-        let c = vec![one_span_line("idle")];
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&l, &c, &empty], &sep());
-        assert_eq!(joined(&out), "Anthropic · idle");
+        let l = vec![Line::default(), rline("Anthropic")];
+        let c = vec![rline("idle")];
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&l, &c, &empty], &rsep());
+        assert_eq!(joined_ratatui(&out), "Anthropic · idle");
     }
 
     #[test]
@@ -1605,18 +1568,16 @@ mod tests {
         // A single contributor emitting multiple spans (e.g. the
         // home_footer right slot's `cwd · ~N ctx · $0.00 · vX.Y.Z`)
         // must not gain extra separators between its own spans.
-        let r = vec![StyledLine {
-            spans: vec![
-                span("cwd"),
-                span(" · "),
-                span("~22 ctx"),
-                span(" · "),
-                span("$0.00"),
-            ],
-        }];
-        let empty: Vec<StyledLine> = vec![];
-        let out = compose_footer_line([&empty, &empty, &r], &sep());
-        assert_eq!(joined(&out), "cwd · ~22 ctx · $0.00");
+        let r = vec![Line::from(vec![
+            Span::raw("cwd".to_string()),
+            Span::raw(" · ".to_string()),
+            Span::raw("~22 ctx".to_string()),
+            Span::raw(" · ".to_string()),
+            Span::raw("$0.00".to_string()),
+        ])];
+        let empty: Vec<Line<'static>> = vec![];
+        let out = compose_footer_ratatui_line([&empty, &empty, &r], &rsep());
+        assert_eq!(joined_ratatui(&out), "cwd · ~22 ctx · $0.00");
     }
 
     #[test]
