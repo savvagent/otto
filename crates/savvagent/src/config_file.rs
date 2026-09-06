@@ -4,10 +4,13 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::plugin::builtin::{
+    language::catalog::is_supported as is_supported_language, themes::catalog::Theme,
+};
 use savvagent_host::StartupConnectPolicy;
 use savvagent_protocol::ProviderId;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Typed version of the `startup.policy` config key. Serialises to/from
 /// kebab-case strings (`"opt-in"`, `"all"`, `"none"`, `"last-used"`).
@@ -68,7 +71,10 @@ fn default_timeout() -> u64 {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageSection {
-    #[serde(default = "default_language_code")]
+    #[serde(
+        default = "default_language_code",
+        deserialize_with = "deserialize_language_code"
+    )]
     pub code: String,
 }
 
@@ -86,7 +92,10 @@ fn default_language_code() -> String {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThemeSection {
-    #[serde(default = "default_theme_name")]
+    #[serde(
+        default = "default_theme_name",
+        deserialize_with = "deserialize_theme_name"
+    )]
     pub name: String,
 }
 
@@ -100,6 +109,32 @@ impl Default for ThemeSection {
 
 fn default_theme_name() -> String {
     "dark".to_string()
+}
+
+fn deserialize_language_code<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let code = String::deserialize(deserializer)?;
+    if is_supported_language(&code) {
+        Ok(code)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "unsupported language `{code}`"
+        )))
+    }
+}
+
+fn deserialize_theme_name<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let name = String::deserialize(deserializer)?;
+    if Theme::from_name(&name).is_some() {
+        Ok(name)
+    } else {
+        Err(serde::de::Error::custom(format!("unknown theme `{name}`")))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -379,6 +414,86 @@ code = "es"
 
 [theme]
 name = 42
+
+[update]
+periodic_interval_secs = 900
+disabled = true
+
+[migration]
+v1_done = true
+"#,
+        )
+        .unwrap();
+
+        let cfg = ConfigFile::load_or_default(&path);
+
+        assert_eq!(cfg.startup.policy, StartupPolicyKind::LastUsed);
+        assert_eq!(cfg.startup.startup_providers, vec!["anthropic"]);
+        assert_eq!(cfg.startup.connect_timeout_ms, 5000);
+        assert_eq!(cfg.language.code, "es");
+        assert_eq!(cfg.theme.name, "dark");
+        assert_eq!(cfg.update.periodic_interval_secs, 900);
+        assert!(cfg.update.disabled);
+        assert!(cfg.migration.v1_done);
+    }
+
+    #[test]
+    fn unsupported_language_entry_preserves_other_sections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[startup]
+policy = "last-used"
+startup_providers = ["anthropic"]
+connect_timeout_ms = 5000
+
+[language]
+code = "klingon"
+
+[theme]
+name = "light"
+
+[update]
+periodic_interval_secs = 900
+disabled = true
+
+[migration]
+v1_done = true
+"#,
+        )
+        .unwrap();
+
+        let cfg = ConfigFile::load_or_default(&path);
+
+        assert_eq!(cfg.startup.policy, StartupPolicyKind::LastUsed);
+        assert_eq!(cfg.startup.startup_providers, vec!["anthropic"]);
+        assert_eq!(cfg.startup.connect_timeout_ms, 5000);
+        assert_eq!(cfg.language.code, "en");
+        assert_eq!(cfg.theme.name, "light");
+        assert_eq!(cfg.update.periodic_interval_secs, 900);
+        assert!(cfg.update.disabled);
+        assert!(cfg.migration.v1_done);
+    }
+
+    #[test]
+    fn unknown_theme_entry_preserves_other_sections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[startup]
+policy = "last-used"
+startup_providers = ["anthropic"]
+connect_timeout_ms = 5000
+
+[language]
+code = "es"
+
+[theme]
+name = "not-a-real-theme"
 
 [update]
 periodic_interval_secs = 900
