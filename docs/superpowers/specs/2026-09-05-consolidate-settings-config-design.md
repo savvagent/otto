@@ -25,7 +25,7 @@ Success criteria:
 - `ConfigFile` supports new `[language]`, `[theme]`, and `[update]` sections with defaults and round-trip tests.
 - `/language` and `/theme` load and persist their selections through `ConfigFile`; no runtime code writes or reads `~/.savvagent/language.toml` or `~/.savvagent/theme.toml` anymore.
 - `internal:self-update` reads its periodic interval and default-disabled flag from `ConfigFile`, while still honoring `SAVVAGENT_NO_UPDATE_CHECK` as an override for CI/scripting.
-- README/docs/CHANGELOG describe the new config layout and explicitly call out the removal of the standalone language/theme files as a breaking on-disk-config change.
+- README/docs describe the new config layout, and the dedicated post-merge release PR updates `CHANGELOG.md` with the removal of the standalone language/theme files as a breaking on-disk-config change.
 - Workspace build, test, clippy, and fmt checks pass after the change.
 
 ## Approach
@@ -35,7 +35,7 @@ Success criteria:
 3. **Route theme persistence through `ConfigFile`.** Replace the dedicated `ThemeConfig`, `config_path()`, `load[_from_path]`, and `save[_to_path]` helpers in `crates/savvagent/src/plugin/builtin/themes/catalog.rs` with `ConfigFile`-backed equivalents. Preserve the current `Theme` serde contract (slug strings, loud parse failures for unknown values), but scope it under `[theme]` rather than a standalone file.
 4. **Update app/bootstrap call sites.** `App::new` currently seeds `active_theme` by calling the theme catalog loader (`crates/savvagent/src/app.rs:995`), `build_app_with_host` seeds `active_language` via `detect_initial()` (`crates/savvagent/src/main.rs:287`), and `App::persist_language` / `persist_config` call the old language/theme writers (`crates/savvagent/src/app.rs:1945-1979`). Those call sites stay, but their underlying helpers move to `ConfigFile`.
 5. **Make self-update config-driven.** Replace the hardcoded `PERIODIC_INTERVAL` and default-disabled decision in `crates/savvagent/src/plugin/builtin/self_update/mod.rs` with values loaded from `ConfigFile`. The plugin should interpret config first, then let `SAVVAGENT_NO_UPDATE_CHECK` and `--no-update-check` force-disable regardless of file contents. Tests that currently inject a custom periodic interval should keep that seam so the async timing tests remain fast and deterministic.
-6. **Update docs and tests for the new on-disk contract.** Remove README references to `language.toml` and `theme.toml`, document the new `config.toml` sections and update overrides, replace tests that asserted the old files existed, and add/adjust `CHANGELOG.md` for the breaking on-disk config removal.
+6. **Update docs and tests for the new on-disk contract.** Remove README references to `language.toml` and `theme.toml`, document the new `config.toml` sections and update overrides, and replace tests that asserted the old files existed. The breaking-file-removal note for `CHANGELOG.md` lands in the dedicated post-merge release PR rather than this feature branch.
 
 ## Scope
 
@@ -85,12 +85,12 @@ No SPP wire format, MCP tool schema, plugin ABI, slash-command name, transcript 
 - Invalid `config.toml` should continue to fall back to defaults with a warning from `ConfigFile::load_or_default`; language/theme callers must not add a second inconsistent parse path.
 - An unsupported language code stored under `[language]` should behave like today’s unsupported `language.toml` value: ignore it and continue to env detection rather than crashing startup.
 - An unknown theme name stored under `[theme]` should keep today’s loud parse behavior inside the config file load path; because `ConfigFile::load_or_default` falls back on parse errors, the net runtime behavior becomes “warn and use default theme.”
-- `update.periodic_interval_secs = 0` should not spin a hot loop. The implementation should clamp or default invalid/zero intervals to a safe minimum/default and test that behavior explicitly.
+- `update.periodic_interval_secs = 0` should not spin a hot loop. The implementation should treat `0` as invalid and fall back to the section default (`300` seconds), and test that exact behavior explicitly.
 - When config says updates are enabled but env/CLI says disabled, the override wins.
 - When language/theme writers persist one section, they must preserve unrelated existing sections (`startup`, `migration`, the other new settings) instead of rewriting them away.
 
 ## Risks & Open Questions
 
-- **Behavior change risk:** moving the default update interval from 2 hours to 5 minutes increases background check frequency. This is intentional per the assumption above, but it should be highlighted in the PR/release notes.
+- **Behavior change risk:** moving the default update interval from 2 hours to 5 minutes increases background check frequency. This is intentional per the assumption above, but it should be highlighted in the feature PR summary and in the release PR changelog entry.
 - **Config parse blast radius:** because all sections share one `ConfigFile`, a malformed theme entry can now cause the whole file to fall back to defaults. That matches current `ConfigFile` semantics, but tests should pin the expected warnings/defaulting behavior.
 - **Atomic write parity:** the language writer currently uses write-then-rename, while `ConfigFile::save` writes directly. If preserving atomicity for settings writes matters, that improvement should be made centrally in `ConfigFile::save` rather than per-feature.
