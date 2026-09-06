@@ -1,7 +1,6 @@
-//! `internal:home-footer` — turn state + working dir + key reminder.
+//! `internal:home-footer` — sandbox state + turn state + working dir + key reminder.
 //!
-//! Contributes to slots `home.footer.center.turn-state` and
-//! `home.footer.right`.
+//! Contributes to slots `home.footer.center` and `home.footer.right`.
 //! Subscribes to `TurnStart` / `TurnEnd` for the turn-state span (PR 7
 //! wires the host to actually emit those events; until then the plugin
 //! shows the idle state) and `ContextSizeChanged` for the `~N ctx`
@@ -15,7 +14,7 @@ use savvagent_plugin::{
 
 /// TUI home-screen footer plugin.
 ///
-/// Renders turn state in `home.footer.center.turn-state` and the working
+/// Renders sandbox + turn state in `home.footer.center` and the working
 /// directory + context-size + cost + version in `home.footer.right`.
 /// Tracks the active turn by listening to `TurnStart` / `TurnEnd` host
 /// events, and the rough conversation context-size estimate by listening
@@ -74,7 +73,7 @@ impl Plugin for HomeFooterPlugin {
         let mut contributions = Contributions::default();
         contributions.slots = vec![
             SlotSpec {
-                slot_id: "home.footer.center.turn-state".into(),
+                slot_id: "home.footer.center".into(),
                 priority: 100,
             },
             SlotSpec {
@@ -100,7 +99,7 @@ impl Plugin for HomeFooterPlugin {
 
     fn render_slot(&self, slot_id: &str, _region: Region) -> Vec<StyledLine> {
         match slot_id {
-            "home.footer.center.turn-state" => {
+            "home.footer.center" => {
                 let turn = match self.turn_active {
                     Some(id) => rust_i18n::t!("footer.turn-working", id = id).to_string(),
                     None => rust_i18n::t!("footer.idle").to_string(),
@@ -171,7 +170,7 @@ mod tests {
     fn idle_center_renders_idle() {
         let p = HomeFooterPlugin::new();
         let lines = p.render_slot(
-            "home.footer.center.turn-state",
+            "home.footer.center",
             Region {
                 x: 0,
                 y: 0,
@@ -192,7 +191,7 @@ mod tests {
             .await
             .unwrap();
         let lines = p.render_slot(
-            "home.footer.center.turn-state",
+            "home.footer.center",
             Region {
                 x: 0,
                 y: 0,
@@ -219,7 +218,7 @@ mod tests {
         .await
         .unwrap();
         let lines = p.render_slot(
-            "home.footer.center.turn-state",
+            "home.footer.center",
             Region {
                 x: 0,
                 y: 0,

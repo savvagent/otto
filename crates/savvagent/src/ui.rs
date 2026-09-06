@@ -44,7 +44,7 @@ pub struct HomeFrameData {
     pub tips: Vec<savvagent_plugin::StyledLine>,
     pub footer_left: Vec<savvagent_plugin::StyledLine>,
     pub footer_center: Vec<savvagent_plugin::StyledLine>,
-    pub footer_turn_state: Vec<savvagent_plugin::StyledLine>,
+    pub footer_center_turn_line: Option<usize>,
     pub footer_right: Vec<savvagent_plugin::StyledLine>,
     /// One entry per `Entry::Tool` in `app.entries`, in order. The Nth
     /// `Entry::Tool` encountered while iterating `app.entries` maps to the
@@ -60,7 +60,7 @@ impl HomeFrameData {
             tips: vec![],
             footer_left: vec![],
             footer_center: vec![],
-            footer_turn_state: vec![],
+            footer_center_turn_line: None,
             footer_right: vec![],
             tool_entries: vec![],
         }
@@ -96,10 +96,8 @@ pub async fn compute_home_frame_data(app: &crate::app::App, area: Rect) -> HomeF
     let banner = router.render("home.banner", full_row).await;
     let tips = router.render("home.tips", full_row).await;
     let footer_left = router.render("home.footer.left", full_row).await;
-    let footer_center = router.render("home.footer.center", full_row).await;
-    let footer_turn_state = router
-        .render("home.footer.center.turn-state", full_row)
-        .await;
+    let (footer_center, footer_center_turn_line) =
+        render_footer_center_slot(&router, full_row).await;
     let footer_right = router.render("home.footer.right", full_row).await;
 
     // The registry and index read-locks (`reg_guard`/`idx_guard`) are
@@ -120,10 +118,45 @@ pub async fn compute_home_frame_data(app: &crate::app::App, area: Rect) -> HomeF
         tips,
         footer_left,
         footer_center,
-        footer_turn_state,
+        footer_center_turn_line,
         footer_right,
         tool_entries,
     }
+}
+
+async fn render_footer_center_slot(
+    router: &crate::plugin::slots::SlotRouter<'_>,
+    region: savvagent_plugin::Region,
+) -> (Vec<savvagent_plugin::StyledLine>, Option<usize>) {
+    let mut out = Vec::new();
+    let mut turn_line_idx = None;
+    for pid in router.contributors("home.footer.center") {
+        let Some(handle) = router.registry.get(pid) else {
+            tracing::error!(
+                plugin_id = %pid.as_str(),
+                slot_id = "home.footer.center",
+                "contributor in slot index but missing from registry — index/registry divergence"
+            );
+            continue;
+        };
+        let Ok(plugin) = handle.try_lock() else {
+            tracing::trace!(
+                plugin_id = %pid.as_str(),
+                slot_id = "home.footer.center",
+                "slot contributor busy; skipping for this frame"
+            );
+            continue;
+        };
+        let rendered = plugin.render_slot("home.footer.center", region);
+        if pid.as_str() == "internal:home-footer" {
+            turn_line_idx = rendered
+                .iter()
+                .position(|line| !line.spans.is_empty())
+                .map(|idx| out.len() + idx);
+        }
+        out.extend(rendered);
+    }
+    (out, turn_line_idx)
 }
 
 /// Compute `ToolEntryRender`s for every `Entry::Tool` in `entries` by
@@ -321,14 +354,9 @@ pub fn render(
         bg: None,
         modifiers: savvagent_plugin::TextMods::default(),
     };
-    let footer_center: Vec<Line<'static>> = frame_data
-        .footer_center
-        .iter()
-        .cloned()
-        .map(|line| crate::plugin::convert::styled_line_to_ratatui(line, &palette))
-        .collect();
-    let footer_turn_state = footer_turn_state_lines(
-        &frame_data.footer_turn_state,
+    let footer_center = footer_center_lines(
+        &frame_data.footer_center,
+        frame_data.footer_center_turn_line,
         active_turn_id,
         pending_turn_id,
         tick,
@@ -347,12 +375,7 @@ pub fn render(
         .map(|line| crate::plugin::convert::styled_line_to_ratatui(line, &palette))
         .collect();
     let footer_line = compose_footer_ratatui_line(
-        [
-            &footer_left,
-            &footer_center,
-            &footer_turn_state,
-            &footer_right,
-        ],
+        [&footer_left, &footer_center, &footer_right],
         &crate::plugin::convert::styled_span_to_ratatui(separator, &palette),
     );
     frame.render_widget(
@@ -1330,25 +1353,25 @@ fn compose_footer_ratatui_line<const N: usize>(
     Line::from(spans)
 }
 
-fn footer_turn_state_lines(
-    turn_state: &[savvagent_plugin::StyledLine],
+fn footer_center_lines(
+    center: &[savvagent_plugin::StyledLine],
+    turn_line_idx: Option<usize>,
     active_turn_id: Option<u32>,
     pending_turn_id: Option<u32>,
     tick: u64,
     palette: Palette,
 ) -> Vec<Line<'static>> {
-    let mut turn_line_rewritten = false;
-    turn_state
+    center
         .iter()
         .cloned()
-        .map(|line| {
+        .enumerate()
+        .map(|(idx, line)| {
             let busy_turn_id = active_turn_id.or(pending_turn_id);
             let rewrite_for_pending =
-                active_turn_id.is_none() && pending_turn_id.is_some() && !turn_line_rewritten;
+                active_turn_id.is_none() && pending_turn_id.is_some() && Some(idx) == turn_line_idx;
             let use_busy_line =
-                busy_turn_id.is_some() && !turn_line_rewritten && !line.spans.is_empty();
+                busy_turn_id.is_some() && Some(idx) == turn_line_idx && !line.spans.is_empty();
             let mut line = if rewrite_for_pending && !line.spans.is_empty() {
-                turn_line_rewritten = true;
                 crate::plugin::convert::styled_line_to_ratatui(
                     savvagent_plugin::StyledLine {
                         spans: vec![savvagent_plugin::StyledSpan {
@@ -1365,9 +1388,6 @@ fn footer_turn_state_lines(
                     &palette,
                 )
             } else {
-                if use_busy_line {
-                    turn_line_rewritten = true;
-                }
                 crate::plugin::convert::styled_line_to_ratatui(line, &palette)
             };
             if !use_busy_line || line.spans.is_empty() {
@@ -1624,7 +1644,7 @@ mod tests {
         let turn_state = vec![one_span_line("idle")];
         let palette = palette();
 
-        let out = footer_turn_state_lines(&turn_state, None, None, 0, palette);
+        let out = footer_center_lines(&turn_state, Some(0), None, None, 0, palette);
         let expected = vec![crate::plugin::convert::styled_line_to_ratatui(
             turn_state[0].clone(),
             &palette,
@@ -1646,7 +1666,7 @@ mod tests {
             }],
         }];
 
-        let out = footer_turn_state_lines(&turn_state, Some(3), None, 0, palette());
+        let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
 
         assert_eq!(out.len(), 1);
         assert!(
@@ -1662,7 +1682,7 @@ mod tests {
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![one_span_line(&idle)];
 
-        let out = footer_turn_state_lines(&turn_state, None, Some(3), 0, palette());
+        let out = footer_center_lines(&turn_state, Some(0), None, Some(3), 0, palette());
         let rendered = joined_ratatui(&out[0]);
 
         assert!(rendered.starts_with(&working));
@@ -1682,7 +1702,7 @@ mod tests {
             }],
         }];
 
-        let out = footer_turn_state_lines(&turn_state, Some(3), None, 0, palette());
+        let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
         let rendered = joined_ratatui(&out[0]);
         let spinner = rendered
             .strip_prefix(&format!("{working} "))
@@ -1709,7 +1729,7 @@ mod tests {
         }];
         let palette = palette();
 
-        let out = footer_turn_state_lines(&turn_state, Some(3), None, 0, palette);
+        let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);
         let spinner_spans: Vec<_> = out[0]
             .spans
             .iter()
@@ -1747,8 +1767,8 @@ mod tests {
         }];
         let palette = palette();
 
-        let a = footer_turn_state_lines(&turn_state, Some(3), None, 0, palette);
-        let b = footer_turn_state_lines(&turn_state, Some(3), None, 1, palette);
+        let a = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);
+        let b = footer_center_lines(&turn_state, Some(0), Some(3), None, 1, palette);
 
         assert_ne!(joined_ratatui(&a[0]), joined_ratatui(&b[0]));
     }
@@ -1758,7 +1778,7 @@ mod tests {
         let _lock = locale_lock();
         let turn_state: Vec<StyledLine> = vec![];
 
-        let out = footer_turn_state_lines(&turn_state, Some(3), None, 0, palette());
+        let out = footer_center_lines(&turn_state, None, Some(3), None, 0, palette());
 
         assert!(out.is_empty());
     }
@@ -1769,7 +1789,7 @@ mod tests {
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
         let turn_state = vec![StyledLine { spans: vec![] }, one_span_line(&working)];
 
-        let out = footer_turn_state_lines(&turn_state, Some(3), None, 0, palette());
+        let out = footer_center_lines(&turn_state, Some(1), Some(3), None, 0, palette());
         assert!(out[0].spans.is_empty());
 
         let rendered = joined_ratatui(&out[1]);
