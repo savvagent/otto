@@ -77,17 +77,17 @@ plan implements it exactly.
 - Modify: `crates/savvagent/locales/hi.toml`
 - Modify: `README.md`
 
-- [ ] Write/adjust failing tests first in `crates/savvagent/src/plugin/builtin/quit/mod.rs`,
+- [x] Write/adjust failing tests first in `crates/savvagent/src/plugin/builtin/quit/mod.rs`,
       `crates/savvagent/src/plugin/builtin/command_palette/screen.rs`, and any builtin-registration
       expectation in `crates/savvagent/src/plugin/mod.rs` so they expect `exit` / `internal:exit`
       instead of `quit` / `internal:quit`.
-- [ ] Run targeted tests before implementation:
+- [x] Run targeted tests before implementation:
       `cargo test -p savvagent -- exit_returns_quit_effect`;
       `cargo test -p savvagent -- exit_is_listed_and_runs_via_runslash`;
       `cargo test -p savvagent -- register_builtins_pr8_complete`.
       Expect failure because the tests now expect `/exit` / `internal:exit` before the production
       code is renamed.
-- [ ] Implement the rename in the listed files: expose `/exit` as the command name, rename the core
+- [x] Implement the rename in the listed files: expose `/exit` as the command name, rename the core
       builtin plugin id to `internal:exit`, update the home command list and palette fixture, revise
       locale-rendered strings, and update README documentation. Keep `Effect::Quit`,
       `App::request_quit`, Ctrl-C, and Ctrl-D behavior unchanged. If the rename exposes a startup
@@ -95,29 +95,29 @@ plan implements it exactly.
       builtin owner and skipping only the conflicting discovered command entry; do not weaken the
       hard-error behavior for the plugin's own built-in `/reload-commands` surface or for other
       plugin conflicts.
-- [ ] Grep for lingering public-surface references:
+- [x] Grep for lingering public-surface references:
       `rg -n '/quit|internal:quit|name: "quit"|quit-summary|quit-description' crates/savvagent/src crates/savvagent/locales README.md`
       and confirm only intentional historical/non-user-facing references remain, if any.
-- [ ] Run targeted validation after implementation:
+- [x] Run targeted validation after implementation:
       `cargo test -p savvagent -- exit_returns_quit_effect`;
       `cargo test -p savvagent -- manifest_marks_exit_as_core`;
       `cargo test -p savvagent -- exit_is_listed_and_runs_via_runslash`;
       `cargo test -p savvagent -- register_builtins_pr8_complete`.
       Expect all to pass with `/exit` semantics.
-- [ ] Public-interface check: record that this task makes a **breaking slash-command rename** on the
+- [x] Public-interface check: record that this task makes a **breaking slash-command rename** on the
       README-documented public interface (`/quit` removed, `/exit` added). Call it out in the PR
       body, the architecture-review prompt, and the release PR's `CHANGELOG.md` entry and MINOR bump.
-- [ ] Host-swap `RwLock` check: this task touches `crates/savvagent/src/app.rs`; verify it changes
+- [x] Host-swap `RwLock` check: this task touches `crates/savvagent/src/app.rs`; verify it changes
       only static command metadata/comments and introduces no `.await` while any `Arc<RwLock<...>>`
       guard is held.
-- [ ] ProgressDispatcher check: not applicable — no streaming provider path is touched.
-- [ ] Run full required validation:
+- [x] ProgressDispatcher check: not applicable — no streaming provider path is touched.
+- [x] Run full required validation:
       `cargo build --workspace --all-targets`;
       `cargo test --workspace`;
       `cargo clippy --workspace --all-targets`;
       `cargo fmt --all --check`.
       Expect all four commands to pass with `RUSTFLAGS=-D warnings` cleanliness preserved.
-- [ ] Format and commit: `cargo fmt --all` then
+- [x] Format and commit: `cargo fmt --all` then
       `git commit -m "savvagent: rename /quit slash command to /exit"`.
 
 ## Task 2: Record the release follow-through required after merge
@@ -125,7 +125,7 @@ plan implements it exactly.
 **Files:**
 - No feature-branch code changes; this task records the mandatory release follow-through.
 
-- [ ] Note in the feature PR body and release handoff that a dedicated release PR must be opened
+- [x] Note in the feature PR body and release handoff that a dedicated release PR must be opened
       immediately after merge to bump `workspace.package.version` and all internal
       `workspace.dependencies` versions to `0.22.0`, add the breaking `/quit` -> `/exit` entry to
       `CHANGELOG.md`, run the required validation, and ship the `v0.22.0` tag per `RELEASING.md`.

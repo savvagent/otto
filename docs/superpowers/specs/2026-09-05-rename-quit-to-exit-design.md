@@ -1,7 +1,7 @@
 # Rename `/quit` to `/exit` — design
 
 Date: 2026-09-05
-Status: pending review
+Status: IMPLEMENTED
 Related: `savvagent/savvagent-cli#20`
 
 ## Problem
