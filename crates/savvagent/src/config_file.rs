@@ -11,6 +11,7 @@ use savvagent_host::StartupConnectPolicy;
 use savvagent_protocol::ProviderId;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
+use toml::Table;
 
 /// Typed version of the `startup.policy` config key. Serialises to/from
 /// kebab-case strings (`"opt-in"`, `"all"`, `"none"`, `"last-used"`).
@@ -200,21 +201,15 @@ impl ConfigFile {
     }
 
     pub fn save_language_section(path: &Path, language: LanguageSection) -> std::io::Result<()> {
-        let mut config = Self::load_or_default(path);
-        config.language = language;
-        config.save(path)
+        save_section(path, "language", &language)
     }
 
     pub fn save_theme_section(path: &Path, theme: ThemeSection) -> std::io::Result<()> {
-        let mut config = Self::load_or_default(path);
-        config.theme = theme;
-        config.save(path)
+        save_section(path, "theme", &theme)
     }
 
     pub fn save_update_section(path: &Path, update: UpdateSection) -> std::io::Result<()> {
-        let mut config = Self::load_or_default(path);
-        config.update = update;
-        config.save(path)
+        save_section(path, "update", &update)
     }
 
     pub fn to_startup_policy(&self) -> StartupConnectPolicy {
@@ -279,6 +274,32 @@ where
             T::default()
         }
     }
+}
+
+fn load_root_for_save(path: &Path) -> std::io::Result<Table> {
+    match std::fs::read_to_string(path) {
+        Ok(contents) => toml::from_str::<Table>(&contents)
+            .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Table::new()),
+        Err(error) => Err(error),
+    }
+}
+
+fn save_section<T>(path: &Path, section: &'static str, value: &T) -> std::io::Result<()>
+where
+    T: Serialize,
+{
+    let mut root = load_root_for_save(path)?;
+    let value = toml::Value::try_from(value)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    root.insert(section.to_string(), value);
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = toml::to_string_pretty(&root)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    std::fs::write(path, text)
 }
 
 #[cfg(test)]
@@ -395,6 +416,56 @@ mod tests {
         assert_eq!(loaded.language.code, "pt");
         assert_eq!(loaded.theme.name, "light");
         assert_eq!(loaded.update.periodic_interval_secs, 600);
+    }
+
+    #[test]
+    fn save_theme_section_does_not_materialize_default_language_section() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[startup]
+policy = "last-used"
+startup_providers = ["anthropic"]
+connect_timeout_ms = 5000
+"#,
+        )
+        .unwrap();
+
+        ConfigFile::save_theme_section(
+            &path,
+            ThemeSection {
+                name: "light".into(),
+            },
+        )
+        .unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[theme]"), "saved config: {text}");
+        assert!(
+            !text.contains("[language]"),
+            "saving theme alone must not pin locale detection: {text}"
+        );
+    }
+
+    #[test]
+    fn save_theme_section_leaves_malformed_config_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        let malformed = "[startup\npolicy = \"all\"\n";
+        std::fs::write(&path, malformed).unwrap();
+
+        let error = ConfigFile::save_theme_section(
+            &path,
+            ThemeSection {
+                name: "light".into(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), malformed);
     }
 
     #[test]
@@ -546,5 +617,31 @@ v1_done = true
         assert_eq!(loaded.update.periodic_interval_secs, 1200);
         assert_eq!(loaded.effective_update_periodic_interval_secs(), 1200);
         assert!(loaded.update.disabled);
+    }
+
+    #[test]
+    fn save_language_section_preserves_unrelated_invalid_sections() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[theme]
+name = "not-a-real-theme"
+"#,
+        )
+        .unwrap();
+
+        ConfigFile::save_language_section(&path, LanguageSection { code: "hi".into() }).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.contains(r#"name = "not-a-real-theme""#),
+            "unrelated sections should be preserved verbatim: {text}"
+        );
+        assert!(
+            text.contains(r#"code = "hi""#),
+            "language save should still update its own section: {text}"
+        );
     }
 }
