@@ -5,7 +5,7 @@
 
 use crate::config_file::{ConfigFile, LanguageSection, deserialize_language_code};
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Shipped language entry. Static; the catalog is a const slice.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,12 +80,7 @@ fn normalize_env_locale(raw: &str) -> Option<String> {
 /// `[language]` section is missing or invalid. Logs a one-line
 /// warning to stderr on parse failure or unsupported value.
 pub fn load() -> Option<String> {
-    load_from_default_path(ConfigFile::default_path_if_home())
-}
-
-fn load_from_default_path(path: Option<PathBuf>) -> Option<String> {
-    let path = path?;
-    load_from_path(&path)
+    load_from_path(&ConfigFile::default_path())
 }
 
 fn load_from_path(path: &Path) -> Option<String> {
@@ -131,15 +126,8 @@ struct PersistedLanguageSection {
 
 /// Persist `code` to `~/.savvagent/config.toml`'s `[language]` section.
 pub fn save(code: &str) -> std::io::Result<()> {
-    save_to_default_path(ConfigFile::default_path_if_home(), code)
-}
-
-fn save_to_default_path(path: Option<PathBuf>, code: &str) -> std::io::Result<()> {
-    let Some(path) = path else {
-        return Ok(());
-    };
     ConfigFile::save_language_section(
-        &path,
+        &ConfigFile::default_path(),
         LanguageSection {
             code: code.to_string(),
         },
@@ -169,7 +157,7 @@ pub fn detect_initial() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{HOME_LOCK, HomeGuard, NoHomeGuard};
+    use crate::test_helpers::{HOME_LOCK, HomeGuard};
     use std::io::Write;
 
     #[test]
@@ -246,18 +234,6 @@ mod tests {
     }
 
     #[test]
-    fn load_without_home_returns_none() {
-        assert_eq!(load_from_default_path(None), None);
-    }
-
-    #[test]
-    fn load_ignores_real_home_when_home_env_is_unset() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        let _no_home = NoHomeGuard::new();
-        assert_eq!(load(), None);
-    }
-
-    #[test]
     fn load_malformed_toml_returns_none() {
         let _guard = HOME_LOCK.lock().unwrap();
         let _home = HomeGuard::new();
@@ -288,18 +264,6 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(b"[language]\n").unwrap();
         assert_eq!(load(), None);
-    }
-
-    #[test]
-    fn save_without_home_is_a_silent_noop() {
-        save_to_default_path(None, "es").expect("save without a home directory should no-op");
-    }
-
-    #[test]
-    fn save_without_home_env_is_a_silent_noop() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        let _no_home = NoHomeGuard::new();
-        save("es").expect("save without an explicit home directory should no-op");
     }
 
     #[test]

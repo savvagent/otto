@@ -20,7 +20,7 @@
 //! returns `None`; callers fall back to the active theme and emit a
 //! warning line.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::str::FromStr;
 
 use crate::config_file::{ConfigFile, ThemeSection};
@@ -224,14 +224,7 @@ impl std::error::Error for UnknownTheme {}
 /// Parse errors are logged at `warn!` level. Missing-file is silent
 /// (expected on first run).
 pub fn load() -> Theme {
-    load_from_default_path(ConfigFile::default_path_if_home())
-}
-
-fn load_from_default_path(path: Option<PathBuf>) -> Theme {
-    let Some(path) = path else {
-        return Theme::default();
-    };
-    load_from_path(&path)
+    load_from_path(&ConfigFile::default_path())
 }
 
 /// Load the theme selection from an explicit path. Pure inner used by
@@ -242,14 +235,7 @@ pub(crate) fn load_from_path(path: &Path) -> Theme {
 
 /// Persist the selected theme.
 pub fn save(theme: Theme) -> std::io::Result<()> {
-    save_to_default_path(ConfigFile::default_path_if_home(), theme)
-}
-
-fn save_to_default_path(path: Option<PathBuf>, theme: Theme) -> std::io::Result<()> {
-    let Some(path) = path else {
-        return Ok(());
-    };
-    save_to_path(&path, theme)
+    save_to_path(&ConfigFile::default_path(), theme)
 }
 
 pub(crate) fn save_to_path(path: &Path, theme: Theme) -> std::io::Result<()> {
@@ -264,7 +250,6 @@ pub(crate) fn save_to_path(path: &Path, theme: Theme) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{HOME_LOCK, NoHomeGuard};
     use tempfile::TempDir;
 
     // --- Built-ins ---
@@ -416,18 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn load_without_home_returns_default() {
-        assert_eq!(load_from_default_path(None), Theme::Dark);
-    }
-
-    #[test]
-    fn load_ignores_real_home_when_home_env_is_unset() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        let _no_home = NoHomeGuard::new();
-        assert_eq!(load(), Theme::Dark);
-    }
-
-    #[test]
     fn load_from_path_returns_default_on_parse_error() {
         let td = TempDir::new().unwrap();
         let path = td.path().join("config.toml");
@@ -473,18 +446,5 @@ mod tests {
         save_to_path(&path, Theme::Light).unwrap();
         save_to_path(&path, Theme::Upstream(ThemeName::Nord)).unwrap();
         assert_eq!(load_from_path(&path), Theme::Upstream(ThemeName::Nord));
-    }
-
-    #[test]
-    fn save_without_home_is_a_silent_noop() {
-        save_to_default_path(None, Theme::HighContrast)
-            .expect("save without a home directory should no-op");
-    }
-
-    #[test]
-    fn save_without_home_env_is_a_silent_noop() {
-        let _guard = HOME_LOCK.lock().unwrap();
-        let _no_home = NoHomeGuard::new();
-        save(Theme::HighContrast).expect("save without an explicit home directory should no-op");
     }
 }

@@ -66,6 +66,12 @@ impl MigrationPickerPlugin {
                     &new_cfg.migration,
                 ) {
                     tracing::warn!(error = %e, "migration: failed to write config.toml");
+                    return vec![Effect::PushNote {
+                        line: StyledLine::plain(
+                            rust_i18n::t!("migration.save-failed", err = e.to_string().as_str())
+                                .to_string(),
+                        ),
+                    }];
                 }
                 vec![]
             }

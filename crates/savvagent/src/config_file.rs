@@ -180,6 +180,7 @@ impl ConfigFile {
         root.join(".savvagent").join("config.toml")
     }
 
+    #[cfg(test)]
     pub fn default_path_if_home() -> Option<PathBuf> {
         let home = std::env::var_os("HOME")
             .filter(|value| !value.is_empty())
