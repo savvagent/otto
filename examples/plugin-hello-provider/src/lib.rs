@@ -28,15 +28,15 @@
 //! - HTTP calls (see the manifest: no `[security]` block).
 //! - Keyring access. Real third-party providers read their API key from
 //!   the keyring under their own service/account; see the in-tree fixtures
-//!   in `crates/savvagent-plugin-wasm/tests/fixtures-src/` for examples.
+//!   in `crates/otto-plugin-wasm/tests/fixtures-src/` for examples.
 
 #[allow(warnings)]
 mod bindings;
 
 use bindings::Guest;
-use bindings::savvagent::plugin::progress_capability;
-use bindings::savvagent::plugin::spp as s;
-use bindings::savvagent::plugin::types as t;
+use bindings::otto::plugin::progress_capability;
+use bindings::otto::plugin::spp as s;
+use bindings::otto::plugin::types as t;
 
 struct Component;
 

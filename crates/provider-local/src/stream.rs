@@ -20,9 +20,9 @@
 
 use bytes::Bytes;
 use futures::StreamExt;
-use savvagent_fence::{FenceChunk, FenceParser};
-use savvagent_mcp::StreamEmitter;
-use savvagent_protocol::{self as spp, BlockDelta, ContentBlock, StreamEvent, Usage, UsageDelta};
+use otto_fence::{FenceChunk, FenceParser};
+use otto_mcp::StreamEmitter;
+use otto_protocol::{self as spp, BlockDelta, ContentBlock, StreamEvent, Usage, UsageDelta};
 
 use crate::api;
 use crate::translate::{message_text, stop_reason_from_ollama};
@@ -794,11 +794,11 @@ mod tests {
             });
 
             let provider = crate::provider_for_tests(format!("http://{addr}"));
-            let req = savvagent_protocol::CompleteRequest {
+            let req = otto_protocol::CompleteRequest {
                 model: "llama3.2".into(),
-                messages: vec![savvagent_protocol::Message {
-                    role: savvagent_protocol::Role::User,
-                    content: vec![savvagent_protocol::ContentBlock::Text { text: "hi".into() }],
+                messages: vec![otto_protocol::Message {
+                    role: otto_protocol::Role::User,
+                    content: vec![otto_protocol::ContentBlock::Text { text: "hi".into() }],
                 }],
                 system: None,
                 tools: vec![],
@@ -812,14 +812,14 @@ mod tests {
             };
 
             let (tx, mut rx) = tokio::sync::mpsc::channel(64);
-            let emitter = savvagent_mcp::ChannelEmitter::new(tx);
-            let emitter_ref: &dyn savvagent_mcp::StreamEmitter = &emitter;
+            let emitter = otto_mcp::ChannelEmitter::new(tx);
+            let emitter_ref: &dyn otto_mcp::StreamEmitter = &emitter;
 
-            use savvagent_mcp::ProviderHandler;
+            use otto_mcp::ProviderHandler;
             let resp = provider.complete(req, Some(emitter_ref)).await.unwrap();
             drop(emitter);
 
-            assert_eq!(resp.stop_reason, savvagent_protocol::StopReason::EndTurn);
+            assert_eq!(resp.stop_reason, otto_protocol::StopReason::EndTurn);
             assert!(!resp.content.is_empty());
 
             let mut events = Vec::new();
@@ -836,7 +836,7 @@ mod tests {
 
         #[tokio::test]
         async fn tool_call_round_trip() {
-            use savvagent_protocol::ToolDef;
+            use otto_protocol::ToolDef;
             let app = Router::new().route(
                 "/api/chat",
                 post(|| async {
@@ -863,11 +863,11 @@ mod tests {
             });
 
             let provider = crate::provider_for_tests(format!("http://{addr}"));
-            let req = savvagent_protocol::CompleteRequest {
+            let req = otto_protocol::CompleteRequest {
                 model: "llama3.1".into(),
-                messages: vec![savvagent_protocol::Message {
-                    role: savvagent_protocol::Role::User,
-                    content: vec![savvagent_protocol::ContentBlock::Text {
+                messages: vec![otto_protocol::Message {
+                    role: otto_protocol::Role::User,
+                    content: vec![otto_protocol::ContentBlock::Text {
                         text: "list home".into(),
                     }],
                 }],
@@ -886,10 +886,10 @@ mod tests {
                 metadata: None,
             };
 
-            use savvagent_mcp::ProviderHandler;
+            use otto_mcp::ProviderHandler;
             let resp = provider.complete(req, None).await.unwrap();
             match &resp.content[0] {
-                savvagent_protocol::ContentBlock::ToolUse { name, input, .. } => {
+                otto_protocol::ContentBlock::ToolUse { name, input, .. } => {
                     assert_eq!(name, "ls");
                     assert_eq!(input["path"], "/home");
                 }

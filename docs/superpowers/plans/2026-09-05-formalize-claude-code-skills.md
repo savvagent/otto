@@ -8,7 +8,7 @@ skill's conventions must defer to this repo's GitHub Issues convention (never JI
 **Architecture:** No code changes. `.claude/skills/rust-engineer/SKILL.md` is already a tracked,
 committed file in this repo (confirmed via `git ls-files .claude/skills/`) — a repo-authored,
 Claude-Code-compatible skill with no counterpart under `.github/skills/` (which today holds only
-`savvagent-development`) — that precedent, not the issue's speculative "gitignore recommended"
+`otto-development`) — that precedent, not the issue's speculative "gitignore recommended"
 framing, is the one CLAUDE.md must document, since the code (an existing committed file) outranks a
 proposal when the two disagree. The convention this plan documents: `.claude/skills/<name>/SKILL.md`
 is for repo-authored, project-specific skills (independently authored for Claude Code, or
@@ -17,12 +17,12 @@ generic/personal Claude Code skills a
 contributor pulls in from `~/.claude/skills/` (e.g. a symlinked `creating-tickets`) are NOT to be
 added under this repo's `.claude/skills/` at all — they stay in the user's home directory, outside
 repo tracking, so no `.gitignore` change is needed. Any tracker-related skill a contributor uses
-locally must still defer to this repo's GitHub Issues convention (`.github/skills/savvagent-development`
+locally must still defer to this repo's GitHub Issues convention (`.github/skills/otto-development`
 and `gh issue`/`gh pr`), never a JIRA-first abstraction, when working in this repo.
 
 **Tech Stack:** Markdown documentation only (`CLAUDE.md`).
 
-**Spec:** none — fast-path per `savvagent-development`'s trivial-task criteria (single file, no new
+**Spec:** none — fast-path per `otto-development`'s trivial-task criteria (single file, no new
 interface, no behavior change; see PR body).
 
 **Release line:** v0.19.4 (patch — docs-only, no new interface).
@@ -50,10 +50,10 @@ interface, no behavior change; see PR body).
         are NOT added to this repo's `.claude/skills/` — they stay personal/machine-local in the
         user's home directory; nothing to gitignore since they're never placed under the repo tree.
       - Any tracker-related skill used while working in this repo must defer to this repo's GitHub
-        Issues convention (`gh issue`, `.github/skills/savvagent-development`) — never JIRA or another
+        Issues convention (`gh issue`, `.github/skills/otto-development`) — never JIRA or another
         tracker abstraction.
       - Precedence/conflict handling: if a Claude Code skill and a `.github/skills/` skill overlap in
-        purpose, the `.github/skills/` skill (this repo's own, e.g. `savvagent-development`'s
+        purpose, the `.github/skills/` skill (this repo's own, e.g. `otto-development`'s
         ticket-creation conventions) governs for this repo; the Claude Code skill's generic guidance
         yields.
 - [x] Re-run `grep -n "claude/skills" CLAUDE.md` to confirm the new section is present and readable.

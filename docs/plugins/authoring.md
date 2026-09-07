@@ -1,19 +1,19 @@
 # Authoring external plugins
 
-This is the long-form guide to writing a savvagent external plugin. The
+This is the long-form guide to writing a otto external plugin. The
 canonical contract is the design spec at
 [`docs/superpowers/specs/2026-05-25-external-plugins-design.md`](../superpowers/specs/2026-05-25-external-plugins-design.md);
 this document is meant to be read end-to-end by anyone shipping a
 plugin.
 
 External plugins are WebAssembly Component-Model modules that load into
-Savvagent at startup and adapt — via per-world adapters in
-`savvagent-plugin-wasm` — into the same `Box<dyn Plugin>` slot the
+Otto at startup and adapt — via per-world adapters in
+`otto-plugin-wasm` — into the same `Box<dyn Plugin>` slot the
 built-in plugins live in. The host doesn't know which of its plugins
 are built in and which were loaded from `.wasm`.
 
-> Targets v0.18.0 of Savvagent. The WIT package version is
-> `savvagent:plugin@0.1.0`. Manifests should pin `savvagent = "^0.18"`.
+> Targets v0.18.0 of Otto. The WIT package version is
+> `otto:plugin@0.1.0`. Manifests should pin `otto = "^0.18"`.
 
 ## Contents
 
@@ -39,7 +39,7 @@ command which pushes a `Hello from WASM!` toast.
 - `cargo-component`: `cargo install cargo-component --locked` (pinned to
   `0.21.1` in the in-tree examples; later versions tend to work but
   the bindings emitter occasionally re-shapes).
-- Savvagent v0.18.0 or later installed and able to launch.
+- Otto v0.18.0 or later installed and able to launch.
 
 ### 1. Scaffold the crate
 
@@ -72,10 +72,10 @@ wit-bindgen = "0.41"
 wit-bindgen-rt = { version = "0.44", features = ["bitflags"] }
 
 [package.metadata.component]
-package = "savvagent:plugin"
+package = "otto:plugin"
 
 [package.metadata.component.target]
-path = "/absolute/path/to/savvagent/crates/savvagent-plugin-wit/wit"
+path = "/absolute/path/to/otto/crates/otto-plugin-wit/wit"
 world = "plugin-static"
 
 [profile.release]
@@ -89,7 +89,7 @@ strip = "symbols"
 ```
 
 The `[package.metadata.component.target]` path should point at the
-checked-in WIT files in your Savvagent clone. Once Savvagent publishes
+checked-in WIT files in your Otto clone. Once Otto publishes
 its WIT contract as a versioned package you can drop the local path.
 
 ### 2. Write the plugin
@@ -101,7 +101,7 @@ its WIT contract as a versioned package you can drop the local path.
 mod bindings;
 
 use bindings::Guest;
-use bindings::savvagent::plugin::types as t;
+use bindings::otto::plugin::types as t;
 
 struct Component;
 
@@ -168,7 +168,7 @@ id = "myorg.my-plugin"
 name = "My Plugin"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 description = "Says hello from WASM."
 
 [exports]
@@ -190,13 +190,13 @@ The resulting `.wasm` lands at
 ### 5. Install locally for testing
 
 ```bash
-mkdir -p ~/.savvagent/plugins/myorg.my-plugin
+mkdir -p ~/.otto/plugins/myorg.my-plugin
 cp target/wasm32-unknown-unknown/release/my_plugin.wasm \
-   ~/.savvagent/plugins/myorg.my-plugin/plugin.wasm
-cp plugin.toml ~/.savvagent/plugins/myorg.my-plugin/plugin.toml
+   ~/.otto/plugins/myorg.my-plugin/plugin.wasm
+cp plugin.toml ~/.otto/plugins/myorg.my-plugin/plugin.toml
 ```
 
-Launch Savvagent. The plugin will show as `untrusted` in `/plugins`.
+Launch Otto. The plugin will show as `untrusted` in `/plugins`.
 Run `/plugins trust myorg.my-plugin`, confirm the trust prompt, and
 restart. `/hello` is now wired.
 
@@ -218,15 +218,15 @@ tree, and asks the user to trust the hash.
 ## WIT contract reference
 
 The contract lives in
-[`crates/savvagent-plugin-wit/wit/`](../../crates/savvagent-plugin-wit/wit/):
+[`crates/otto-plugin-wit/wit/`](../../crates/otto-plugin-wit/wit/):
 
 | File | Defines | Used by |
 |---|---|---|
-| [`shared.wit`](../../crates/savvagent-plugin-wit/wit/shared.wit) | `Effect`, `PluginError`, `HookKind`, `Region`, `ThemeColor`, `PluginManifest`, `Contributions`, `Note`, `StyledLine`, `ThemeEntry`, key-event types | all three worlds |
-| [`spp.wit`](../../crates/savvagent-plugin-wit/wit/spp.wit) | SPP types mirrored from `savvagent-protocol` — `CompleteRequest`, `CompleteResponse`, `StreamEvent`, `ModelInfo`, `ProviderError`, etc. | `plugin-provider` only |
-| [`plugin-static.wit`](../../crates/savvagent-plugin-wit/wit/plugin-static.wit) | `world plugin-static` — exports for slash / hook / theme / render-slot / keybinding | static plugins |
-| [`plugin-interactive.wit`](../../crates/savvagent-plugin-wit/wit/plugin-interactive.wit) | `world plugin-interactive` — `create-screen` plus the `screen-instance` resource (`on-key`, `render`, `tips`) | interactive plugins |
-| [`plugin-provider.wit`](../../crates/savvagent-plugin-wit/wit/plugin-provider.wit) | `world plugin-provider` — `complete` / `list-models` / `count-tokens` exports plus the host-imported `http-capability`, `keyring-capability`, `progress-capability` interfaces | provider plugins |
+| [`shared.wit`](../../crates/otto-plugin-wit/wit/shared.wit) | `Effect`, `PluginError`, `HookKind`, `Region`, `ThemeColor`, `PluginManifest`, `Contributions`, `Note`, `StyledLine`, `ThemeEntry`, key-event types | all three worlds |
+| [`spp.wit`](../../crates/otto-plugin-wit/wit/spp.wit) | SPP types mirrored from `otto-protocol` — `CompleteRequest`, `CompleteResponse`, `StreamEvent`, `ModelInfo`, `ProviderError`, etc. | `plugin-provider` only |
+| [`plugin-static.wit`](../../crates/otto-plugin-wit/wit/plugin-static.wit) | `world plugin-static` — exports for slash / hook / theme / render-slot / keybinding | static plugins |
+| [`plugin-interactive.wit`](../../crates/otto-plugin-wit/wit/plugin-interactive.wit) | `world plugin-interactive` — `create-screen` plus the `screen-instance` resource (`on-key`, `render`, `tips`) | interactive plugins |
+| [`plugin-provider.wit`](../../crates/otto-plugin-wit/wit/plugin-provider.wit) | `world plugin-provider` — `complete` / `list-models` / `count-tokens` exports plus the host-imported `http-capability`, `keyring-capability`, `progress-capability` interfaces | provider plugins |
 
 ### Manifest schema (full)
 
@@ -241,7 +241,7 @@ description = "..."
 homepage = "https://..."
 license = "MIT OR Apache-2.0"
 authors = ["..."]
-savvagent = "^0.18"              # required; WIT contract version range
+otto = "^0.18"              # required; WIT contract version range
 wasm = "https://example.com/v0.2.0/plugin.wasm"
                                  # required when fetched via /plugins install <toml-url>;
                                  # ignored on already-installed plugins
@@ -295,7 +295,7 @@ A few notes on the gating:
   match), and rejects any host that is not in the manifest's
   `[security] allowed-hosts` list with `http-error::denied-host(host)`.
   Wildcards (`*.example.com`) are deferred to a later release.
-- `keyring.get` always reads service `savvagent` (the same store
+- `keyring.get` always reads service `otto` (the same store
   `/connect` writes to). The `account` argument must appear in the
   manifest's `[security] keyring-accounts` list. Denied reads surface
   as `keyring-error::denied(account)`.
@@ -344,23 +344,23 @@ both accidental local edits and any post-install tampering.
 ### `/plugins install <toml-url>`
 
 1. Fetch `plugin.toml` over TLS, 64 KB cap.
-2. Parse and validate the manifest (id format, `savvagent` range,
+2. Parse and validate the manifest (id format, `otto` range,
    declared exports vs world).
 3. Fetch the `wasm` URL the manifest references, 32 MB cap, TLS only.
 4. Hash the staging tree (`plugin.toml` + `plugin.wasm`).
 5. Open the trust-prompt modal showing manifest fields, source URL,
    and the computed tree hash.
 6. On **confirm**: write the trust record to
-   `~/.savvagent/plugin-trust.toml`, atomic-move the staging directory
-   into `~/.savvagent/plugins/<id>/`, push a `plugin <id> installed`
+   `~/.otto/plugin-trust.toml`, atomic-move the staging directory
+   into `~/.otto/plugins/<id>/`, push a `plugin <id> installed`
    note. The plugin is picked up on the next startup (or after
    `/plugins enable <id>` if disabled).
 7. On **reject**: delete the staging directory; no state changes.
 
 ### `plugin-trust.toml`
 
-`~/.savvagent/plugin-trust.toml` is the trust ledger. It is separate
-from sub-project A's `~/.savvagent/trusted-projects.json` because
+`~/.otto/plugin-trust.toml` is the trust ledger. It is separate
+from sub-project A's `~/.otto/trusted-projects.json` because
 plugins are executable code and the semantics differ:
 
 ```toml
@@ -390,7 +390,7 @@ default empty state.
 
 ## Three-strikes recovery
 
-WebAssembly traps are non-fatal to Savvagent — the trap is caught by
+WebAssembly traps are non-fatal to Otto — the trap is caught by
 wasmtime, surfaced to the host as a `PluginError::Unsupported(trap-info)`,
 and the long-lived store for that plugin is dropped. The next call into
 the plugin lazily rebuilds the store from the same pre-instance. State
@@ -428,7 +428,7 @@ These mirror the non-goals from
 [design spec §7](../superpowers/specs/2026-05-25-external-plugins-design.md).
 They are not bugs; they are deliberate scope boundaries.
 
-- **No `SAVVAGENT.md` exposure to plugins.** The project context is
+- **No `OTTO.md` exposure to plugins.** The project context is
   host-private. Plugins receive only `TurnCtx` / `ScreenOpenCtx` /
   `HookPayload`.
 - **No wildcards in `allowed-hosts`.** v0.18.0 enforces exact-match

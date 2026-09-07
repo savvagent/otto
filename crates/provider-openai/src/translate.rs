@@ -13,7 +13,7 @@
 //! 4. **Image messages.** SPP image blocks become `image_url` content parts
 //!    with a `data:` URI. URL-sourced images are forwarded directly.
 
-use savvagent_protocol::{self as spp};
+use otto_protocol::{self as spp};
 
 use crate::api;
 

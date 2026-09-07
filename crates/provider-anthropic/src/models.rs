@@ -5,7 +5,7 @@
 //! a small private struct that names only the fields we care about, then map
 //! into the SPP envelope.
 
-use savvagent_protocol::{ErrorKind, ListModelsResponse, ModelInfo, ProviderError};
+use otto_protocol::{ErrorKind, ListModelsResponse, ModelInfo, ProviderError};
 use serde::Deserialize;
 
 use crate::{API_VERSION, AnthropicProvider, map_reqwest_error, status_to_error_kind};
@@ -24,7 +24,7 @@ fn truncate_at_char_boundary(body: &str, max_bytes: usize) -> &str {
 }
 
 /// The model id we report as `default_model_id` when it appears in the
-/// catalog. Keep in sync with `crates/savvagent/src/providers.rs`'s
+/// catalog. Keep in sync with `crates/otto/src/providers.rs`'s
 /// Anthropic `default_model`.
 pub const DEFAULT_MODEL: &str = "claude-haiku-4-5";
 

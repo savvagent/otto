@@ -37,7 +37,7 @@ unstable-but-actively-maintained alpha line keeps us close to where the
 upstream is going. The version is exact-pinned (`=0.3.0-alpha.4`) so a
 fresh `0.3.0-alpha.5` doesn't quietly land in CI.
 
-**MSRV impact:** Blitz declares `rust-version = "1.89.0"`. Savvagent's
+**MSRV impact:** Blitz declares `rust-version = "1.89.0"`. Otto's
 `[workspace.package].rust-version` is currently `1.85`. Adopting Blitz
 forces a workspace MSRV bump from 1.85 → 1.89, which should be called out
 in Phase 1's Cargo.toml change + the CHANGELOG.
@@ -178,7 +178,7 @@ no such side-effect empirically.
 
 **Paths forward for Phase 2 (not blocking for Phase 1):**
 
-1. **Host-side router on top of Blitz.** The `savvagent-canvas` crate
+1. **Host-side router on top of Blitz.** The `otto-canvas` crate
    tracks `<details>` and `<summary>` elements separately, intercepts
    clicks that land on a `<summary>`, and manually flips the parent
    `<details>` element's `open` attribute via Blitz's DOM-mutation API
@@ -207,7 +207,7 @@ no such side-effect empirically.
 
 The spec already anticipates this — its "Approach risks" section says
 exactly *"if it's rough, we ship Phase 1 (static rendering) on schedule
-and the spike's findings shape whether Phase 2 needs a savvagent-side
+and the spike's findings shape whether Phase 2 needs a otto-side
 event router."* The answer is "yes, Phase 2 needs a host-side event
 router on top of Blitz."
 
@@ -236,7 +236,7 @@ Not exercised in the spike (deferred to canvas-crate work):
 - Forms (`<input>`, `<select>`, etc.) — likely the same "synthetic event
   doesn't update DOM" pattern.
 
-The subset validator in `savvagent-canvas` should at minimum warn for
+The subset validator in `otto-canvas` should at minimum warn for
 `<details>` and form inputs until Phase 2 lands.
 
 ## Decision
@@ -263,13 +263,13 @@ Specifically:
 3. The "Open questions" section gains a pointer to this notes file.
 4. Phase 2's eventing trait surface (`ContentRenderer::dispatch`) stays
    as designed; the host-side router lives *inside* the
-   `savvagent-canvas` crate's `HtmlCanvas::dispatch` impl, so the trait
+   `otto-canvas` crate's `HtmlCanvas::dispatch` impl, so the trait
    surface is unaffected.
 
 ## Phase 2 risk update
 
 **Verdict: needs router layer.** Phase 2 ships with a host-side router
-inside `savvagent-canvas::HtmlCanvas::dispatch` that intercepts:
+inside `otto-canvas::HtmlCanvas::dispatch` that intercepts:
 
 - Clicks landing on `<summary>` elements → flip parent `<details>`
   `open` attribute → re-resolve.

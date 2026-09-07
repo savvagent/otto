@@ -3,11 +3,11 @@ name: WIT portability dep-guard
 on:
   pull_request:
     paths:
-      - 'crates/savvagent-plugin/**'
+      - 'crates/otto-plugin/**'
   push:
     branches: [master]
     paths:
-      - 'crates/savvagent-plugin/**'
+      - 'crates/otto-plugin/**'
 
 jobs:
   forbid-non-portable-deps:
@@ -18,7 +18,7 @@ jobs:
       - name: Forbid non-portable deps under [dependencies]
         run: |
           set -euo pipefail
-          MANIFEST=crates/savvagent-plugin/Cargo.toml
+          MANIFEST=crates/otto-plugin/Cargo.toml
 
           # Extract just the [dependencies] section (until the next [section]).
           DEPS=$(awk '/^\[dependencies\]$/{flag=1;next}/^\[/{flag=0}flag' "$MANIFEST")

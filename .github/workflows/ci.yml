@@ -29,7 +29,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       # `keyring`'s sync-secret-service backend pulls libdbus-sys, whose
-      # build.rs needs the system libdbus headers. Blitz (savvagent-canvas)
+      # build.rs needs the system libdbus headers. Blitz (otto-canvas)
       # transitively pulls yeslogic-fontconfig-sys, which needs system
       # fontconfig headers. Neither is installed by default on the GH
       # ubuntu runner image.
@@ -56,7 +56,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # libdbus-1-dev is required for keyring's secret-service backend on
-      # Linux. libfontconfig1-dev is required by Blitz (savvagent-canvas)
+      # Linux. libfontconfig1-dev is required by Blitz (otto-canvas)
       # via yeslogic-fontconfig-sys. Neither is preinstalled on the GH
       # ubuntu runner image.
       - name: Install Linux system deps
@@ -67,7 +67,7 @@ jobs:
       - name: test (non-Windows)
         if: runner.os != 'Windows'
         run: cargo test --workspace --no-fail-fast
-      # `savvagent-canvas` (and `savvagent`, which links it via the
+      # `otto-canvas` (and `otto`, which links it via the
       # `internal:html-canvas` built-in plugin) pull in Blitz. Blitz's font
       # discovery on the GitHub-hosted windows-latest runner hangs the test
       # binary at process start — even `#[ignore]` on the one render-invoking
@@ -77,17 +77,17 @@ jobs:
       # workaround. Track in Phase 2 spike notes.
       - name: test (Windows, exclude Blitz-linking crates)
         if: runner.os == 'Windows'
-        run: cargo test --workspace --exclude savvagent-canvas --exclude savvagent --no-fail-fast
+        run: cargo test --workspace --exclude otto-canvas --exclude otto --no-fail-fast
 
   # Cross-vendor `tool_use_id` compatibility gate. Each (sender, receiver)
   # pair across the three shipping vendors gets its own #[tokio::test] in
-  # `crates/savvagent-host/tests/cross_vendor_history.rs`; `--no-fail-fast`
+  # `crates/otto-host/tests/cross_vendor_history.rs`; `--no-fail-fast`
   # ensures every failing pair appears in the job log instead of stopping
   # at the first. See docs/superpowers/specs/2026-05-15-multi-provider-pool-and-auto-routing-design.md
   # ("Phase 2 gate") for the contract this job enforces.
   #
   # Live-vendor twins are #[ignore]-marked and run manually via
-  # `cargo test -p savvagent-host --test cross_vendor_history -- --ignored`
+  # `cargo test -p otto-host --test cross_vendor_history -- --ignored`
   # with the appropriate *_API_KEY env vars set; this PR-CI job covers only
   # the offline mocked matrix.
   cross-vendor-gate:
@@ -101,7 +101,7 @@ jobs:
       - name: Install Linux system deps
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev pkg-config
       - name: cross-vendor matrix
-        run: cargo test -p savvagent-host --test cross_vendor_history --no-fail-fast
+        run: cargo test -p otto-host --test cross_vendor_history --no-fail-fast
 
   # Validate the dist config still parses on every PR. The release workflow
   # also does this, but having it here keeps the failure mode obvious when a

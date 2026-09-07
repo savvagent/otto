@@ -5,7 +5,7 @@ Status: drafted, awaiting user review before plan
 Supersedes: nothing
 Related:
 - `docs/superpowers/specs/2026-05-12-v0.9.0-plugin-system-design.md` — built-in plugin pattern this design slots into
-- Issue [#92](https://github.com/robhicks/savvagent-rs/issues/92) — Servo-backed HTML rendering of model output (separate concern; this spec keeps user-authored definitions in markdown)
+- Issue [#92](https://github.com/robhicks/otto-rs/issues/92) — Servo-backed HTML rendering of model output (separate concern; this spec keeps user-authored definitions in markdown)
 
 ## Context: the multi-subsystem split
 
@@ -21,13 +21,13 @@ bump and release notes per [[feedback_phase_release_rollup]]:
 | D     | External plugins (WASM, honoring v0.9.0's deferred WIT promise) | future |
 
 This decomposition was agreed during brainstorming. Plugins and built-in
-slash commands already ship in v0.9.0 (`savvagent-plugin` crate, `SlashSpec`
+slash commands already ship in v0.9.0 (`otto-plugin` crate, `SlashSpec`
 registration through plugin manifests); A is purely about letting **users**
 add their own slash commands from files on disk.
 
 ## Problem
 
-`savvagent`'s slash commands today are statically registered by built-in
+`otto`'s slash commands today are statically registered by built-in
 plugins. There is no on-disk extension point — adding `/review` for your
 project means editing the source. Every comparable agent (Claude Code,
 OpenCode, Continue, Cursor rules) lets users drop markdown files into a
@@ -53,16 +53,16 @@ One new built-in plugin. One new modal `Screen` for project trust.
 ### Discovery paths
 
 Scanned in this order; first hit per command name wins. Within a single
-scope (project or user) `.savvagent/` outranks `.claude/`. Across scopes,
+scope (project or user) `.otto/` outranks `.claude/`. Across scopes,
 project outranks user.
 
-1. `<project>/.savvagent/commands/**/*.md`
+1. `<project>/.otto/commands/**/*.md`
 2. `<project>/.claude/commands/**/*.md`
-3. `~/.savvagent/commands/**/*.md`
+3. `~/.otto/commands/**/*.md`
 4. `~/.claude/commands/**/*.md`
 
-"Project root" is the same root the existing `SAVVAGENT.md` loader
-resolves: walk up from cwd until we find `.git/`, `.savvagent/`, or root.
+"Project root" is the same root the existing `OTTO.md` loader
+resolves: walk up from cwd until we find `.git/`, `.otto/`, or root.
 If none of the four directories exists, the plugin contributes zero
 commands and adds zero overhead.
 
@@ -117,7 +117,7 @@ The first time we encounter project-local commands in a new project, the
 TUI shows a modal:
 
 ```
-This project ships commands under .savvagent/commands/ and .claude/commands/.
+This project ships commands under .otto/commands/ and .claude/commands/.
 Some of them may run shell commands. Trust this project?
 
   [y] Trust always
@@ -125,12 +125,12 @@ Some of them may run shell commands. Trust this project?
   [q] Cancel
 ```
 
-Decisions persist at `~/.savvagent/trusted-projects.json`:
+Decisions persist at `~/.otto/trusted-projects.json`:
 
 ```json
 {
   "projects": {
-    "/home/alice/work/savvagent-rs": "always"
+    "/home/alice/work/otto-rs": "always"
   }
 }
 ```
@@ -138,7 +138,7 @@ Decisions persist at `~/.savvagent/trusted-projects.json`:
 Schema:
 
 - Keys are canonical absolute project root paths (the same root the
-  `SAVVAGENT.md` loader resolves to).
+  `OTTO.md` loader resolves to).
 - Values are `"always"` only. `"session-text-only"` exists at runtime
   but is **not** persisted — next launch re-prompts.
 - A `"cancel"` decision is not stored at all.
@@ -156,28 +156,28 @@ other plugins are not touched. Hot file-watch reload is non-goal for v1
 
 ## Section 2 — Runtime architecture
 
-### Crate layout (new module under existing `savvagent` binary crate)
+### Crate layout (new module under existing `otto` binary crate)
 
 ```
-crates/savvagent/src/plugin/builtin/user_slash_commands/
+crates/otto/src/plugin/builtin/user_slash_commands/
     mod.rs              # Plugin impl: manifest(), handle_slash(), on_event(HostStarting)
     discovery.rs        # walk the four paths via `ignore::WalkBuilder`, return Vec<DiscoveredCommand>
     frontmatter.rs      # YAML parse via serde_yaml_ng (workspace dep)
     template.rs         # $ARGUMENTS / $N / ! / @ expansion, returns Result<String, ExpandError>
-    trust.rs            # load/save ~/.savvagent/trusted-projects.json
+    trust.rs            # load/save ~/.otto/trusted-projects.json
     trust_modal.rs      # Screen impl for the y/n/q prompt
     tests/              # unit + integration tests
 ```
 
 `internal:user-slash-commands` is added to the static built-in plugin
-list in `crates/savvagent/src/plugin/builtin/mod.rs` alongside the
+list in `crates/otto/src/plugin/builtin/mod.rs` alongside the
 existing internal plugins.
 
 ### Startup discovery
 
 `Plugin::on_event(HostEvent::HostStarting)` triggers discovery:
 
-1. Resolve project root (same logic as `SAVVAGENT.md` loader).
+1. Resolve project root (same logic as `OTTO.md` loader).
 2. For each of the four directories that exists, walk it via
    `ignore::WalkBuilder` with default git-ignore behavior disabled
    (commands directories should not be `.gitignore`-pruned).
@@ -315,7 +315,7 @@ log line and their command isn't in the palette.
   cross-platform complexity (Windows FS events are flaky) for marginal
   benefit.
 - **Re-prompting trust when command files change.** Trust is keyed by
-  project root path only in v1. A `.savvagent/commands/install.md`
+  project root path only in v1. A `.otto/commands/install.md`
   added after the user trusts the project does **not** re-prompt. This
   is documented in the README's security section.
 - **Recursive template expansion.** Single-pass only. A `@`-included
@@ -324,7 +324,7 @@ log line and their command isn't in the palette.
   shell and full env. The trust prompt is the only gate. Sandbox
   integration is a follow-up if anyone asks.
 - **Argument validation against `argument-hint`.** Display only.
-- **HTML or any non-markdown authoring format.** See [#92](https://github.com/robhicks/savvagent-rs/issues/92) for the related
+- **HTML or any non-markdown authoring format.** See [#92](https://github.com/robhicks/otto-rs/issues/92) for the related
   but separate concern of *rendering model output* via Servo — that is
   about model→human artifacts, not human-authored definition files.
 
@@ -340,8 +340,8 @@ Same commit must:
 - Bump `[workspace.package].version` and mirror into
   `[workspace.dependencies]` literals per [[feedback_semver]].
 - Update README: new "User-defined slash commands" section under the
-  TUI features; add `.savvagent/commands/` and
-  `~/.savvagent/trusted-projects.json` to the "On-disk paths" reference.
+  TUI features; add `.otto/commands/` and
+  `~/.otto/trusted-projects.json` to the "On-disk paths" reference.
 - Add CHANGELOG entry per [[feedback_release_notes]].
 
 No tag is pushed until the release notes are drafted per
@@ -351,21 +351,21 @@ No tag is pushed until the release notes are drafted per
 
 | Test | Crate | File |
 |------|-------|------|
-| Discovery walks all four paths with correct precedence | `savvagent` | `plugin/builtin/user_slash_commands/discovery.rs` `#[cfg(test)]` |
-| Discovery skips files with invalid slugs after warn-log | `savvagent` | same |
-| Discovery handles nonexistent / unreadable directories | `savvagent` | same |
-| Frontmatter: present / absent / malformed / unknown-keys / unicode in description | `savvagent` | `frontmatter.rs` |
-| Template `$ARGUMENTS` / `$N` substitution including out-of-range | `savvagent` | `template.rs` |
-| Template `@<path>` for existing + missing files | `savvagent` | `template.rs` |
-| Template `!<cmd>` for exit-0 + exit-nonzero | `savvagent` | `template.rs` |
-| Template expansion is single-pass (no recursion) | `savvagent` | `template.rs` |
-| Trust file round-trip; load when file absent | `savvagent` | `trust.rs` |
-| Untrusted project + body-with-shell triggers modal effect | `savvagent` | `mod.rs` integration |
-| Trusted project + body-with-shell dispatches without modal | `savvagent` | same |
-| Cancelled trust aborts dispatch (no `SubmitPrompt` emitted) | `savvagent` | same |
-| End-to-end: discovery → handle_slash → expected `Effect` sequence | `savvagent` | `mod.rs` |
-| `model:` unknown id falls back with warn | `savvagent` | `mod.rs` |
-| `/reload-commands` replaces user commands without touching built-ins | `savvagent` | `mod.rs` |
+| Discovery walks all four paths with correct precedence | `otto` | `plugin/builtin/user_slash_commands/discovery.rs` `#[cfg(test)]` |
+| Discovery skips files with invalid slugs after warn-log | `otto` | same |
+| Discovery handles nonexistent / unreadable directories | `otto` | same |
+| Frontmatter: present / absent / malformed / unknown-keys / unicode in description | `otto` | `frontmatter.rs` |
+| Template `$ARGUMENTS` / `$N` substitution including out-of-range | `otto` | `template.rs` |
+| Template `@<path>` for existing + missing files | `otto` | `template.rs` |
+| Template `!<cmd>` for exit-0 + exit-nonzero | `otto` | `template.rs` |
+| Template expansion is single-pass (no recursion) | `otto` | `template.rs` |
+| Trust file round-trip; load when file absent | `otto` | `trust.rs` |
+| Untrusted project + body-with-shell triggers modal effect | `otto` | `mod.rs` integration |
+| Trusted project + body-with-shell dispatches without modal | `otto` | same |
+| Cancelled trust aborts dispatch (no `SubmitPrompt` emitted) | `otto` | same |
+| End-to-end: discovery → handle_slash → expected `Effect` sequence | `otto` | `mod.rs` |
+| `model:` unknown id falls back with warn | `otto` | `mod.rs` |
+| `/reload-commands` replaces user commands without touching built-ins | `otto` | `mod.rs` |
 
 Tests that touch `set_locale` or `HOME` must honor
 [[feedback_test_locale_isolation]] — reset locale to `"en"` inside the
@@ -377,7 +377,7 @@ under parallel execution and poison the mutex.
 1. Does the v0.9.0 manifest pipeline already support runtime
    re-contribution by a plugin? If yes, we use it; if no, ship
    `Effect::ContributeSlashCommands`. The plan step inspects
-   `crates/savvagent/src/plugin/manifests.rs` to determine which.
+   `crates/otto/src/plugin/manifests.rs` to determine which.
 2. Should `argument-hint` be passed through to the palette's existing
    description column, or rendered as a separate visual element? The
    plan inspects the palette's `SlashSpec` consumption to pick the
@@ -392,7 +392,7 @@ re-litigate the design.
 
 ## Appendix — example commands
 
-A user's `.savvagent/commands/review.md`:
+A user's `.otto/commands/review.md`:
 
 ```markdown
 ---
@@ -405,7 +405,7 @@ Please review the following diff and flag any issues:
 !git diff $ARGUMENTS
 ```
 
-A user's `.savvagent/commands/explain.md`:
+A user's `.otto/commands/explain.md`:
 
 ```markdown
 ---
@@ -418,5 +418,5 @@ Explain what @$1 does, including its public API and any non-obvious
 invariants. Be concise.
 ```
 
-A namespaced team command at `.savvagent/commands/team/security.md`
+A namespaced team command at `.otto/commands/team/security.md`
 becomes `/team:security`.

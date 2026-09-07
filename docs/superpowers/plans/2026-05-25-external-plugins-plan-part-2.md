@@ -9,17 +9,17 @@
 ## Task 4: Static-world adapter + host imports + fixture + tests
 
 **Files:**
-- Create: `crates/savvagent-plugin-wasm/src/adapter/mod.rs`
-- Create: `crates/savvagent-plugin-wasm/src/adapter/static_.rs` (trailing `_` avoids the keyword)
-- Create: `crates/savvagent-plugin-wasm/src/host_imports/mod.rs`
-- Create: `crates/savvagent-plugin-wasm/src/host_imports/log.rs`
-- Create: `crates/savvagent-plugin-wasm/src/host_imports/theme.rs`
-- Create: `crates/savvagent-plugin-wasm/src/engine.rs`
-- Create: `crates/savvagent-plugin-wasm/src/convert.rs` (WIT ↔ savvagent_plugin Effect, Manifest, etc.)
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures/static.wasm` (committed binary)
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures-src/static/` (source for reproducibility)
-- Create: `crates/savvagent-plugin-wasm/tests/static_adapter.rs`
-- Modify: `crates/savvagent-plugin-wasm/src/lib.rs`
+- Create: `crates/otto-plugin-wasm/src/adapter/mod.rs`
+- Create: `crates/otto-plugin-wasm/src/adapter/static_.rs` (trailing `_` avoids the keyword)
+- Create: `crates/otto-plugin-wasm/src/host_imports/mod.rs`
+- Create: `crates/otto-plugin-wasm/src/host_imports/log.rs`
+- Create: `crates/otto-plugin-wasm/src/host_imports/theme.rs`
+- Create: `crates/otto-plugin-wasm/src/engine.rs`
+- Create: `crates/otto-plugin-wasm/src/convert.rs` (WIT ↔ otto_plugin Effect, Manifest, etc.)
+- Create: `crates/otto-plugin-wasm/tests/fixtures/static.wasm` (committed binary)
+- Create: `crates/otto-plugin-wasm/tests/fixtures-src/static/` (source for reproducibility)
+- Create: `crates/otto-plugin-wasm/tests/static_adapter.rs`
+- Modify: `crates/otto-plugin-wasm/src/lib.rs`
 
 - [ ] **Step 4.1: Engine singleton — `src/engine.rs`.**
 
@@ -47,11 +47,11 @@ pub fn shared_engine() -> Engine {
 
 - [ ] **Step 4.2: WIT↔Plugin conversions — `src/convert.rs`.**
 
-These map between the WIT-side types from `savvagent-plugin-wit::static_world` (and `interactive_world`) and `savvagent_plugin::{Effect, Manifest, HookKind, ScreenArgs, StyledLine}`. Mechanical, like `spp_convert.rs`. Pattern:
+These map between the WIT-side types from `otto-plugin-wit::static_world` (and `interactive_world`) and `otto_plugin::{Effect, Manifest, HookKind, ScreenArgs, StyledLine}`. Mechanical, like `spp_convert.rs`. Pattern:
 
 ```rust
-use savvagent_plugin as sp;
-use savvagent_plugin_wit::static_world::savvagent::plugin::types as wit;
+use otto_plugin as sp;
+use otto_plugin_wit::static_world::otto::plugin::types as wit;
 
 pub fn effect_from_wit(e: wit::Effect) -> sp::Effect {
     match e {
@@ -117,10 +117,10 @@ The actual host-import wrapping happens inside the adapter where it can be linke
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-pub type ThemeProvider = Arc<RwLock<Vec<(String, savvagent_plugin::ThemeColor)>>>;
+pub type ThemeProvider = Arc<RwLock<Vec<(String, otto_plugin::ThemeColor)>>>;
 
 /// Construct a ThemeProvider holding an initial snapshot.
-pub fn provider(initial: Vec<(String, savvagent_plugin::ThemeColor)>) -> ThemeProvider {
+pub fn provider(initial: Vec<(String, otto_plugin::ThemeColor)>) -> ThemeProvider {
     Arc::new(RwLock::new(initial))
 }
 ```
@@ -130,7 +130,7 @@ The TUI calls `provider.write().await.clone_from(&new_theme_map)` whenever `SetT
 - [ ] **Step 4.5: Adapter module skeleton — `src/adapter/mod.rs`.**
 
 ```rust
-//! Adapters: bridge wasm components to `Box<dyn savvagent_plugin::Plugin>`.
+//! Adapters: bridge wasm components to `Box<dyn otto_plugin::Plugin>`.
 
 mod static_;
 // interactive and provider land in tasks 5 and 6.
@@ -149,9 +149,9 @@ use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, InstancePre};
 use wasmtime::Store;
 
-use savvagent_plugin::{Effect, HostEvent, Manifest, Plugin, PluginError, Region, ScreenArgs,
+use otto_plugin::{Effect, HostEvent, Manifest, Plugin, PluginError, Region, ScreenArgs,
                        ScreenStyledLineExport as _, StyledLine, ThemeEntry};
-use savvagent_plugin_wit::static_world as ws;
+use otto_plugin_wit::static_world as ws;
 
 use crate::convert::*;
 use crate::engine::shared_engine;
@@ -316,16 +316,16 @@ impl Plugin for StaticAdapter {
     }
 }
 
-fn theme_color_to_wit(c: savvagent_plugin::ThemeColor)
-    -> ws::savvagent::plugin::types::ThemeColor
+fn theme_color_to_wit(c: otto_plugin::ThemeColor)
+    -> ws::otto::plugin::types::ThemeColor
 {
-    use ws::savvagent::plugin::types as t;
-    use savvagent_plugin::ThemeColor as P;
+    use ws::otto::plugin::types as t;
+    use otto_plugin::ThemeColor as P;
     match c {
         P::Reset => t::ThemeColor::Reset,
         P::Black => t::ThemeColor::Black,
         P::Red => t::ThemeColor::Red,
-        // ... one arm per variant; see savvagent_plugin::ThemeColor
+        // ... one arm per variant; see otto_plugin::ThemeColor
         _ => t::ThemeColor::Reset,
     }
 }
@@ -335,7 +335,7 @@ fn theme_color_to_wit(c: savvagent_plugin::ThemeColor)
 
 - [ ] **Step 4.7: Build the static fixture.**
 
-Create `crates/savvagent-plugin-wasm/tests/fixtures-src/static/Cargo.toml`:
+Create `crates/otto-plugin-wasm/tests/fixtures-src/static/Cargo.toml`:
 
 ```toml
 [package]
@@ -350,15 +350,15 @@ crate-type = ["cdylib"]
 wit-bindgen = "0.34"
 ```
 
-Create `crates/savvagent-plugin-wasm/tests/fixtures-src/static/src/lib.rs`:
+Create `crates/otto-plugin-wasm/tests/fixtures-src/static/src/lib.rs`:
 
 ```rust
 wit_bindgen::generate!({
-    path: "../../../savvagent-plugin-wit/wit",
+    path: "../../../otto-plugin-wit/wit",
     world: "plugin-static",
 });
 
-use exports::savvagent::plugin::types as t;
+use exports::otto::plugin::types as t;
 
 struct Component;
 
@@ -413,15 +413,15 @@ Build via a Justfile entry:
 
 ```just
 build-fixtures:
-    cd crates/savvagent-plugin-wasm/tests/fixtures-src/static && \
+    cd crates/otto-plugin-wasm/tests/fixtures-src/static && \
         cargo component build --release && \
         cp target/wasm32-wasip2/release/fixture_static.wasm \
            ../../fixtures/static.wasm
-    cd crates/savvagent-plugin-wasm/tests/fixtures-src/interactive && \
+    cd crates/otto-plugin-wasm/tests/fixtures-src/interactive && \
         cargo component build --release && \
         cp target/wasm32-wasip2/release/fixture_interactive.wasm \
            ../../fixtures/interactive.wasm
-    cd crates/savvagent-plugin-wasm/tests/fixtures-src/provider && \
+    cd crates/otto-plugin-wasm/tests/fixtures-src/provider && \
         cargo component build --release && \
         cp target/wasm32-wasip2/release/fixture_provider.wasm \
            ../../fixtures/provider.wasm
@@ -433,10 +433,10 @@ Then commit the resulting `.wasm` files. Don't worry about size; ~50 KB per fixt
 
 ```rust
 use std::sync::Arc;
-use savvagent_plugin::Plugin;
-use savvagent_plugin_wasm::adapter::StaticAdapter;
-use savvagent_plugin_wasm::host_imports::theme;
-use savvagent_plugin_wasm::manifest::PluginManifest;
+use otto_plugin::Plugin;
+use otto_plugin_wasm::adapter::StaticAdapter;
+use otto_plugin_wasm::host_imports::theme;
+use otto_plugin_wasm::manifest::PluginManifest;
 
 #[tokio::test]
 async fn static_adapter_handle_slash_echo() {
@@ -448,7 +448,7 @@ id = "fixture.static"
 name = "fixture-static"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 "#).unwrap();
     std::fs::copy(
         "tests/fixtures/static.wasm",
@@ -467,7 +467,7 @@ savvagent = "^0.18"
         .unwrap();
     assert_eq!(effects.len(), 1);
     match &effects[0] {
-        savvagent_plugin::Effect::PushNote(n) => assert_eq!(n.text, "hello world"),
+        otto_plugin::Effect::PushNote(n) => assert_eq!(n.text, "hello world"),
         other => panic!("expected PushNote, got {other:?}"),
     }
 }
@@ -477,7 +477,7 @@ savvagent = "^0.18"
 
 ```bash
 just build-fixtures
-cargo test -p savvagent-plugin-wasm
+cargo test -p otto-plugin-wasm
 ```
 
 Expected: `static_adapter_handle_slash_echo` passes.
@@ -485,7 +485,7 @@ Expected: `static_adapter_handle_slash_echo` passes.
 - [ ] **Step 4.10: Commit.**
 
 ```bash
-git add crates/savvagent-plugin-wasm/ Justfile
+git add crates/otto-plugin-wasm/ Justfile
 git commit -m "feat(plugin-wasm): static-world adapter + log/current-theme imports + fixture"
 ```
 
@@ -494,12 +494,12 @@ git commit -m "feat(plugin-wasm): static-world adapter + log/current-theme impor
 ## Task 5: Interactive-world adapter + draw imports + fixture + tests
 
 **Files:**
-- Create: `crates/savvagent-plugin-wasm/src/adapter/interactive.rs`
-- Create: `crates/savvagent-plugin-wasm/src/host_imports/draw.rs`
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures-src/interactive/`
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures/interactive.wasm`
-- Create: `crates/savvagent-plugin-wasm/tests/interactive_adapter.rs`
-- Modify: `crates/savvagent-plugin-wasm/src/adapter/mod.rs`
+- Create: `crates/otto-plugin-wasm/src/adapter/interactive.rs`
+- Create: `crates/otto-plugin-wasm/src/host_imports/draw.rs`
+- Create: `crates/otto-plugin-wasm/tests/fixtures-src/interactive/`
+- Create: `crates/otto-plugin-wasm/tests/fixtures/interactive.wasm`
+- Create: `crates/otto-plugin-wasm/tests/interactive_adapter.rs`
+- Modify: `crates/otto-plugin-wasm/src/adapter/mod.rs`
 
 - [ ] **Step 5.1: Draw-primitive host imports — `src/host_imports/draw.rs`.**
 
@@ -581,8 +581,8 @@ use async_trait::async_trait;
 use wasmtime::component::{Component, Linker, InstancePre, ResourceAny};
 use wasmtime::Store;
 
-use savvagent_plugin::{Effect, Manifest, Plugin, PluginError, Screen, ScreenArgs};
-use savvagent_plugin_wit::interactive_world as wi;
+use otto_plugin::{Effect, Manifest, Plugin, PluginError, Screen, ScreenArgs};
+use otto_plugin_wit::interactive_world as wi;
 
 use crate::convert::*;
 use crate::engine::shared_engine;
@@ -677,7 +677,7 @@ impl Plugin for InteractiveAdapter {
                 let handle = instance.call_create_screen(
                     &mut store,
                     &id,
-                    &wi::exports::savvagent::plugin::types::ScreenArgs {
+                    &wi::exports::otto::plugin::types::ScreenArgs {
                         invocation_json,
                         terminal_width: 80,    // re-passed at render time
                         terminal_height: 24,
@@ -759,14 +759,14 @@ fn link_draw_primitives(_linker: &mut Linker<InteractiveHostState>)
 }
 
 fn key_event_to_wit(_key: ratatui::crossterm::event::KeyEvent)
-    -> wi::savvagent::plugin::types::KeyEventPortable
+    -> wi::otto::plugin::types::KeyEventPortable
 {
     // mechanical conversion; one match arm per KeyCode variant.
     todo!("key conversion")
 }
 ```
 
-> **Implementer note:** The exact `Screen` trait shape may differ — check `crates/savvagent-plugin/src/screen.rs` for the canonical methods (`on_key`, `render`, `tips`, `id`) and adjust the impl accordingly. Drop the `todo!()` before commit.
+> **Implementer note:** The exact `Screen` trait shape may differ — check `crates/otto-plugin/src/screen.rs` for the canonical methods (`on_key`, `render`, `tips`, `id`) and adjust the impl accordingly. Drop the `todo!()` before commit.
 
 - [ ] **Step 5.3: Interactive fixture source.**
 
@@ -792,7 +792,7 @@ async fn interactive_adapter_renders_hello() {
 - [ ] **Step 5.5: Commit.**
 
 ```bash
-git add crates/savvagent-plugin-wasm/
+git add crates/otto-plugin-wasm/
 git commit -m "feat(plugin-wasm): interactive-world adapter + draw imports + fixture"
 ```
 
@@ -801,13 +801,13 @@ git commit -m "feat(plugin-wasm): interactive-world adapter + draw imports + fix
 ## Task 6: Provider-world adapter + http/keyring/progress imports + fixture + tests
 
 **Files:**
-- Create: `crates/savvagent-plugin-wasm/src/adapter/provider.rs`
-- Create: `crates/savvagent-plugin-wasm/src/host_imports/http.rs`
-- Create: `crates/savvagent-plugin-wasm/src/host_imports/keyring.rs`
-- Create: `crates/savvagent-plugin-wasm/src/host_imports/progress.rs`
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures-src/provider/`
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures/provider.wasm`
-- Create: `crates/savvagent-plugin-wasm/tests/provider_adapter.rs`
+- Create: `crates/otto-plugin-wasm/src/adapter/provider.rs`
+- Create: `crates/otto-plugin-wasm/src/host_imports/http.rs`
+- Create: `crates/otto-plugin-wasm/src/host_imports/keyring.rs`
+- Create: `crates/otto-plugin-wasm/src/host_imports/progress.rs`
+- Create: `crates/otto-plugin-wasm/tests/fixtures-src/provider/`
+- Create: `crates/otto-plugin-wasm/tests/fixtures/provider.wasm`
+- Create: `crates/otto-plugin-wasm/tests/provider_adapter.rs`
 
 - [ ] **Step 6.1: HTTP host import — `src/host_imports/http.rs`.**
 
@@ -817,7 +817,7 @@ git commit -m "feat(plugin-wasm): interactive-world adapter + draw imports + fix
 use std::sync::Arc;
 use std::time::Duration;
 use reqwest::Client;
-use savvagent_plugin_wit::provider_world::savvagent::plugin::http_capability as wit;
+use otto_plugin_wit::provider_world::otto::plugin::http_capability as wit;
 
 pub struct HttpState {
     pub client: Client,
@@ -875,10 +875,10 @@ impl HttpState {
 - [ ] **Step 6.2: Keyring host import — `src/host_imports/keyring.rs`.**
 
 ```rust
-//! Keyring capability — fixed service "savvagent", account-whitelist enforced.
+//! Keyring capability — fixed service "otto", account-whitelist enforced.
 
 use std::sync::Arc;
-use savvagent_plugin_wit::provider_world::savvagent::plugin::keyring_capability as wit;
+use otto_plugin_wit::provider_world::otto::plugin::keyring_capability as wit;
 
 pub struct KeyringState {
     pub allowed_accounts: Arc<Vec<String>>,
@@ -889,7 +889,7 @@ impl KeyringState {
         if !self.allowed_accounts.iter().any(|a| a == account) {
             return Err(wit::KeyringError::Denied(account.to_string()));
         }
-        let entry = keyring::Entry::new("savvagent", account)
+        let entry = keyring::Entry::new("otto", account)
             .map_err(|e| wit::KeyringError::Backend(e.to_string()))?;
         match entry.get_password() {
             Ok(s) => Ok(s),
@@ -905,9 +905,9 @@ impl KeyringState {
 ```rust
 //! Progress capability — forwards stream-events to the active emitter.
 
-use savvagent_mcp::StreamEmitter;
-use savvagent_plugin_wit::provider_world::savvagent::spp::types as wit;
-use savvagent_protocol::StreamEvent;
+use otto_mcp::StreamEmitter;
+use otto_plugin_wit::provider_world::otto::spp::types as wit;
+use otto_protocol::StreamEvent;
 
 pub struct ProgressState {
     pub active_emitter: Option<Box<dyn StreamEmitter>>,
@@ -926,7 +926,7 @@ impl ProgressState {
 
 ```rust
 //! Provider-world adapter: bridges a wasm component to
-//! `Box<dyn savvagent_mcp::ProviderClient>`.
+//! `Box<dyn otto_mcp::ProviderClient>`.
 
 use std::sync::Arc;
 use async_trait::async_trait;
@@ -934,10 +934,10 @@ use tokio::sync::Mutex;
 use wasmtime::component::{Component, Linker, InstancePre};
 use wasmtime::Store;
 
-use savvagent_mcp::{ProviderClient, StreamEmitter};
-use savvagent_protocol::{CompleteRequest, CompleteResponse, ProviderError,
+use otto_mcp::{ProviderClient, StreamEmitter};
+use otto_protocol::{CompleteRequest, CompleteResponse, ProviderError,
                           ModelInfo, CountTokensRequest, CountTokensResponse};
-use savvagent_plugin_wit::provider_world as wp;
+use otto_plugin_wit::provider_world as wp;
 
 use crate::engine::shared_engine;
 use crate::error::WasmPluginError;
@@ -1012,11 +1012,11 @@ impl ProviderClient for WasmProviderClient {
         let instance = wp::PluginProvider::instantiate_pre_async(&mut store, &self.pre)
             .await
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
-        let wit_req: wp::savvagent::spp::types::CompleteRequest = req.into();
+        let wit_req: wp::otto::spp::types::CompleteRequest = req.into();
         let res = instance.call_complete(&mut store, &wit_req).await
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
         res.map(Into::into).map_err(|e| {
-            let pe: savvagent_protocol::ProviderError = e.into();
+            let pe: otto_protocol::ProviderError = e.into();
             pe
         })
     }
@@ -1029,7 +1029,7 @@ impl ProviderClient for WasmProviderClient {
         let res = instance.call_list_models(&mut store).await
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
         res.map(|v| v.into_iter().map(Into::into).collect())
-            .map_err(|e| { let pe: savvagent_protocol::ProviderError = e.into(); pe })
+            .map_err(|e| { let pe: otto_protocol::ProviderError = e.into(); pe })
     }
 
     async fn count_tokens(&self, req: CountTokensRequest)
@@ -1039,11 +1039,11 @@ impl ProviderClient for WasmProviderClient {
         let instance = wp::PluginProvider::instantiate_pre_async(&mut store, &self.pre)
             .await
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
-        let wit_req: wp::savvagent::spp::types::CountTokensRequest = req.into();
+        let wit_req: wp::otto::spp::types::CountTokensRequest = req.into();
         let res = instance.call_count_tokens(&mut store, &wit_req).await
             .map_err(|e| ProviderError::Transport(e.to_string()))?;
         res.map(Into::into)
-            .map_err(|e| { let pe: savvagent_protocol::ProviderError = e.into(); pe })
+            .map_err(|e| { let pe: otto_protocol::ProviderError = e.into(); pe })
     }
 }
 ```
@@ -1076,7 +1076,7 @@ Build via `just build-fixtures`.
 - [ ] **Step 6.7: Commit.**
 
 ```bash
-git add crates/savvagent-plugin-wasm/
+git add crates/otto-plugin-wasm/
 git commit -m "feat(plugin-wasm): provider-world adapter + http/keyring/progress + fixture"
 ```
 
@@ -1085,9 +1085,9 @@ git commit -m "feat(plugin-wasm): provider-world adapter + http/keyring/progress
 ## Task 7: Fault-injection fixtures + tests
 
 **Files:**
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures-src/{trap,timeout,denied-host,denied-account,bad-export}/`
-- Create: `crates/savvagent-plugin-wasm/tests/fixtures/{trap,timeout,denied-host,denied-account,bad-export}.wasm`
-- Create: `crates/savvagent-plugin-wasm/tests/fault_injection.rs`
+- Create: `crates/otto-plugin-wasm/tests/fixtures-src/{trap,timeout,denied-host,denied-account,bad-export}/`
+- Create: `crates/otto-plugin-wasm/tests/fixtures/{trap,timeout,denied-host,denied-account,bad-export}.wasm`
+- Create: `crates/otto-plugin-wasm/tests/fault_injection.rs`
 
 - [ ] **Step 7.1: Author the five fault fixtures.**
 
@@ -1105,7 +1105,7 @@ Build via `just build-fixtures`.
 
 ```rust
 use std::sync::Arc;
-use savvagent_plugin::Plugin;
+use otto_plugin::Plugin;
 
 #[tokio::test]
 async fn trap_surfaces_as_plugin_error() {
@@ -1156,12 +1156,12 @@ async fn bad_export_rejected_at_load_time() {
                   tmp.path().join("plugin.wasm")).unwrap();
 
     let dm = Arc::new(crate::test_helpers::load_manifest(&tmp));
-    let theme = savvagent_plugin_wasm::host_imports::theme::provider(vec![]);
-    let err = savvagent_plugin_wasm::adapter::StaticAdapter::new(dm, tmp.path(), theme)
+    let theme = otto_plugin_wasm::host_imports::theme::provider(vec![]);
+    let err = otto_plugin_wasm::adapter::StaticAdapter::new(dm, tmp.path(), theme)
         .await
         .unwrap_err();
-    assert!(matches!(err, savvagent_plugin_wasm::error::WasmPluginError::ExportMismatch(..) |
-                          savvagent_plugin_wasm::error::WasmPluginError::Wasmtime(_)),
+    assert!(matches!(err, otto_plugin_wasm::error::WasmPluginError::ExportMismatch(..) |
+                          otto_plugin_wasm::error::WasmPluginError::Wasmtime(_)),
             "expected export mismatch, got {err:?}");
 }
 ```
@@ -1173,7 +1173,7 @@ Add helper fns `load_static`, `load_provider`, `canned_complete_request`,
 - [ ] **Step 7.3: Commit.**
 
 ```bash
-git add crates/savvagent-plugin-wasm/
+git add crates/otto-plugin-wasm/
 git commit -m "test(plugin-wasm): fault-injection fixtures (trap, timeout, denied caps, bad-export)"
 ```
 
@@ -1182,11 +1182,11 @@ git commit -m "test(plugin-wasm): fault-injection fixtures (trap, timeout, denie
 ## Task 8: Three-strikes-disable + trap recovery + tests
 
 **Files:**
-- Create: `crates/savvagent-plugin-wasm/src/strikes.rs`
-- Modify: `crates/savvagent-plugin-wasm/src/adapter/static_.rs` (count traps, ask strikes)
-- Modify: `crates/savvagent-plugin-wasm/src/adapter/interactive.rs`
-- Modify: `crates/savvagent-plugin-wasm/src/adapter/provider.rs`
-- Create: `crates/savvagent-plugin-wasm/tests/strikes.rs`
+- Create: `crates/otto-plugin-wasm/src/strikes.rs`
+- Modify: `crates/otto-plugin-wasm/src/adapter/static_.rs` (count traps, ask strikes)
+- Modify: `crates/otto-plugin-wasm/src/adapter/interactive.rs`
+- Modify: `crates/otto-plugin-wasm/src/adapter/provider.rs`
+- Create: `crates/otto-plugin-wasm/tests/strikes.rs`
 
 - [ ] **Step 8.1: Strike counter — `src/strikes.rs`.**
 
@@ -1291,7 +1291,7 @@ async fn three_traps_in_window_disable_plugin() {
 - [ ] **Step 8.4: Commit.**
 
 ```bash
-git add crates/savvagent-plugin-wasm/
+git add crates/otto-plugin-wasm/
 git commit -m "feat(plugin-wasm): three-strikes-disable + trap recovery"
 ```
 
@@ -1300,14 +1300,14 @@ git commit -m "feat(plugin-wasm): three-strikes-disable + trap recovery"
 ## Task 9: Wire `register_external` into `register_all` in TUI
 
 **Files:**
-- Create: `crates/savvagent-plugin-wasm/src/register.rs`
-- Modify: `crates/savvagent/src/plugin/registry.rs`
-- Modify: `crates/savvagent/src/plugin/mod.rs`
-- Modify: `crates/savvagent/Cargo.toml` (depend on savvagent-plugin-wasm)
-- Modify: `crates/savvagent/src/main.rs`
-- Create: `crates/savvagent/tests/external_plugins.rs`
+- Create: `crates/otto-plugin-wasm/src/register.rs`
+- Modify: `crates/otto/src/plugin/registry.rs`
+- Modify: `crates/otto/src/plugin/mod.rs`
+- Modify: `crates/otto/Cargo.toml` (depend on otto-plugin-wasm)
+- Modify: `crates/otto/src/main.rs`
+- Create: `crates/otto/tests/external_plugins.rs`
 
-- [ ] **Step 9.1: `register_external` — `crates/savvagent-plugin-wasm/src/register.rs`.**
+- [ ] **Step 9.1: `register_external` — `crates/otto-plugin-wasm/src/register.rs`.**
 
 ```rust
 //! Discovery → validation → instantiation → adapter wrapping.
@@ -1316,8 +1316,8 @@ git commit -m "feat(plugin-wasm): three-strikes-disable + trap recovery"
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use savvagent_plugin::Plugin;
-use savvagent_mcp::ProviderClient;
+use otto_plugin::Plugin;
+use otto_mcp::ProviderClient;
 
 use crate::adapter::{StaticAdapter, InteractiveAdapter};
 use crate::adapter::provider::WasmProviderClient;
@@ -1396,26 +1396,26 @@ pub async fn register_external(
 }
 ```
 
-- [ ] **Step 9.2: Plug into `register_all` — modify `crates/savvagent/src/plugin/registry.rs`.**
+- [ ] **Step 9.2: Plug into `register_all` — modify `crates/otto/src/plugin/registry.rs`.**
 
 Find the `register_all` (or equivalent) entry-point — the spot where `register_builtins(&mut reg)` is called. Add an async equivalent:
 
 ```rust
-// crates/savvagent/src/plugin/registry.rs (top of file)
-use savvagent_plugin_wasm::register::register_external as wasm_register_external;
+// crates/otto/src/plugin/registry.rs (top of file)
+use otto_plugin_wasm::register::register_external as wasm_register_external;
 
 // new fn alongside register_all
 pub async fn register_all_with_external(
     project_root: Option<&std::path::Path>,
     home_dir: &std::path::Path,
-    theme_provider: savvagent_plugin_wasm::host_imports::theme::ThemeProvider,
+    theme_provider: otto_plugin_wasm::host_imports::theme::ThemeProvider,
 ) -> Result<PluginRegistry, RegistryError> {
     let builtins = crate::plugin::register_builtins();
     let mut set = builtins;
     let external = wasm_register_external(project_root, home_dir, theme_provider).await
         .unwrap_or_else(|e| {
             tracing::warn!("external-plugin registration failed: {e}");
-            savvagent_plugin_wasm::register::RegisterResult {
+            otto_plugin_wasm::register::RegisterResult {
                 plugins: vec![], provider_clients: vec![], warnings: vec![],
             }
         });
@@ -1432,7 +1432,7 @@ pub async fn register_all_with_external(
 
 - [ ] **Step 9.3: Extend `PROVIDERS` with discovered wasm providers.**
 
-Add a runtime extender. Edit `crates/savvagent/src/providers.rs`:
+Add a runtime extender. Edit `crates/otto/src/providers.rs`:
 
 ```rust
 use std::sync::OnceLock;
@@ -1451,25 +1451,25 @@ pub fn effective_providers() -> Vec<&'static ProviderSpec> {
 }
 ```
 
-Replace every `PROVIDERS.iter()` callsite in the TUI with `effective_providers().into_iter()`. Use `grep -RIn "PROVIDERS\.iter\|PROVIDERS\[" crates/savvagent` to find them.
+Replace every `PROVIDERS.iter()` callsite in the TUI with `effective_providers().into_iter()`. Use `grep -RIn "PROVIDERS\.iter\|PROVIDERS\[" crates/otto` to find them.
 
 - [ ] **Step 9.4: Call from main.rs.**
 
-In `crates/savvagent/src/main.rs`, replace the `register_all` call with the async one. Provide `project_root` via the existing project-root discovery (search for `SAVVAGENT.md` lookup; the same code answers this question). `home_dir` is `dirs::home_dir()`.
+In `crates/otto/src/main.rs`, replace the `register_all` call with the async one. Provide `project_root` via the existing project-root discovery (search for `OTTO.md` lookup; the same code answers this question). `home_dir` is `dirs::home_dir()`.
 
-- [ ] **Step 9.5: Integration test — `crates/savvagent/tests/external_plugins.rs`.**
+- [ ] **Step 9.5: Integration test — `crates/otto/tests/external_plugins.rs`.**
 
 ```rust
 //! End-to-end: with a temp HOME containing a trusted static plugin,
 //! the registry reports the plugin's slash command.
 
-use savvagent::plugin::registry::register_all_with_external;
+use otto::plugin::registry::register_all_with_external;
 
 #[tokio::test]
 async fn registry_includes_trusted_static_plugin() {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
-    let plugin_dir = home.join(".savvagent/plugins/acme.demo");
+    let plugin_dir = home.join(".otto/plugins/acme.demo");
     std::fs::create_dir_all(&plugin_dir).unwrap();
     std::fs::write(plugin_dir.join("plugin.toml"), r#"
 [plugin]
@@ -1477,22 +1477,22 @@ id = "acme.demo"
 name = "Demo"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 "#).unwrap();
     std::fs::copy(
-        "../../crates/savvagent-plugin-wasm/tests/fixtures/static.wasm",
+        "../../crates/otto-plugin-wasm/tests/fixtures/static.wasm",
         plugin_dir.join("plugin.wasm"),
     ).unwrap();
 
     // Pre-trust the plugin.
-    let hash = savvagent_plugin_wasm::trust::tree_hash(&plugin_dir).unwrap();
-    let mut tf = savvagent_plugin_wasm::trust::TrustFile::default();
+    let hash = otto_plugin_wasm::trust::tree_hash(&plugin_dir).unwrap();
+    let mut tf = otto_plugin_wasm::trust::TrustFile::default();
     tf.trust("acme.demo", hash, None);
     tf.save(home).unwrap();
 
-    let theme = savvagent_plugin_wasm::host_imports::theme::provider(vec![]);
+    let theme = otto_plugin_wasm::host_imports::theme::provider(vec![]);
     let registry = register_all_with_external(None, home, theme).await.unwrap();
-    let id = savvagent_plugin::PluginId::new("acme.demo").unwrap();
+    let id = otto_plugin::PluginId::new("acme.demo").unwrap();
     assert!(registry.get(&id).is_some(),
             "trusted plugin must appear in the registry");
 }
@@ -1501,8 +1501,8 @@ savvagent = "^0.18"
 - [ ] **Step 9.6: Commit.**
 
 ```bash
-git add crates/savvagent-plugin-wasm/ crates/savvagent/
-git commit -m "feat(savvagent): wire register_external into register_all"
+git add crates/otto-plugin-wasm/ crates/otto/
+git commit -m "feat(otto): wire register_external into register_all"
 ```
 
 ---
@@ -1510,12 +1510,12 @@ git commit -m "feat(savvagent): wire register_external into register_all"
 ## Task 10: `internal:plugins` built-in + plugin manager screen
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/plugins/mod.rs`
-- Create: `crates/savvagent/src/plugin/builtin/plugins/screen.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs` (register the new built-in)
-- Create: `crates/savvagent/tests/plugins_manager.rs`
+- Create: `crates/otto/src/plugin/builtin/plugins/mod.rs`
+- Create: `crates/otto/src/plugin/builtin/plugins/screen.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs` (register the new built-in)
+- Create: `crates/otto/tests/plugins_manager.rs`
 
-Follow the prior-art pattern in `crates/savvagent/src/plugin/builtin/connect/` — that built-in owns both a slash entrypoint and a screen.
+Follow the prior-art pattern in `crates/otto/src/plugin/builtin/connect/` — that built-in owns both a slash entrypoint and a screen.
 
 - [ ] **Step 10.1: Manager-plugin shell — `plugins/mod.rs`.**
 
@@ -1523,7 +1523,7 @@ Follow the prior-art pattern in `crates/savvagent/src/plugin/builtin/connect/` �
 //! `internal:plugins` built-in. Owns `/plugins` and the manager screen.
 
 use async_trait::async_trait;
-use savvagent_plugin::{Contributions, Effect, HostEvent, Manifest, Plugin,
+use otto_plugin::{Contributions, Effect, HostEvent, Manifest, Plugin,
                        PluginError, PluginId, PluginKind, Screen, ScreenArgs};
 
 mod screen;
@@ -1583,7 +1583,7 @@ impl Plugin for PluginsBuiltin {
 
 - [ ] **Step 10.2: Manager screen — `plugins/screen.rs`.**
 
-Lists discovered plugins in three sections: trusted, untrusted, disabled. Uses the existing `MultiSelectList` widget from `crates/savvagent/src/plugin/widgets/multi_select_list.rs` to display rows. Each row shows id, world, version, source-scope. Key bindings (per existing manager-screen patterns):
+Lists discovered plugins in three sections: trusted, untrusted, disabled. Uses the existing `MultiSelectList` widget from `crates/otto/src/plugin/widgets/multi_select_list.rs` to display rows. Each row shows id, world, version, source-scope. Key bindings (per existing manager-screen patterns):
 
 - `Enter`: details modal for the highlighted plugin
 - `t`: `/plugins trust <id>` — only for untrusted
@@ -1592,11 +1592,11 @@ Lists discovered plugins in three sections: trusted, untrusted, disabled. Uses t
 - `d`: `/plugins disable <id>`
 - `e`: `/plugins enable <id>`
 
-Implementation is ~200 LoC ratatui rendering + key dispatch. Follow `crates/savvagent/src/plugin/builtin/connect/screen.rs` line-for-line for shape.
+Implementation is ~200 LoC ratatui rendering + key dispatch. Follow `crates/otto/src/plugin/builtin/connect/screen.rs` line-for-line for shape.
 
 - [ ] **Step 10.3: Register the built-in.**
 
-In `crates/savvagent/src/plugin/builtin/mod.rs`, find where every other built-in is constructed (look for `Box::new(connect::ConnectBuiltin::new())` or similar). Add:
+In `crates/otto/src/plugin/builtin/mod.rs`, find where every other built-in is constructed (look for `Box::new(connect::ConnectBuiltin::new())` or similar). Add:
 
 ```rust
 pub mod plugins;
@@ -1612,11 +1612,11 @@ Smoke test:
 ```rust
 #[tokio::test]
 async fn slash_plugins_opens_manager() {
-    let mut p = savvagent::plugin::builtin::plugins::PluginsBuiltin;
+    let mut p = otto::plugin::builtin::plugins::PluginsBuiltin;
     let effects = p.handle_slash("plugins", vec![]).await.unwrap();
     assert_eq!(effects.len(), 1);
     assert!(matches!(&effects[0],
-        savvagent_plugin::Effect::OpenScreen { screen_id, .. }
+        otto_plugin::Effect::OpenScreen { screen_id, .. }
             if screen_id == "plugins.manager"));
 }
 ```
@@ -1624,8 +1624,8 @@ async fn slash_plugins_opens_manager() {
 - [ ] **Step 10.5: Commit.**
 
 ```bash
-git add crates/savvagent/
-git commit -m "feat(savvagent): internal:plugins built-in + manager screen"
+git add crates/otto/
+git commit -m "feat(otto): internal:plugins built-in + manager screen"
 ```
 
 ---
@@ -1633,10 +1633,10 @@ git commit -m "feat(savvagent): internal:plugins built-in + manager screen"
 ## Task 11: `/plugins` install / trust / revoke / remove / enable / disable
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/plugins/mod.rs`
-- Create: `crates/savvagent/src/plugin/builtin/plugins/install.rs`
-- Create: `crates/savvagent/src/plugin/builtin/plugins/trust_modal.rs`
-- Create: `crates/savvagent/tests/plugins_install.rs`
+- Modify: `crates/otto/src/plugin/builtin/plugins/mod.rs`
+- Create: `crates/otto/src/plugin/builtin/plugins/install.rs`
+- Create: `crates/otto/src/plugin/builtin/plugins/trust_modal.rs`
+- Create: `crates/otto/tests/plugins_install.rs`
 
 - [ ] **Step 11.1: Install handler — `install.rs`.**
 
@@ -1645,9 +1645,9 @@ git commit -m "feat(savvagent): internal:plugins built-in + manager screen"
 
 use std::path::Path;
 use reqwest::Client;
-use savvagent_plugin::{Effect, PluginError};
-use savvagent_plugin_wasm::manifest::PluginManifest;
-use savvagent_plugin_wasm::trust::{TrustFile, tree_hash};
+use otto_plugin::{Effect, PluginError};
+use otto_plugin_wasm::manifest::PluginManifest;
+use otto_plugin_wasm::trust::{TrustFile, tree_hash};
 
 const MAX_TOML_BYTES: usize = 64 * 1024;
 const MAX_WASM_BYTES: usize = 32 * 1024 * 1024;
@@ -1686,9 +1686,9 @@ pub async fn install(home_dir: &Path, toml_url: &str)
 
     // Build the trust-prompt modal payload; emit OpenScreen → trust_modal.
     Ok(vec![Effect::OpenScreen {
-        plugin_id: savvagent_plugin::PluginId::new("internal:plugins").unwrap(),
+        plugin_id: otto_plugin::PluginId::new("internal:plugins").unwrap(),
         screen_id: "plugins.trust-modal".into(),
-        args: savvagent_plugin::ScreenArgs::with_json(serde_json::json!({
+        args: otto_plugin::ScreenArgs::with_json(serde_json::json!({
             "id": parsed_id,
             "source_url": toml_url,
             "hash": hash,
@@ -1728,7 +1728,7 @@ fn extract_id(toml_text: &str) -> Result<String, PluginError> {
 
 - [ ] **Step 11.2: Trust modal screen — `trust_modal.rs`.**
 
-A screen that renders the manifest summary, hash, and source URL with two buttons (`Enter` confirm / `Esc` cancel). On confirm: move staging dir to `~/.savvagent/plugins/<id>/`, write trust record, emit `Effect::PushNote("plugin <id> installed")`. On cancel: delete staging dir. Mirror `crates/savvagent/src/plugin/builtin/connect/screen.rs` for shape; ~150 LoC.
+A screen that renders the manifest summary, hash, and source URL with two buttons (`Enter` confirm / `Esc` cancel). On confirm: move staging dir to `~/.otto/plugins/<id>/`, write trust record, emit `Effect::PushNote("plugin <id> installed")`. On cancel: delete staging dir. Mirror `crates/otto/src/plugin/builtin/connect/screen.rs` for shape; ~150 LoC.
 
 - [ ] **Step 11.3: Wire subcommands — modify `plugins/mod.rs`.**
 
@@ -1760,8 +1760,8 @@ Use `httpmock` to stand up a fake plugin.toml + plugin.wasm endpoint. Test that:
 - [ ] **Step 11.5: Commit.**
 
 ```bash
-git add crates/savvagent/
-git commit -m "feat(savvagent): /plugins install/trust/revoke/remove/enable/disable"
+git add crates/otto/
+git commit -m "feat(otto): /plugins install/trust/revoke/remove/enable/disable"
 ```
 
 ---
@@ -1796,11 +1796,11 @@ A trivial provider that echoes the input as output:
 Manifest:
 ```toml
 [plugin]
-id = "savvagent.hello-provider"
+id = "otto.hello-provider"
 name = "Hello Provider"
 version = "0.1.0"
 world = "plugin-provider"
-savvagent = "^0.18"
+otto = "^0.18"
 
 [exports]
 provider-id = "hello-echo"
@@ -1814,7 +1814,7 @@ No `[security]` because no `http` calls.
 name: Example plugins build
 
 on:
-  push: { paths: [ "examples/plugin-hello-*/**", "crates/savvagent-plugin-wit/**" ] }
+  push: { paths: [ "examples/plugin-hello-*/**", "crates/otto-plugin-wit/**" ] }
   pull_request: { paths: [ "examples/plugin-hello-*/**" ] }
 
 jobs:
@@ -1874,7 +1874,7 @@ Sections:
 Follow existing CHANGELOG format. Highlights:
 - External plugins via WASM (three worlds)
 - `/plugins install <toml-url>` + manager screen
-- Two new crates: `savvagent-plugin-wit`, `savvagent-plugin-wasm`
+- Two new crates: `otto-plugin-wit`, `otto-plugin-wasm`
 - wasmtime 24.0 pinned
 - Sub-projects A/B/C shipped in v0.17.0 (link to that section)
 
@@ -1905,10 +1905,10 @@ version = "0.18.0"
 And update every local-crate path-dep version literal:
 
 ```toml
-savvagent-plugin = { path = "crates/savvagent-plugin", version = "0.18.0" }
-savvagent-plugin-wit = { path = "crates/savvagent-plugin-wit", version = "0.18.0" }
-savvagent-plugin-wasm = { path = "crates/savvagent-plugin-wasm", version = "0.18.0" }
-savvagent-protocol = { path = "crates/savvagent-protocol", version = "0.18.0" }
+otto-plugin = { path = "crates/otto-plugin", version = "0.18.0" }
+otto-plugin-wit = { path = "crates/otto-plugin-wit", version = "0.18.0" }
+otto-plugin-wasm = { path = "crates/otto-plugin-wasm", version = "0.18.0" }
+otto-protocol = { path = "crates/otto-protocol", version = "0.18.0" }
 # ... and so on for every local crate
 ```
 

@@ -3,12 +3,17 @@
 //! Exposes a single SPP `complete` tool over an `rmcp` Streamable HTTP server.
 //! For streaming requests, [`StreamEvent`]s are forwarded as MCP
 //! `notifications/progress` whose `message` field carries the SPP event JSON
-//! keyed by [`STREAM_EVENT_KIND`](savvagent_protocol::STREAM_EVENT_KIND).
+//! keyed by [`STREAM_EVENT_KIND`](otto_protocol::STREAM_EVENT_KIND).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
+use otto_mcp::{EmitError, ProviderHandler, StreamEmitter};
+use otto_protocol::{
+    self as spp, COMPLETE_TOOL_NAME, CompleteRequest, LIST_MODELS_TOOL_NAME, STREAM_EVENT_KIND,
+    StreamEvent,
+};
 use rmcp::{
     ErrorData, Peer, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -17,11 +22,6 @@ use rmcp::{
         ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     tool, tool_handler, tool_router,
-};
-use savvagent_mcp::{EmitError, ProviderHandler, StreamEmitter};
-use savvagent_protocol::{
-    self as spp, COMPLETE_TOOL_NAME, CompleteRequest, LIST_MODELS_TOOL_NAME, STREAM_EVENT_KIND,
-    StreamEvent,
 };
 
 use crate::AnthropicProvider;
@@ -63,7 +63,7 @@ impl AnthropicMcpServer {
 
 #[tool_router]
 impl AnthropicMcpServer {
-    /// SPP `complete` tool. See `crates/savvagent-protocol/SPEC.md`.
+    /// SPP `complete` tool. See `crates/otto-protocol/SPEC.md`.
     #[tool(
         name = "complete",
         description = "Run a completion against Anthropic Messages API."
@@ -165,7 +165,7 @@ impl ServerHandler for AnthropicMcpServer {
             .with_server_info(
                 Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
                     .with_description(format!(
-                        "Savvagent Anthropic provider — SPP {} via the `{}` tool",
+                        "Otto Anthropic provider — SPP {} via the `{}` tool",
                         spp::SPP_VERSION,
                         COMPLETE_TOOL_NAME
                     )),
@@ -229,7 +229,7 @@ mod mcp_tests {
     use super::*;
     use crate::AnthropicProvider;
     use axum::{Json, Router, routing::get};
-    use savvagent_protocol::ListModelsResponse;
+    use otto_protocol::ListModelsResponse;
     use serde_json::json;
 
     async fn spawn_mock(app: Router) -> String {

@@ -22,6 +22,7 @@ use axum::{
     routing::post,
 };
 use futures::stream;
+use otto_protocol::{CompleteRequest, CompleteResponse, STREAM_EVENT_KIND, StreamEvent};
 use provider_openai::{OpenAiMcpServer, provider_for_tests};
 use rmcp::{
     ClientHandler, ServiceExt,
@@ -38,7 +39,6 @@ use rmcp::{
         },
     },
 };
-use savvagent_protocol::{CompleteRequest, CompleteResponse, STREAM_EVENT_KIND, StreamEvent};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -194,7 +194,7 @@ async fn non_streaming_complete_round_trips() {
     assert_eq!(resp.model, "gpt-4o-mini");
     assert!(matches!(
         resp.content.first(),
-        Some(savvagent_protocol::ContentBlock::Text { text }) if text == "hi back"
+        Some(otto_protocol::ContentBlock::Text { text }) if text == "hi back"
     ));
     assert_eq!(resp.usage.input_tokens, 5);
     assert_eq!(resp.usage.output_tokens, 2);
@@ -241,9 +241,9 @@ async fn non_streaming_tool_call_round_trips() {
         .expect("call_tool");
 
     let resp: CompleteResponse = result.into_typed().expect("structured response");
-    assert_eq!(resp.stop_reason, savvagent_protocol::StopReason::ToolUse);
+    assert_eq!(resp.stop_reason, otto_protocol::StopReason::ToolUse);
     match resp.content.first() {
-        Some(savvagent_protocol::ContentBlock::ToolUse { id, name, input }) => {
+        Some(otto_protocol::ContentBlock::ToolUse { id, name, input }) => {
             assert_eq!(id, "call_xyz");
             assert_eq!(name, "ls");
             assert_eq!(input["path"], "/tmp");
@@ -291,7 +291,7 @@ async fn streaming_complete_emits_progress_and_final_response() {
     assert_eq!(resp.usage.output_tokens, 2);
     assert!(matches!(
         resp.content.first(),
-        Some(savvagent_protocol::ContentBlock::Text { text }) if text == "hello world"
+        Some(otto_protocol::ContentBlock::Text { text }) if text == "hello world"
     ));
 
     // Drain progress notifications. Worst-case bound — the channel closes
@@ -351,7 +351,7 @@ async fn streaming_complete_emits_progress_and_final_response() {
         .iter()
         .filter_map(|e| match e {
             StreamEvent::ContentBlockDelta {
-                delta: savvagent_protocol::BlockDelta::TextDelta { text },
+                delta: otto_protocol::BlockDelta::TextDelta { text },
                 ..
             } => Some(text.clone()),
             _ => None,

@@ -240,7 +240,7 @@ pub(crate) fn atomic_write(target: &Path, contents: &[u8]) -> Result<(), FsToolE
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     let tmp = parent.join(format!(
-        ".savvagent-tmp.{pid}.{nonce}.{}",
+        ".otto-tmp.{pid}.{nonce}.{}",
         target
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -419,11 +419,7 @@ mod atomic_tests {
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(".savvagent-tmp.")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".otto-tmp."))
             .collect();
         assert!(leftovers.is_empty(), "leftover: {leftovers:?}");
     }
@@ -442,11 +438,7 @@ mod atomic_tests {
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(".savvagent-tmp.")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".otto-tmp."))
             .collect();
         assert!(leftovers.is_empty(), "leftover: {leftovers:?}");
     }

@@ -1,4 +1,4 @@
-//! `plugin-hello-static` — the simplest possible savvagent external plugin.
+//! `plugin-hello-static` — the simplest possible otto external plugin.
 //!
 //! It exports the `plugin-static` world and registers a single slash command,
 //! `/hello`, which surfaces a "Hello from WASM!" toast in the TUI.
@@ -12,9 +12,9 @@
 //! ## Install
 //!
 //! Copy the produced `.wasm` plus this directory's `plugin.toml` into one of
-//! savvagent's plugin discovery paths, e.g.
-//! `~/.savvagent/plugins/hello-static/`, then run `/plugins install` (or
-//! reload). On first activation savvagent will prompt you to trust the
+//! otto's plugin discovery paths, e.g.
+//! `~/.otto/plugins/hello-static/`, then run `/plugins install` (or
+//! reload). On first activation otto will prompt you to trust the
 //! plugin's tree hash.
 //!
 //! ## What this example demonstrates
@@ -32,7 +32,7 @@
 mod bindings;
 
 use bindings::Guest;
-use bindings::savvagent::plugin::types as t;
+use bindings::otto::plugin::types as t;
 
 struct Component;
 
@@ -42,7 +42,7 @@ impl Guest for Component {
     /// allow-list and surfaces the plugin in `/plugins`.
     fn manifest() -> Result<t::PluginManifest, t::PluginError> {
         Ok(t::PluginManifest {
-            id: "savvagent.hello-static".to_string(),
+            id: "otto.hello-static".to_string(),
             name: "Hello (Static)".to_string(),
             version: "0.1.0".to_string(),
             description: "Minimal static-world example. Defines /hello.".to_string(),

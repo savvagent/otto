@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Google Gemini API as a Savvagent SPP provider"
+description = "Google Gemini API as a Otto SPP provider"
 
-# Library only. The `savvagent-gemini` binary lives in the `savvagent` crate
+# Library only. The `otto-gemini` binary lives in the `otto` crate
 # (a thin shim around `provider_gemini::run`) so the release archive can ship
 # all four binaries under a single installer.
 [lib]
@@ -15,9 +15,9 @@ name = "provider_gemini"
 path = "src/lib.rs"
 
 [dependencies]
-savvagent-protocol.workspace = true
-savvagent-mcp.workspace = true
-savvagent-fence.workspace = true
+otto-protocol.workspace = true
+otto-mcp.workspace = true
+otto-fence.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true

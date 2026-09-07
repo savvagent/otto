@@ -1,4 +1,4 @@
-//! Anthropic Messages API as a Savvagent SPP [`ProviderHandler`].
+//! Anthropic Messages API as a Otto SPP [`ProviderHandler`].
 //!
 //! Crate layout:
 //!
@@ -6,7 +6,7 @@
 //!   `/v1/messages` request/response shapes.
 //! - [`translate`] — pure functions converting between SPP and
 //!   [`api`] types.
-//! - [`stream`] — Anthropic SSE → SPP [`StreamEvent`](savvagent_protocol::StreamEvent)
+//! - [`stream`] — Anthropic SSE → SPP [`StreamEvent`](otto_protocol::StreamEvent)
 //!   adapter.
 //! - [`AnthropicProvider`] — [`ProviderHandler`] impl that wires the pieces
 //!   together over an HTTP client.
@@ -30,12 +30,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use otto_mcp::{ProviderHandler, StreamEmitter};
+use otto_protocol::{
+    CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ProviderError, StreamEvent,
+};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
-};
-use savvagent_mcp::{ProviderHandler, StreamEmitter};
-use savvagent_protocol::{
-    CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ProviderError, StreamEvent,
 };
 
 /// Default Anthropic API base URL. Override via [`AnthropicProviderBuilder::base_url`]
@@ -260,14 +260,14 @@ pub fn router(provider: Arc<AnthropicProvider>) -> axum::Router {
     axum::Router::new().nest_service(DEFAULT_MCP_PATH, service)
 }
 
-/// Default bind address for the standalone `savvagent-anthropic` binary.
+/// Default bind address for the standalone `otto-anthropic` binary.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8787";
 
 /// Run the standalone Anthropic MCP HTTP server. Reads `ANTHROPIC_API_KEY`,
-/// `SAVVAGENT_ANTHROPIC_LISTEN`, and `ANTHROPIC_BASE_URL` from the environment
+/// `OTTO_ANTHROPIC_LISTEN`, and `ANTHROPIC_BASE_URL` from the environment
 /// (a `.env` file walking up from the CWD is honored). Shared between this
-/// crate's `savvagent-anthropic` binary and the bundled shim in the
-/// `savvagent` crate.
+/// crate's `otto-anthropic` binary and the bundled shim in the
+/// `otto` crate.
 pub async fn run() -> std::process::ExitCode {
     use std::env;
     use std::process::ExitCode;
@@ -282,8 +282,7 @@ pub async fn run() -> std::process::ExitCode {
         .with_target(false)
         .init();
 
-    let listen =
-        env::var("SAVVAGENT_ANTHROPIC_LISTEN").unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
+    let listen = env::var("OTTO_ANTHROPIC_LISTEN").unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
     let base_url = env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
 
     let provider = match AnthropicProvider::builder().base_url(base_url).build() {
@@ -305,7 +304,7 @@ pub async fn run() -> std::process::ExitCode {
     };
     let local = listener.local_addr().expect("local_addr");
     tracing::info!(
-        "savvagent-anthropic {} listening on http://{local}{DEFAULT_MCP_PATH}",
+        "otto-anthropic {} listening on http://{local}{DEFAULT_MCP_PATH}",
         env!("CARGO_PKG_VERSION")
     );
 

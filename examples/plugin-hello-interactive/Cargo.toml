@@ -24,10 +24,10 @@ wit-bindgen = "0.41"
 wit-bindgen-rt = { version = "0.44", features = ["bitflags"] }
 
 [package.metadata.component]
-package = "savvagent:plugin"
+package = "otto:plugin"
 
 [package.metadata.component.target]
-path = "../../crates/savvagent-plugin-wit/wit"
+path = "../../crates/otto-plugin-wit/wit"
 world = "plugin-interactive"
 
 [profile.release]

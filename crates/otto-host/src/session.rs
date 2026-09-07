@@ -1,0 +1,4292 @@
+//! Conversation state and the tool-use loop.
+
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
+use otto_mcp::ProviderClient;
+use otto_plugin::SystemPromptSegment;
+use otto_protocol::{
+    BlockDelta, CompleteRequest, ContentBlock, Message, ProviderError, ProviderId, Role,
+    StopReason, StreamEvent, ToolDef,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use thiserror::Error;
+use tokio::sync::{Mutex, broadcast, mpsc, oneshot};
+
+use crate::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
+use crate::config::{HostConfig, ProviderEndpoint, ProviderRegistration, StartupConnectPolicy};
+use crate::permissions::{
+    BashNetworkChoice, BashNetworkPolicy, PermissionDecision, PermissionPolicy, Verdict,
+};
+use crate::pool::{DisconnectMode, PoolEntry, PoolError, ProviderLease};
+use crate::project;
+use crate::provider::RmcpProviderClient;
+use crate::router::modality;
+use crate::sandbox::SandboxConfig;
+use crate::tools::{
+    BashNetContext, BashNetResolver, BashNetResolverHandle, NetOverride, ToolRegistry,
+    ToolServerStatus,
+};
+
+/// Current transcript file schema version.
+///
+/// Increment when the on-disk shape changes incompatibly. The loader rejects
+/// files whose `schema_version` is unknown with
+/// [`TranscriptError::SchemaMismatch`], which lets callers surface a clear
+/// error rather than silently misinterpreting old data.
+///
+/// **v2 (current):** adds the `subagent_transcripts` sidecar map keyed by the
+/// parent `task` tool-call id. Populated by the user-agents plugin's task
+/// tool handler when a subagent run completes; absent (empty map, elided
+/// from JSON) when no subagent ran.
+///
+/// **v1:** the original wrapper format — `schema_version`, `model`,
+/// `saved_at`, `messages`. Still accepted by the loader (a warn-log is
+/// emitted noting that subagent transcripts will be absent).
+///
+/// **Pre-resume files** (written before this version field was introduced)
+/// lack the `schema_version` field entirely. They are accepted as v1
+/// transcripts — the only field they carry is the raw `Vec<Message>` array,
+/// which is identical in shape to `TranscriptFile::messages` in v1/v2.
+pub const TRANSCRIPT_SCHEMA_VERSION: u32 = 2;
+
+/// On-disk transcript format.
+///
+/// The file is pretty-printed JSON. Older files written by
+/// `Host::save_transcript` before session-resume was added lack the wrapper
+/// object; they are a bare `[...]` array of [`Message`]s. The loader handles
+/// both shapes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranscriptFile {
+    /// Schema version; used to detect incompatible on-disk formats.
+    pub schema_version: u32,
+    /// Recorded model identifier. May differ from the active connection.
+    pub model: String,
+    /// Unix timestamp (seconds) of when the transcript was saved.
+    pub saved_at: u64,
+    /// Conversation messages in chronological order.
+    pub messages: Vec<Message>,
+    /// Map from parent `task` tool-call id → subagent transcript.
+    /// Empty in transcripts where no subagent ran. Added in schema v2.
+    ///
+    /// `#[serde(default)]` lets v1 transcripts deserialize cleanly with an
+    /// empty map; `skip_serializing_if` keeps the output clean when no
+    /// subagent ran.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub subagent_transcripts: HashMap<String, SubagentTranscript>,
+}
+
+/// A subagent's full message history, embedded in [`TranscriptFile`]
+/// under its parent `task` tool call's id. Populated by the user-agents
+/// plugin's task tool handler when a subagent run completes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentTranscript {
+    /// Agent name (slug) that ran.
+    pub agent_name: String,
+    /// Per-agent model override that was active for this run, or
+    /// `None` if the parent's active model was used.
+    pub model: Option<String>,
+    /// Subagent message history in chronological order.
+    pub messages: Vec<Message>,
+}
+
+/// Errors produced by transcript load / save operations.
+#[derive(Debug, Error)]
+pub enum TranscriptError {
+    /// The file could not be read.
+    #[error("io error reading transcript: {0}")]
+    Io(#[from] std::io::Error),
+    /// JSON was malformed or didn't match the expected shape.
+    #[error("malformed transcript JSON: {0}")]
+    Malformed(String),
+    /// The on-disk schema version differs from the version this binary expects.
+    #[error("transcript schema v{found}, expected v{expected}")]
+    SchemaMismatch {
+        /// Version found in the file.
+        found: u32,
+        /// Version this build expects.
+        expected: u32,
+    },
+}
+
+/// Reason a turn was cancelled before reaching `end_turn`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CancellationReason {
+    /// The provider supplying this turn was force-disconnected mid-flight.
+    ProviderDisconnected(ProviderId),
+}
+
+impl std::fmt::Display for CancellationReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CancellationReason::ProviderDisconnected(id) => {
+                write!(f, "provider {} disconnected", id.as_str())
+            }
+        }
+    }
+}
+
+/// Top-level error surfaced from [`Host`] operations.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum HostError {
+    /// Connecting to a provider or tool MCP server failed at startup.
+    #[error("{0}")]
+    Startup(#[from] anyhow::Error),
+    /// The provider returned an SPP-level error.
+    #[error("provider error: {kind:?}: {message}", kind = .0.kind, message = .0.message)]
+    Provider(ProviderError),
+    /// Loop ran past [`HostConfig::max_iterations`] without reaching `end_turn`.
+    #[error("tool-use loop exceeded {0} iterations")]
+    LoopLimit(u32),
+    /// The pool has no active provider selected (e.g. pool is empty or the
+    /// active provider was drained while a turn was starting).
+    #[error("no active provider in pool")]
+    NoActiveProvider,
+    /// The turn was cancelled cooperatively (stage 1 cancel signal received).
+    #[error("turn cancelled: {0}")]
+    Cancelled(CancellationReason),
+    /// Generic internal error not covered by the above variants.
+    #[error("internal error: {0}")]
+    Other(String),
+    /// Tool routing produced a malformed `tool_use` block. No longer
+    /// constructed — kept in the public API so external `match` arms still
+    /// compile. Slated for removal in the next minor (0.15.0) version.
+    #[deprecated(
+        since = "0.14.2",
+        note = "tool_use blocks are now authoritative; this variant is never produced and will be removed in 0.15.0"
+    )]
+    #[error("malformed assistant response: {0}")]
+    MalformedResponse(String),
+}
+
+/// Status of one tool call inside a [`TurnOutcome`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolCallStatus {
+    /// The tool returned successfully.
+    Ok,
+    /// The tool returned `is_error: true` or a transport-level error.
+    Errored,
+}
+
+/// Trace of one tool call performed during a turn.
+#[derive(Debug, Clone)]
+pub struct ToolCall {
+    /// Tool name as chosen by the model.
+    pub name: String,
+    /// Arguments the model produced.
+    pub arguments: Value,
+    /// Outcome status.
+    pub status: ToolCallStatus,
+    /// String payload returned to the model in `tool_result`.
+    pub result: String,
+}
+
+/// What [`Host::run_turn`] returns when the loop reaches `end_turn`.
+#[derive(Debug, Clone)]
+pub struct TurnOutcome {
+    /// Concatenated assistant text from the final response.
+    pub text: String,
+    /// Tool calls executed during this turn, in order.
+    pub tool_calls: Vec<ToolCall>,
+    /// Number of provider round-trips this turn took (including the final one).
+    pub iterations: u32,
+}
+
+/// Streaming event the host emits while running a turn. The TUI consumes
+/// these to render incremental output.
+#[derive(Debug, Clone)]
+pub enum TurnEvent {
+    /// The router picked a `(provider, model)` for this turn. Emitted
+    /// once, before any `IterationStarted`, so the TUI can render a
+    /// per-turn routing badge above the assistant's response.
+    RouteSelected {
+        /// The chosen provider for this turn.
+        provider_id: otto_protocol::ProviderId,
+        /// The chosen model for this turn.
+        model_id: String,
+        /// Why the router picked it (rendered as "Override" / "Default" today).
+        reason: crate::router::RoutingReason,
+    },
+    /// The router could not redirect to a vision-capable model for an
+    /// image-bearing turn (no connected provider has vision, OR an
+    /// `@`-override pinned a vision-incapable model). Emitted at most
+    /// once per turn, right after [`TurnEvent::RouteSelected`].
+    ModalityWarning {
+        /// User-facing message describing why the routing decision may
+        /// not satisfy the input.
+        message: String,
+    },
+    /// One iteration of the loop began. `iteration` is 1-based.
+    IterationStarted {
+        /// 1-based iteration index.
+        iteration: u32,
+    },
+    /// A token-delta arrived for the assistant's in-progress response.
+    TextDelta {
+        /// Text fragment to append to the live buffer.
+        text: String,
+    },
+    /// The model decided to invoke a tool. Emitted *before* the tool runs.
+    ToolCallStarted {
+        /// Tool name as chosen by the model.
+        name: String,
+        /// Arguments the model produced.
+        arguments: Value,
+    },
+    /// A tool call finished and its result was appended to history.
+    ToolCallFinished {
+        /// Tool name (echoed for matching with the `Started` event).
+        name: String,
+        /// Outcome status.
+        status: ToolCallStatus,
+        /// String payload that was returned to the model.
+        result: String,
+    },
+    /// Policy returned [`Verdict::Ask`] for a tool call. The turn is paused
+    /// until the embedder calls [`Host::resolve_permission`] with the matching
+    /// `id`. Emitted before any `ToolCallStarted` for this call.
+    PermissionRequested {
+        /// Opaque request id; pass back to [`Host::resolve_permission`].
+        id: u64,
+        /// Tool the model wants to invoke.
+        name: String,
+        /// Short, human-readable summary for the modal.
+        summary: String,
+        /// Full argument JSON, in case the UI wants to render it expanded.
+        args: Value,
+    },
+    /// Tool-bash is about to be spawned and the configured
+    /// [`BashNetworkPolicy`] is `Ask` with no cached decision for this
+    /// session. The host pauses the spawn until the embedder calls
+    /// [`Host::resolve_bash_network_decision`] with `id`.
+    BashNetworkRequested {
+        /// Opaque request id; pass back to
+        /// [`Host::resolve_bash_network_decision`].
+        id: u64,
+        /// Human-readable summary of the bash invocation, suitable for
+        /// display in a modal (e.g., the first ~80 chars of the command).
+        summary: String,
+    },
+    /// A tool call was refused (by policy or by the user). No `ToolCallStarted`
+    /// or `ToolCallFinished` is emitted for this call — only this event plus a
+    /// synthetic error `tool_result` appended to the conversation.
+    ToolCallDenied {
+        /// Tool name.
+        name: String,
+        /// Reason that's also embedded in the synthetic `tool_result`.
+        reason: String,
+    },
+    /// A tool server published `notifications/resources/updated`. The TUI
+    /// can render a one-line banner. The host has already injected (or
+    /// will inject at the next iteration boundary) a synthetic
+    /// `[resource updated: <uri>]` user-text block so the model sees the
+    /// update without any TUI involvement.
+    ResourceUpdated {
+        /// Resource URI as published by the tool (e.g. `lsp://diagnostics/src/foo.rs`).
+        uri: String,
+        /// Label of the tool server that published it (matches `ToolServer.label`).
+        owner: String,
+        /// Producer-supplied one-line summary; keep under ~80 chars for TUI banners.
+        /// Defaults to the URI when the producer didn't include one.
+        summary: String,
+    },
+    /// A streaming HTML content block started. Emitted when the provider
+    /// emits `ContentBlockStart { block: ContentBlock::Html }`. The TUI
+    /// pushes an `Entry::Canvas` with an empty `source_preview`.
+    HtmlBlockStart {
+        /// Zero-based block index within the streamed message. Subsequent
+        /// `HtmlBlockDelta` and `HtmlBlockStop` events carry the same index.
+        index: u32,
+    },
+    /// A fragment of HTML source arrived during streaming. Emitted for each
+    /// `ContentBlockDelta { delta: BlockDelta::HtmlSourceDelta }` for an
+    /// HTML block. The TUI appends `source` to the matching entry's
+    /// `source_preview` buffer.
+    HtmlBlockDelta {
+        /// Block index, matching the corresponding [`TurnEvent::HtmlBlockStart`].
+        index: u32,
+        /// HTML source fragment to append.
+        source: String,
+    },
+    /// The streaming HTML block is complete. Emitted on
+    /// `ContentBlockStop` for an HTML block. The TUI swaps
+    /// `source_preview` into `source` and creates a renderer.
+    HtmlBlockStop {
+        /// Block index, matching the corresponding [`TurnEvent::HtmlBlockStart`].
+        index: u32,
+    },
+
+    /// The whole turn finished.
+    TurnComplete {
+        /// Final outcome — same value `run_turn_streaming` returns.
+        outcome: TurnOutcome,
+    },
+    /// Fired by a [`SubHost`] when its subagent loop reaches a clean
+    /// `end_turn`. Not fired for cancelled subagent turns. The TUI's
+    /// `TurnEvent → HostEvent` translator forwards this as
+    /// `HostEvent::SubagentStop` so the user-hooks plugin can fire a
+    /// `SubagentStop` shell hook.
+    SubagentStop {
+        /// Name (slug) of the agent whose turn just ended.
+        agent_name: String,
+        /// Whether the turn ended cleanly (always `true` in v1 — kept
+        /// for forward-compat with future failure-pathway variants).
+        success: bool,
+    },
+    /// A cooperative cancel signal was received and acted upon. The turn
+    /// did not complete normally; the in-flight `complete` future was
+    /// dropped. Emitted before returning [`HostError::Cancelled`].
+    Cancelled {
+        /// Why the turn was cancelled.
+        reason: CancellationReason,
+    },
+    /// The grace period expired and the task was hard-aborted.
+    /// Emitted by [`Host::remove_provider`] after calling
+    /// `AbortHandle::abort()` on all in-flight turn tasks for the
+    /// disconnected provider.
+    AbortedAfterGrace {
+        /// Why the abort was triggered.
+        reason: CancellationReason,
+    },
+}
+
+/// The agent host. Connects once, then handles turns. `Host` is `Send + Sync`
+/// behind shared state so the TUI can hand it to background tasks.
+pub struct Host {
+    config: HostConfig,
+    /// Provider pool: keyed by [`ProviderId`], holds a [`PoolEntry`] per
+    /// registered provider. Guarded by a `tokio::sync::RwLock`; guards
+    /// **must never be held across an `.await` on the provider client**.
+    pool: tokio::sync::RwLock<HashMap<otto_protocol::ProviderId, PoolEntry>>,
+    /// The currently-active provider id. Turns are routed to this entry.
+    active_provider: tokio::sync::RwLock<otto_protocol::ProviderId>,
+    /// The model id forwarded in every `CompleteRequest`. Initialized from
+    /// `config.model`; updated via [`Host::set_model`] when the user runs
+    /// `/model <id>`. A separate lock (not a mutable `config`) so that
+    /// concurrent readers of `config` remain unaffected.
+    current_model: tokio::sync::RwLock<String>,
+    tools: Mutex<Option<Arc<ToolRegistry>>>,
+    state: Mutex<SessionState>,
+    system_prompt: Option<String>,
+    /// Layered permission policy: sensitive-path floor + OTTO.md
+    /// front-matter rules + persisted Always/Never rules from
+    /// `~/.otto/permissions.toml` + built-in defaults. See the
+    /// `permissions` module docs.
+    policy: PermissionPolicy,
+    /// Active Layer-3 sandbox configuration. Resolved from
+    /// `HostConfig::sandbox` at startup (or loaded from disk when unset).
+    sandbox: SandboxConfig,
+    /// Outstanding permission requests. Inserted when the loop emits
+    /// `PermissionRequested`; the matching `oneshot` is consumed by
+    /// [`Host::resolve_permission`].
+    pending: Mutex<HashMap<u64, oneshot::Sender<PermissionDecision>>>,
+    /// Outstanding `BashNetworkRequested` prompts, keyed by event id. The
+    /// matching `oneshot` is consumed by
+    /// [`Host::resolve_bash_network_decision`]. `Arc`-shared so the
+    /// lazy bash-net resolver closure can hold a reference too.
+    pending_bash_network: Arc<Mutex<HashMap<u64, oneshot::Sender<BashNetworkChoice>>>>,
+    /// Current turn's event channel, exposed so the lazy `tool-bash`
+    /// spawn resolver (which is invoked from inside `run_turn_inner` via
+    /// `ToolRegistry::call_with_bash_net_override`) can emit
+    /// [`TurnEvent::BashNetworkRequested`] without having to take the
+    /// channel through every call layer. Set at the start of each
+    /// streaming turn and cleared at the end; the non-streaming code
+    /// path leaves it `None`. Held behind `Arc<std::sync::Mutex<_>>`
+    /// so the resolver closure can clone its handle.
+    current_turn_events: Arc<std::sync::Mutex<Option<mpsc::Sender<TurnEvent>>>>,
+    /// Monotonic source for permission-request ids. `Arc`-shared so the
+    /// resolver closure can mint ids.
+    next_request_id: Arc<AtomicU64>,
+    /// Per-provider broadcast channel for cooperative cancel signals.
+    /// Created lazily on first turn start for a given provider. Sending
+    /// on this channel races the in-flight `complete` future in
+    /// `run_turn_inner` and causes it to return
+    /// [`HostError::Cancelled`] early.
+    cancel_signal: tokio::sync::Mutex<HashMap<ProviderId, broadcast::Sender<CancellationReason>>>,
+    /// Per-provider abort handles for currently in-flight turns. Each
+    /// handle refers to the `tokio::task` spawned inside
+    /// `run_turn_inner` for one provider-round-trip. Used by
+    /// [`Host::remove_provider`] in the hard-abort stage.
+    turn_handles: tokio::sync::Mutex<HashMap<ProviderId, Vec<tokio::task::AbortHandle>>>,
+    /// User-edited routing rules (`~/.otto/routing.toml`). Loaded
+    /// once at `Host::start` and swapped atomically by
+    /// `reload_routing_rules`. Snapshotted (cloned) before any `.await`
+    /// in `run_turn_inner`, same discipline as `active_provider` etc.
+    /// No outer `Arc` — `&self` access through the `tokio::RwLock` is
+    /// sufficient; the host itself is already shared via `Arc<Host>`.
+    routing_rules: tokio::sync::RwLock<crate::router::RoutingRules>,
+    /// One-shot startup notes (e.g. routing.toml parse failures) that the
+    /// TUI should drain and surface as styled notes once `App` exists.
+    /// Plain `std::sync::Mutex` because access is one-shot at startup —
+    /// no async required and no contention with the turn loop.
+    startup_notes: std::sync::Mutex<Vec<String>>,
+    /// Resource cache populated by the resource_pump task. Read at each
+    /// tool-use-loop iteration boundary to inject `[resource updated: …]`
+    /// user-text blocks into the conversation.
+    resources: Arc<tokio::sync::Mutex<crate::resources::ResourceCache>>,
+    /// Active plugin-contributed system-prompt segments. Replaced atomically
+    /// by [`Self::set_prompt_segments`] whenever the enabled-plugin set
+    /// changes. Read once per turn (before composing the `CompleteRequest`
+    /// `system` field) under a brief read lock — no guard is held across an
+    /// await. `std::sync::RwLock` (not tokio) because the read path inside
+    /// `run_turn_inner` is synchronous (snapshot then drop).
+    prompt_segments: std::sync::RwLock<Vec<SystemPromptSegment>>,
+    /// Suppression list for the next turn. Set by the slash dispatcher
+    /// before calling `run_turn_streaming` when the dispatched slash carries
+    /// a non-empty `suppress_prompt_segments`. Cleared automatically at the
+    /// end of each turn so stale lists never bleed into subsequent turns.
+    /// Plain `std::sync::Mutex` — set and cleared from non-async callers.
+    pending_slash_suppression: std::sync::Mutex<Vec<String>>,
+    /// Optional `PreToolUseGate` consulted before every tool dispatch.
+    /// `None` means "no gate; allow all". The user-hooks plugin
+    /// installs itself via [`Host::set_pre_tool_gate`].
+    pre_tool_gate:
+        tokio::sync::RwLock<Option<std::sync::Arc<dyn crate::pre_tool_gate::PreToolUseGate>>>,
+    /// Stable identifier for this `Host` instance. Surfaced to in-process
+    /// tools via [`crate::ToolCallContext`] so subagent hooks can correlate
+    /// across nesting levels. Defaults to a fresh UUID v4 at construction
+    /// time; embedders that want to thread an external session id through
+    /// can set it via [`HostConfig::session_id`].
+    session_id: String,
+    /// `Weak<Self>` populated post-construction by [`Host::wire_self_weak`].
+    /// `run_turn_inner` upgrades it when dispatching an in-process tool so
+    /// the handler's [`crate::ToolCallContext::host`] receives a real
+    /// `Arc<Host>` reference back to this host. Tests that never register
+    /// in-process tools can skip the wiring without harm.
+    self_weak: std::sync::OnceLock<std::sync::Weak<Self>>,
+}
+
+struct SessionState {
+    messages: Vec<Message>,
+}
+
+impl Host {
+    /// Connect to the configured provider and tool servers, perform any MCP
+    /// handshakes, and load the project context file.
+    pub async fn start(config: HostConfig) -> Result<Self, HostError> {
+        // Build the pool. When `config.providers` is non-empty, populate it
+        // according to `config.startup_connect`. Otherwise fall back to the
+        // legacy single-provider path using the rmcp HTTP transport.
+        let (pool_map, active_id) = if !config.providers.is_empty() {
+            let mut map: HashMap<otto_protocol::ProviderId, PoolEntry> = HashMap::new();
+            let should_connect: Box<dyn Fn(&otto_protocol::ProviderId) -> bool> =
+                match &config.startup_connect {
+                    StartupConnectPolicy::All => Box::new(|_| true),
+                    StartupConnectPolicy::None => Box::new(|_| false),
+                    StartupConnectPolicy::OptIn(allow) | StartupConnectPolicy::LastUsed(allow) => {
+                        let set: std::collections::HashSet<_> = allow.iter().cloned().collect();
+                        Box::new(move |id| set.contains(id))
+                    }
+                };
+            for reg in &config.providers {
+                if should_connect(&reg.id) {
+                    map.insert(
+                        reg.id.clone(),
+                        PoolEntry::new(
+                            Arc::clone(&reg.client),
+                            reg.capabilities.clone(),
+                            reg.aliases.clone(),
+                            reg.display_name.clone(),
+                        ),
+                    );
+                }
+            }
+            // Refuse to start with an empty pool when registrations were
+            // supplied. The previous fallback set `active_provider` to a
+            // registration that the policy had just filtered out, leaving
+            // the host in a state where every turn hits
+            // `HostError::NoActiveProvider` because `pool.get(active)` is
+            // None. The caller (TUI startup) interprets this Err as "no
+            // host yet"; the first `/connect` builds a fresh single-entry
+            // pool via the `is_first_connect = true` branch.
+            if map.is_empty() {
+                let registered: Vec<&str> =
+                    config.providers.iter().map(|r| r.id.as_str()).collect();
+                let policy_descr = match &config.startup_connect {
+                    StartupConnectPolicy::All => "All".to_string(),
+                    StartupConnectPolicy::None => "None".to_string(),
+                    StartupConnectPolicy::OptIn(ids) => format!(
+                        "OptIn({:?})",
+                        ids.iter().map(|i| i.as_str()).collect::<Vec<_>>()
+                    ),
+                    StartupConnectPolicy::LastUsed(ids) => format!(
+                        "LastUsed({:?})",
+                        ids.iter().map(|i| i.as_str()).collect::<Vec<_>>()
+                    ),
+                };
+                return Err(HostError::Startup(anyhow::anyhow!(
+                    "no provider passed the startup_connect filter \
+                     (policy={policy_descr}, registered={registered:?}); \
+                     adjust startup_providers or run /connect interactively"
+                )));
+            }
+            // Active provider = first registered entry that passed the
+            // filter. `map.is_empty()` was rejected above, so this find()
+            // is guaranteed to match.
+            let active = config
+                .providers
+                .iter()
+                .find(|r| map.contains_key(&r.id))
+                .map(|r| r.id.clone())
+                .expect("non-empty map guaranteed by check above");
+            (map, active)
+        } else {
+            // Legacy fallback: rmcp HTTP transport, single "default" entry.
+            let provider_arc: Arc<dyn ProviderClient + Send + Sync> = match &config.provider {
+                ProviderEndpoint::StreamableHttp { url } => {
+                    Arc::new(RmcpProviderClient::connect(url).await?)
+                }
+            };
+            let id = otto_protocol::ProviderId::new("default").expect("\"default\" is a valid id");
+            let caps = ProviderCapabilities::new(
+                vec![ModelCapabilities {
+                    id: config.model.clone(),
+                    display_name: config.model.clone(),
+                    supports_vision: false,
+                    supports_audio: false,
+                    context_window: 0,
+                    cost_tier: CostTier::Standard,
+                }],
+                config.model.clone(),
+            )
+            .expect("single-model caps with matching default are always valid");
+            let entry = PoolEntry::new(provider_arc, caps, Vec::new(), "Default".into());
+            let mut map = HashMap::new();
+            map.insert(id.clone(), entry);
+            (map, id)
+        };
+
+        let sandbox = config.sandbox.clone().unwrap_or_else(SandboxConfig::load);
+        // The real resolver — which calls back into the host's
+        // permission state — captures `&self` and so can
+        // only be installed once we own the `Host`. The bootstrap resolver
+        // here is a safe default that returns the per-call override (if
+        // any) or falls back to `false`. `wire_self_into_resolver` swaps
+        // in the real one below.
+        let resolver = bootstrap_bash_net_resolver();
+        // Resource channel: bounded at 64. If a tool publishes faster than
+        // the pump drains, oldest-first warnings fire; we never block the
+        // subprocess.
+        let (resource_tx, resource_rx) =
+            tokio::sync::mpsc::channel::<crate::tools::ResourceEvent>(64);
+        let tools = ToolRegistry::connect(
+            &config.tools,
+            &config.project_root,
+            &sandbox,
+            Duration::from_millis(config.connect_timeout_ms),
+            resolver,
+            resource_tx,
+        )
+        .await?;
+        let system_prompt = build_layered_system_prompt(&config, &tools);
+        let policy = config
+            .policy
+            .clone()
+            .unwrap_or_else(|| PermissionPolicy::default_for(&config.project_root));
+        // Pre-create one cancel broadcast sender per connected provider so
+        // run_turn_inner can subscribe before acquiring the lease, eliminating
+        // the TOCTOU window where a Force disconnect could miss the receiver.
+        let cancel_signal_map: HashMap<
+            otto_protocol::ProviderId,
+            broadcast::Sender<CancellationReason>,
+        > = pool_map
+            .keys()
+            .map(|id| (id.clone(), broadcast::channel(8).0))
+            .collect();
+
+        let initial_model = config.model.clone();
+        let config_session_id = config.session_id.clone();
+        let mut startup_notes: Vec<String> = Vec::new();
+        let routing_rules = match config.routing_rules_path.as_ref() {
+            Some(path) => match crate::router::RoutingRules::load_from_path(path) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %path.display(),
+                        "failed to load routing.toml at startup; falling back to empty rules"
+                    );
+                    startup_notes.push(format!(
+                        "routing.toml failed to load: {e}; run /route reload after fixing the file"
+                    ));
+                    crate::router::RoutingRules::empty()
+                }
+            },
+            None => crate::router::RoutingRules::empty(),
+        };
+        let host = Self {
+            config,
+            pool: tokio::sync::RwLock::new(pool_map),
+            active_provider: tokio::sync::RwLock::new(active_id),
+            current_model: tokio::sync::RwLock::new(initial_model),
+            tools: Mutex::new(Some(Arc::new(tools))),
+            state: Mutex::new(SessionState {
+                messages: Vec::new(),
+            }),
+            system_prompt,
+            policy,
+            sandbox,
+            pending: Mutex::new(HashMap::new()),
+            pending_bash_network: Arc::new(Mutex::new(HashMap::new())),
+            current_turn_events: Arc::new(std::sync::Mutex::new(None)),
+            next_request_id: Arc::new(AtomicU64::new(1)),
+            cancel_signal: tokio::sync::Mutex::new(cancel_signal_map),
+            turn_handles: tokio::sync::Mutex::new(HashMap::new()),
+            routing_rules: tokio::sync::RwLock::new(routing_rules),
+            startup_notes: std::sync::Mutex::new(startup_notes),
+            resources: Arc::new(tokio::sync::Mutex::new(
+                crate::resources::ResourceCache::default(),
+            )),
+            prompt_segments: std::sync::RwLock::new(Vec::new()),
+            pending_slash_suppression: std::sync::Mutex::new(Vec::new()),
+            pre_tool_gate: tokio::sync::RwLock::new(None),
+            session_id: config_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            self_weak: std::sync::OnceLock::new(),
+        };
+        host.wire_self_into_resolver().await;
+        // Spawn the resource pump. It owns the receiver, the cache handle,
+        // and a clone of the current_turn_events slot. When a turn is
+        // live the pump emits TurnEvent::ResourceUpdated; when no turn is
+        // live (between turns) it still updates the cache so the next
+        // turn sees the updates at its iteration boundary.
+        let cache = Arc::clone(&host.resources);
+        let events_slot = Arc::clone(&host.current_turn_events);
+        tokio::spawn(async move {
+            resource_pump(resource_rx, cache, events_slot).await;
+        });
+        Ok(host)
+    }
+
+    /// Construct a host directly from a (possibly mock) [`ProviderClient`] and
+    /// a pre-connected tool registry. Used by tests and embedders that want to
+    /// bypass the standard transport layer.
+    ///
+    /// The supplied `provider` is stored as the sole pool entry under the
+    /// synthetic id `"default"`, which also becomes the active provider.
+    #[doc(hidden)]
+    pub async fn with_components(
+        config: HostConfig,
+        provider: Box<dyn ProviderClient + Send + Sync>,
+    ) -> Result<Self, HostError> {
+        let sandbox = config.sandbox.clone().unwrap_or_else(SandboxConfig::load);
+        let resolver = bootstrap_bash_net_resolver();
+        // Resource channel: bounded at 64. If a tool publishes faster than
+        // the pump drains, oldest-first warnings fire; we never block the
+        // subprocess.
+        let (resource_tx, resource_rx) =
+            tokio::sync::mpsc::channel::<crate::tools::ResourceEvent>(64);
+        let tools = ToolRegistry::connect(
+            &config.tools,
+            &config.project_root,
+            &sandbox,
+            Duration::from_millis(config.connect_timeout_ms),
+            resolver,
+            resource_tx,
+        )
+        .await?;
+        let system_prompt = build_layered_system_prompt(&config, &tools);
+        let policy = config
+            .policy
+            .clone()
+            .unwrap_or_else(|| PermissionPolicy::default_for(&config.project_root));
+
+        // Wrap the boxed client into an Arc-backed pool entry.
+        let provider_arc: Arc<dyn ProviderClient + Send + Sync> = Arc::from(provider);
+        let default_id =
+            otto_protocol::ProviderId::new("default").expect("\"default\" is a valid id");
+        let caps = ProviderCapabilities::new(
+            vec![ModelCapabilities {
+                id: config.model.clone(),
+                display_name: config.model.clone(),
+                supports_vision: false,
+                supports_audio: false,
+                context_window: 0,
+                cost_tier: CostTier::Standard,
+            }],
+            config.model.clone(),
+        )
+        .expect("single-model caps with matching default are always valid");
+        let entry = PoolEntry::new(provider_arc, caps, Vec::new(), "Default".into());
+        let mut pool_map: HashMap<otto_protocol::ProviderId, PoolEntry> = HashMap::new();
+        pool_map.insert(default_id.clone(), entry);
+
+        // Pre-create the cancel broadcast sender for the single default
+        // provider, matching the invariant established in Host::start.
+        let mut cancel_signal_map: HashMap<ProviderId, broadcast::Sender<CancellationReason>> =
+            HashMap::new();
+        cancel_signal_map.insert(default_id.clone(), broadcast::channel(8).0);
+
+        let initial_model = config.model.clone();
+        let config_session_id = config.session_id.clone();
+        let mut startup_notes: Vec<String> = Vec::new();
+        let routing_rules = match config.routing_rules_path.as_ref() {
+            Some(path) => match crate::router::RoutingRules::load_from_path(path) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %path.display(),
+                        "failed to load routing.toml at startup; falling back to empty rules"
+                    );
+                    startup_notes.push(format!(
+                        "routing.toml failed to load: {e}; run /route reload after fixing the file"
+                    ));
+                    crate::router::RoutingRules::empty()
+                }
+            },
+            None => crate::router::RoutingRules::empty(),
+        };
+        let host = Self {
+            config,
+            pool: tokio::sync::RwLock::new(pool_map),
+            active_provider: tokio::sync::RwLock::new(default_id),
+            current_model: tokio::sync::RwLock::new(initial_model),
+            tools: Mutex::new(Some(Arc::new(tools))),
+            state: Mutex::new(SessionState {
+                messages: Vec::new(),
+            }),
+            system_prompt,
+            policy,
+            sandbox,
+            pending: Mutex::new(HashMap::new()),
+            pending_bash_network: Arc::new(Mutex::new(HashMap::new())),
+            current_turn_events: Arc::new(std::sync::Mutex::new(None)),
+            next_request_id: Arc::new(AtomicU64::new(1)),
+            cancel_signal: tokio::sync::Mutex::new(cancel_signal_map),
+            turn_handles: tokio::sync::Mutex::new(HashMap::new()),
+            routing_rules: tokio::sync::RwLock::new(routing_rules),
+            startup_notes: std::sync::Mutex::new(startup_notes),
+            resources: Arc::new(tokio::sync::Mutex::new(
+                crate::resources::ResourceCache::default(),
+            )),
+            prompt_segments: std::sync::RwLock::new(Vec::new()),
+            pending_slash_suppression: std::sync::Mutex::new(Vec::new()),
+            pre_tool_gate: tokio::sync::RwLock::new(None),
+            session_id: config_session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            self_weak: std::sync::OnceLock::new(),
+        };
+        host.wire_self_into_resolver().await;
+        // Spawn the resource pump. Mirrors the spawn in `Host::start`.
+        // Tests / advanced embedders that construct hosts via
+        // `with_components` rely on this too — otherwise the receiver
+        // would park and never drain.
+        let cache = Arc::clone(&host.resources);
+        let events_slot = Arc::clone(&host.current_turn_events);
+        tokio::spawn(async move {
+            resource_pump(resource_rx, cache, events_slot).await;
+        });
+        Ok(host)
+    }
+
+    /// Send `user_input` as a user turn and run the tool-use loop until the
+    /// model emits `end_turn` (or some other terminal stop reason). No
+    /// streaming events are emitted; use [`Self::run_turn_streaming`] for the
+    /// TUI's incremental-render path.
+    pub async fn run_turn(&self, user_input: impl Into<String>) -> Result<TurnOutcome, HostError> {
+        let text = user_input.into();
+        self.run_turn_inner(vec![ContentBlock::Text { text }], None)
+            .await
+    }
+
+    /// Run a turn while emitting [`TurnEvent`]s onto `events`. Token-level
+    /// `TextDelta`s are forwarded as the provider streams them. The final
+    /// [`TurnOutcome`] is also returned for callers that want both.
+    pub async fn run_turn_streaming(
+        &self,
+        user_input: impl Into<String>,
+        events: mpsc::Sender<TurnEvent>,
+    ) -> Result<TurnOutcome, HostError> {
+        let text = user_input.into();
+        self.run_turn_inner(vec![ContentBlock::Text { text }], Some(events))
+            .await
+    }
+
+    /// Submit a user turn composed of arbitrary [`ContentBlock`]s — text,
+    /// images, or any future modality. Streams [`TurnEvent`]s onto `events`
+    /// the same way [`Self::run_turn_streaming`] does.
+    ///
+    /// The `@`-prefix parser runs only on the **leading** block if it is
+    /// `Text`; non-text leading blocks (e.g. an image-first turn) skip
+    /// `@`-parsing entirely.
+    ///
+    /// This entrypoint is host-side machinery. The TUI does not yet
+    /// expose an image-attachment UI; this method is intended for (a)
+    /// the modality routing integration test, and (b) a future image
+    /// upload feature in the TUI.
+    pub async fn run_turn_streaming_with_blocks(
+        &self,
+        content: Vec<otto_protocol::ContentBlock>,
+        events: mpsc::Sender<TurnEvent>,
+    ) -> Result<TurnOutcome, HostError> {
+        self.run_turn_inner(content, Some(events)).await
+    }
+
+    /// Re-read `routing_rules_path` and atomically swap the in-memory
+    /// rules. Returns the new rule count on success. Parse errors are
+    /// returned to the caller without clearing the existing in-memory
+    /// rules — preserves the previously-good set rather than silently
+    /// dropping it on a typo.
+    pub async fn reload_routing_rules(&self) -> Result<usize, crate::router::RoutingRulesError> {
+        let Some(path) = self.config.routing_rules_path.clone() else {
+            // No path configured — there is nothing to re-read. Returning
+            // `NoPathConfigured` lets the TUI render a real failure note
+            // instead of "reloaded 0 rules" which would hide the
+            // mis-configuration. The previous behaviour (clear in-memory
+            // + Ok(0)) silently masked the bug for callers that toggled
+            // `routing_rules_path` to None and then asked for a reload.
+            return Err(crate::router::RoutingRulesError::NoPathConfigured);
+        };
+        let new_rules = crate::router::RoutingRules::load_from_path(&path)?;
+        let count = new_rules.rules.len();
+        let mut g = self.routing_rules.write().await;
+        *g = new_rules;
+        Ok(count)
+    }
+
+    /// Snapshot the current routing rules (clone). Lets `/route show`
+    /// render its output without holding the lock across an `.await`.
+    pub async fn routing_rules_snapshot(&self) -> crate::router::RoutingRules {
+        self.routing_rules.read().await.clone()
+    }
+
+    /// Drain any one-shot startup notes (e.g. `routing.toml` parse
+    /// failures recorded during `Host::start`). Returns the accumulated
+    /// messages and clears the buffer. The TUI calls this once after
+    /// `Host::start` returns and surfaces each message as a styled note.
+    pub fn take_startup_notes(&self) -> Vec<String> {
+        std::mem::take(
+            &mut *self
+                .startup_notes
+                .lock()
+                .expect("startup_notes mutex poisoned"),
+        )
+    }
+
+    /// Ask the active provider for its model list.
+    ///
+    /// Returns the provider's default error when `list_models` is not
+    /// advertised; callers should treat that case as "fall through to
+    /// optimistic `/model` selection".
+    pub async fn list_models(
+        &self,
+    ) -> Result<otto_protocol::ListModelsResponse, otto_protocol::ProviderError> {
+        let lease = {
+            let active = self.active_provider.read().await.clone();
+            let pool = self.pool.read().await;
+            let Some(entry) = pool.get(&active) else {
+                return Err(otto_protocol::ProviderError {
+                    kind: otto_protocol::ErrorKind::Internal,
+                    message: "no active provider in pool".into(),
+                    retry_after_ms: None,
+                    provider_code: None,
+                });
+            };
+            entry.lease()
+        };
+        // Pool read guard dropped here; now safe to await.
+        lease.client().list_models().await
+    }
+
+    async fn run_turn_inner(
+        &self,
+        user_content: Vec<otto_protocol::ContentBlock>,
+        events: Option<mpsc::Sender<TurnEvent>>,
+    ) -> Result<TurnOutcome, HostError> {
+        // Publish the events channel (if any) for the lazy bash-net
+        // resolver. Clear it via a guard on exit so an early-return path
+        // doesn't leak a stale Sender that outlives the turn.
+        let _events_guard = CurrentTurnEventsGuard::install(&self.current_turn_events, &events);
+        // Snapshot existing history and append the user message. We keep a
+        // local working copy and only commit it back to `state` once the loop
+        // succeeds — that way a failed turn doesn't corrupt the conversation.
+        let mut messages = {
+            let s = self.state.lock().await;
+            s.messages.clone()
+        };
+
+        // Parse the `@`-prefix against the currently-connected pool.
+        // Aliases are flattened across every connected provider so
+        // `@opus` works even if the active provider is Gemini.
+        //
+        // If the leading block is text, run the @-prefix parser on it
+        // and replace it with the stripped body. Non-text leading
+        // blocks (e.g. image-first turns) skip @-parsing entirely.
+        let (override_, user_content) = {
+            let pool = self.pool.read().await;
+            let views: Vec<crate::router::ProviderView<'_>> = pool
+                .iter()
+                .map(|(id, entry)| crate::router::ProviderView {
+                    id,
+                    capabilities: entry.capabilities(),
+                })
+                .collect();
+            let aliases: Vec<crate::capabilities::ModelAlias> = pool
+                .values()
+                .flat_map(|entry| entry.aliases().to_vec())
+                .collect();
+
+            let mut blocks = user_content;
+            let mut override_ = None;
+            if let Some(ContentBlock::Text { text }) = blocks.first() {
+                let parsed = crate::router::prefix::parse_at_prefix(text, &views, &aliases);
+                override_ = parsed.override_;
+                if let Some(ContentBlock::Text { text }) = blocks.first_mut() {
+                    *text = parsed.body;
+                }
+            }
+            (override_, blocks)
+            // Pool read guard dropped at end of this block.
+        };
+
+        messages.push(Message {
+            role: Role::User,
+            content: user_content,
+        });
+
+        // Detect modality requirements on the just-built `messages`.
+        let required = modality::required_modalities(&messages);
+
+        // Build per-turn signals for the rules layer. user_text is the
+        // concatenated text of the latest user message — image-only
+        // turns end up with the empty string, which is fine (keyword
+        // predicates won't match; bounds predicates still work).
+        let user_text: String = messages
+            .iter()
+            .rev()
+            .find(|m| matches!(m.role, Role::User))
+            .map(|m| {
+                m.content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .unwrap_or_default();
+
+        // Snapshot active_id/active_model + routing_rules BEFORE taking
+        // the pool guard — keeps the .await-safe lock discipline.
+        let active_id: ProviderId = self.active_provider.read().await.clone();
+        let active_model: String = self.current_model.read().await.clone();
+        let rules_snapshot: crate::router::RoutingRules = self.routing_rules.read().await.clone();
+        let decision = {
+            let pool = self.pool.read().await;
+            let views: Vec<crate::router::ProviderView<'_>> = pool
+                .iter()
+                .map(|(id, entry)| crate::router::ProviderView {
+                    id,
+                    capabilities: entry.capabilities(),
+                })
+                .collect();
+            crate::router::Router::pick(
+                override_,
+                &views,
+                &active_id,
+                &active_model,
+                required,
+                &rules_snapshot,
+                &user_text,
+            )
+            // pool guard dropped at end of this block
+        };
+
+        if let Some(tx) = &events {
+            let _ = tx
+                .send(TurnEvent::RouteSelected {
+                    provider_id: decision.provider_id.clone(),
+                    model_id: decision.model_id.clone(),
+                    reason: decision.reason.clone(),
+                })
+                .await;
+        }
+
+        // If an image was required but the router didn't redirect (because no
+        // connected model supports vision, OR because an override pinned a
+        // model that lacks vision), surface a styled note so the user can
+        // see why the next call may fail.
+        if required.has_image
+            && !matches!(
+                decision.reason,
+                crate::router::RoutingReason::Modality { .. }
+            )
+        {
+            let lacks_vision = {
+                let pool = self.pool.read().await;
+                pool.get(&decision.provider_id)
+                    .and_then(|e| e.capabilities().model(&decision.model_id))
+                    .map(|m| !m.supports_vision)
+                    .unwrap_or(false)
+            };
+            if lacks_vision && let Some(tx) = &events {
+                let message = format!(
+                    "{}/{} doesn't support image input; the request may fail. \
+                     Connect a vision-capable model or use @<provider:model> \
+                     to override.",
+                    decision.provider_id.as_str(),
+                    decision.model_id
+                );
+                let _ = tx.send(TurnEvent::ModalityWarning { message }).await;
+            }
+        }
+
+        // Use the async `tool_defs()` aggregator so the model sees both
+        // stdio-served tools AND any in-process tools registered via
+        // `Effect::RegisterInProcessTool` (e.g. the `task` tool from
+        // the user-agents plugin). The previous code read `defs.clone()`
+        // directly, which only captured the stdio set and silently hid
+        // in-process tools from the parent model's tool list.
+        let tool_defs = {
+            let guard = self.tools.lock().await;
+            match guard.as_ref() {
+                Some(registry) => {
+                    let registry = Arc::clone(registry);
+                    drop(guard);
+                    registry.tool_defs().await
+                }
+                None => Vec::new(),
+            }
+        };
+
+        let mut tool_calls: Vec<ToolCall> = Vec::new();
+        let mut iterations: u32 = 0;
+        let want_stream = events.is_some();
+
+        // Compose the per-turn system prompt: base (default + OTTO.md +
+        // embedder override) with plugin-contributed segments appended, minus
+        // any segments suppressed by the slash dispatcher for this turn.
+        // The suppression list is consumed here (cleared via `take`) so stale
+        // suppressions never bleed into subsequent turns.
+        let turn_system: Option<String> = {
+            let segments = self.active_prompt_segments();
+            let suppressed = self.take_suppressed_segments_for_turn();
+            if segments.is_empty() {
+                self.system_prompt.clone()
+            } else {
+                match &self.system_prompt {
+                    Some(base) => {
+                        let suppressed_refs: Vec<&str> =
+                            suppressed.iter().map(String::as_str).collect();
+                        Some(crate::default_prompt::append_prompt_segments(
+                            base,
+                            &segments,
+                            &suppressed_refs,
+                        ))
+                    }
+                    None => {
+                        // No base prompt — append segments to an empty string
+                        // so the model still receives the plugin contributions.
+                        let suppressed_refs: Vec<&str> =
+                            suppressed.iter().map(String::as_str).collect();
+                        let composed = crate::default_prompt::append_prompt_segments(
+                            "",
+                            &segments,
+                            &suppressed_refs,
+                        );
+                        if composed.is_empty() {
+                            None
+                        } else {
+                            Some(composed)
+                        }
+                    }
+                }
+            }
+        };
+
+        loop {
+            if iterations >= self.config.max_iterations {
+                return Err(HostError::LoopLimit(self.config.max_iterations));
+            }
+            iterations += 1;
+
+            // Drain resource updates that arrived since the previous
+            // iteration (or since turn start) and inject one synthetic
+            // user-text block per URI. The model sees them as a fresh
+            // user turn between iterations and can call `read_resource`
+            // to fetch contents.
+            let dirty: Vec<String> = {
+                let mut guard = self.resources.lock().await;
+                guard.drain_dirty()
+            };
+            if !dirty.is_empty() {
+                let text = dirty
+                    .iter()
+                    .map(|uri| format!("[resource updated: {uri}]"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                messages.push(Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text { text }],
+                });
+            }
+
+            if let Some(tx) = &events {
+                let _ = tx
+                    .send(TurnEvent::IterationStarted {
+                        iteration: iterations,
+                    })
+                    .await;
+            }
+
+            // History sent to the provider has the receiver's own prefix
+            // stripped from every tool_use_id. Foreign-prefixed ids pass
+            // through verbatim — the Phase 2 gate proved each translator
+            // accepts them. See router::namespace docs for the contract.
+            let req_messages = crate::router::namespace::strip_own_prefix_in_history(
+                &messages,
+                &decision.provider_id,
+            );
+
+            let req = CompleteRequest {
+                model: decision.model_id.clone(),
+                messages: req_messages,
+                system: turn_system.clone(),
+                tools: tool_defs.clone(),
+                temperature: None,
+                top_p: None,
+                max_tokens: self.config.max_tokens,
+                stop_sequences: Vec::new(),
+                stream: want_stream,
+                thinking: None,
+                metadata: None,
+            };
+
+            // Wire token-delta forwarding only when the caller asked to
+            // stream; otherwise skip the channel + task entirely.
+            let (provider_tx, forwarder) = if let Some(events_tx) = events.clone() {
+                let (tx, rx) = mpsc::channel::<StreamEvent>(64);
+                let task = tokio::spawn(forward_text_deltas(rx, events_tx));
+                (Some(tx), Some(task))
+            } else {
+                (None, None)
+            };
+
+            tracing::debug!(
+                iteration = iterations,
+                stream = want_stream,
+                msg_count = messages.len(),
+                "dispatching provider.complete"
+            );
+            // Subscribe to the cancel broadcast for the active provider BEFORE
+            // acquiring a lease. This closes the TOCTOU window where a
+            // concurrent remove_provider(Force) could send the cancel signal
+            // between "I have a lease" and "I'm listening for cancel".
+            //
+            // Order:
+            //   a. Snapshot active_id (brief read lock on active_provider).
+            //   b. Subscribe to cancel_signal[active_id] — the Sender was
+            //      pre-created by add_provider / Host::start.
+            //   c. Acquire the lease (brief pool read lock, then dropped).
+            //
+            // If Force runs after (b), the Receiver will observe the signal
+            // and cancel_rx.recv() will fire. If Force removes the pool entry
+            // between (b) and (c), pool.get returns None and we return
+            // NoActiveProvider — either path is correct.
+            let active_id: ProviderId = decision.provider_id.clone();
+
+            let mut cancel_rx: broadcast::Receiver<CancellationReason> = {
+                let map = self.cancel_signal.lock().await;
+                match map.get(&active_id) {
+                    Some(tx) => tx.subscribe(),
+                    None => {
+                        // Should not happen: add_provider always pre-creates
+                        // the sender. Create a fresh one as a safety net so
+                        // the turn can proceed.
+                        tracing::warn!(
+                            provider = %active_id.as_str(),
+                            "cancel_signal entry missing at turn start; \
+                             creating fallback sender"
+                        );
+                        broadcast::channel(8).0.subscribe()
+                    }
+                }
+            };
+
+            // Acquire a lease and drop the pool guard before awaiting.
+            // The RwLock guard must never be held across an `.await` on
+            // the provider client.
+            let lease: ProviderLease = {
+                let pool = self.pool.read().await;
+                let Some(entry) = pool.get(&active_id) else {
+                    return Err(HostError::NoActiveProvider);
+                };
+                entry.lease()
+                // `pool` guard dropped here
+            };
+
+            // Spawn the provider call so we can race it against a cancel signal.
+            let client = Arc::clone(lease.client());
+            let work_handle = tokio::spawn(async move { client.complete(req, provider_tx).await });
+            let abort = work_handle.abort_handle();
+            {
+                let mut handles = self.turn_handles.lock().await;
+                handles.entry(active_id.clone()).or_default().push(abort);
+            }
+
+            // Race: provider completes normally vs. cancel signal arrives.
+            // `lease` is held here so `active_turn_count` stays > 0 for the
+            // duration. It drops after this block.
+            let resp_result = tokio::select! {
+                join_res = work_handle => {
+                    match join_res {
+                        Ok(r) => r,
+                        Err(join_err) => {
+                            if join_err.is_cancelled() {
+                                // Aborted by hard-abort stage; propagate as Cancelled.
+                                drop(lease);
+                                return Err(HostError::Cancelled(
+                                    CancellationReason::ProviderDisconnected(active_id),
+                                ));
+                            }
+                            drop(lease);
+                            return Err(HostError::Other(format!(
+                                "turn task panicked: {join_err}"
+                            )));
+                        }
+                    }
+                }
+                cancel_res = cancel_rx.recv() => {
+                    let reason = match cancel_res {
+                        Ok(r) => r,
+                        // Lagged or sender dropped — treat as provider disconnected.
+                        Err(_) => CancellationReason::ProviderDisconnected(active_id.clone()),
+                    };
+                    if let Some(tx) = &events {
+                        let _ = tx
+                            .send(TurnEvent::Cancelled { reason: reason.clone() })
+                            .await;
+                    }
+                    drop(lease);
+                    return Err(HostError::Cancelled(reason));
+                }
+            };
+
+            // Drop the lease (decrementing active_turn_count) and clean up the
+            // abort handle we registered for this iteration.
+            drop(lease);
+            {
+                let mut handles = self.turn_handles.lock().await;
+                if let Some(vec) = handles.get_mut(&active_id) {
+                    vec.retain(|h| !h.is_finished());
+                    if vec.is_empty() {
+                        handles.remove(&active_id);
+                    }
+                }
+            }
+
+            // Drop the sender side (if any) so the forwarder drains and exits.
+            if let Some(task) = forwarder {
+                let _ = task.await;
+            }
+            let resp = resp_result.map_err(HostError::Provider)?;
+            tracing::debug!(
+                iteration = iterations,
+                stop_reason = ?resp.stop_reason,
+                blocks = resp.content.len(),
+                "provider.complete returned"
+            );
+
+            // Namespace every ToolUse.id in the returned assistant
+            // content. Future turns that route to a different provider
+            // see `<this-provider>:<id>` in history; the receiving
+            // provider's adapter accepts that as an opaque string
+            // (Phase 2 gate), and `strip_own_prefix_in_history` strips
+            // the prefix back off if the *next* turn lands on the same
+            // provider.
+            let namespaced_content = crate::router::namespace::namespace_assistant_content(
+                resp.content,
+                &decision.provider_id,
+            );
+
+            let mut tool_uses: Vec<(String, String, Value)> = Vec::new();
+            let mut text_buf = String::new();
+            for block in &namespaced_content {
+                match block {
+                    ContentBlock::Text { text } => {
+                        if !text_buf.is_empty() {
+                            text_buf.push('\n');
+                        }
+                        text_buf.push_str(text);
+                    }
+                    ContentBlock::ToolUse { id, name, input } => {
+                        tool_uses.push((id.clone(), name.clone(), input.clone()));
+                    }
+                    _ => {}
+                }
+            }
+
+            messages.push(Message {
+                role: Role::Assistant,
+                content: namespaced_content,
+            });
+
+            // Tool-use blocks drive continuation. Providers disagree on how
+            // they signal tool use through `stop_reason` (Anthropic emits
+            // `tool_use`; Gemini happily emits `end_turn` alongside a
+            // functionCall part), so the actual content blocks are the only
+            // reliable signal. If any `ToolUse` blocks are present, run them
+            // and loop again, regardless of `stop_reason`.
+            if tool_uses.is_empty() {
+                if !matches!(resp.stop_reason, StopReason::EndTurn) {
+                    // Anomalous terminations (MaxTokens cut-off, Refusal,
+                    // StopSequence, Other) currently collapse into the same
+                    // success path as EndTurn — but they aren't noise: a
+                    // MaxTokens truncation can corrupt the assistant turn
+                    // we are about to commit to state. Surface it as a warn
+                    // so it shows up at default log levels.
+                    tracing::warn!(
+                        stop_reason = ?resp.stop_reason,
+                        "terminating turn with non-end_turn stop_reason and no tool_use blocks"
+                    );
+                }
+                let outcome = TurnOutcome {
+                    text: text_buf,
+                    tool_calls,
+                    iterations,
+                };
+                {
+                    let mut state = self.state.lock().await;
+                    state.messages = messages;
+                }
+                if let Some(tx) = events {
+                    let _ = tx
+                        .send(TurnEvent::TurnComplete {
+                            outcome: outcome.clone(),
+                        })
+                        .await;
+                }
+                return Ok(outcome);
+            }
+
+            // Execute every requested tool call and append a single user
+            // turn of tool_result blocks (Anthropic's expected shape).
+            let mut tool_results: Vec<ContentBlock> = Vec::with_capacity(tool_uses.len());
+            for (tool_use_id, name, input) in tool_uses {
+                let gate = self.gate_tool_call(&name, &input, events.as_ref()).await;
+                match gate {
+                    Ok(()) => {
+                        if let Some(tx) = &events {
+                            let _ = tx
+                                .send(TurnEvent::ToolCallStarted {
+                                    name: name.clone(),
+                                    arguments: input.clone(),
+                                })
+                                .await;
+                        }
+                        // Snapshot the registry up front so we can check
+                        // in-process membership before consulting the
+                        // pre-tool gate. Cloning the Arc is cheap; the
+                        // lock is dropped immediately after.
+                        let registry_arc: Option<Arc<crate::tools::ToolRegistry>> = {
+                            let guard = self.tools.lock().await;
+                            guard.as_ref().map(Arc::clone)
+                        };
+                        let is_in_process = match &registry_arc {
+                            Some(r) => r.in_process_has(&name).await,
+                            None => false,
+                        };
+                        let outcome = if name == crate::tools::READ_RESOURCE_TOOL_NAME {
+                            // Synthetic read_resource: parse uri, look up owner via
+                            // resource cache, dispatch via the registry helper.
+                            let uri = input
+                                .as_object()
+                                .and_then(|m| m.get("uri"))
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_string);
+                            match uri {
+                                None => crate::tools::ToolCallOutcome::error(
+                                    "read_resource requires `uri: string`".to_string(),
+                                ),
+                                Some(uri) => {
+                                    let owner = {
+                                        let guard = self.resources.lock().await;
+                                        guard.owner(&uri).map(str::to_string)
+                                    };
+                                    match owner {
+                                        None => crate::tools::ToolCallOutcome::error(format!(
+                                            "unknown resource: {uri}; \
+                                             no tool advertises ownership"
+                                        )),
+                                        Some(owner) => {
+                                            let guard = self.tools.lock().await;
+                                            let registry =
+                                                guard.as_ref().expect("tools registry present");
+                                            registry.dispatch_read_resource(&uri, &owner).await
+                                        }
+                                    }
+                                }
+                            }
+                        } else if let Some(blocked) = self.check_pre_tool_gate(&name, &input).await
+                        {
+                            blocked
+                        } else if is_in_process {
+                            // In-process tool — dispatch via
+                            // `call_in_process` with a `ToolCallContext`
+                            // so handlers can downcast to get back a
+                            // typed reference to the host + cancellation
+                            // token. `self_arc()` returns None if the
+                            // embedder forgot to call `wire_self_arc`;
+                            // in that case we surface a clear error
+                            // rather than fail open.
+                            match (registry_arc, self.self_arc()) {
+                                (Some(registry), Some(host_arc)) => {
+                                    let ctx_value =
+                                        std::sync::Arc::new(crate::tools::ToolCallContext {
+                                            host: host_arc,
+                                            subagent: None,
+                                            cancellation: tokio_util::sync::CancellationToken::new(
+                                            ),
+                                        });
+                                    let ctx: std::sync::Arc<dyn std::any::Any + Send + Sync> =
+                                        ctx_value;
+                                    match registry.call_in_process(&name, input.clone(), ctx).await
+                                    {
+                                        Ok(v) => crate::tools::ToolCallOutcome::success(match v {
+                                            serde_json::Value::String(s) => s,
+                                            other => other.to_string(),
+                                        }),
+                                        Err(e) => crate::tools::ToolCallOutcome::error(e),
+                                    }
+                                }
+                                (None, _) => crate::tools::ToolCallOutcome::error(
+                                    "in-process tool: registry unavailable".to_string(),
+                                ),
+                                (_, None) => crate::tools::ToolCallOutcome::error(
+                                    "in-process tool: Host::wire_self_arc was not called; \
+                                     cannot construct ToolCallContext"
+                                        .to_string(),
+                                ),
+                            }
+                        } else {
+                            let guard = self.tools.lock().await;
+                            let registry = guard.as_ref().expect("tools registry present");
+                            registry
+                                .call_with_bash_net_override(
+                                    &name,
+                                    input.clone(),
+                                    NetOverride::Inherit,
+                                )
+                                .await
+                        };
+                        let status = if outcome.is_error {
+                            ToolCallStatus::Errored
+                        } else {
+                            ToolCallStatus::Ok
+                        };
+                        if let Some(tx) = &events {
+                            let _ = tx
+                                .send(TurnEvent::ToolCallFinished {
+                                    name: name.clone(),
+                                    status,
+                                    result: outcome.payload.clone(),
+                                })
+                                .await;
+                        }
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id,
+                            content: outcome.blocks.clone(),
+                            is_error: outcome.is_error,
+                        });
+                        tool_calls.push(ToolCall {
+                            name,
+                            arguments: input,
+                            status,
+                            result: outcome.payload,
+                        });
+                    }
+                    Err(reason) => {
+                        if let Some(tx) = &events {
+                            let _ = tx
+                                .send(TurnEvent::ToolCallDenied {
+                                    name: name.clone(),
+                                    reason: reason.clone(),
+                                })
+                                .await;
+                        }
+                        let payload = format!("denied by policy: {reason}");
+                        tool_results.push(ContentBlock::ToolResult {
+                            tool_use_id,
+                            content: vec![ContentBlock::Text {
+                                text: payload.clone(),
+                            }],
+                            is_error: true,
+                        });
+                        tool_calls.push(ToolCall {
+                            name,
+                            arguments: input,
+                            status: ToolCallStatus::Errored,
+                            result: payload,
+                        });
+                    }
+                }
+            }
+            messages.push(Message {
+                role: Role::User,
+                content: tool_results,
+            });
+        }
+    }
+
+    /// Read-only snapshot of the conversation history.
+    pub async fn messages(&self) -> Vec<Message> {
+        self.state.lock().await.messages.clone()
+    }
+
+    /// Inject persisted interactive-state blobs into the session's stored
+    /// `ContentBlock::Html` blocks before a transcript is written. Each
+    /// `(ordinal, base64_state)` pair sets the `state` field of the
+    /// `ordinal`-th **top-level** `Html` block (0-indexed across all
+    /// messages, in message + content order). Ordinals with no matching
+    /// `Html` block are ignored. Existing `state` on a block is overwritten
+    /// (latest snapshot wins).
+    ///
+    /// The TUI calls this just before [`Self::save_transcript`], passing
+    /// each live canvas renderer's `snapshot_state()` keyed by its
+    /// `ContentBlockId.0`. That id is allocated monotonically (0, 1, 2, …)
+    /// once per `TurnEvent::HtmlBlockStart`, which the host emits only for
+    /// **provider-stream** (top-level) `Html` blocks. Tool-emitted `Html`
+    /// (nested inside `ContentBlock::ToolResult.content`) never gets a
+    /// `ContentBlockId` and is *not* a live renderer, so it must be excluded
+    /// from the ordinal count here — otherwise the ordinal→block mapping
+    /// would skew whenever a tool-emitted canvas precedes a streamed one.
+    /// We therefore count only top-level `Html` blocks, matching the id
+    /// allocation exactly.
+    pub async fn set_canvas_states(&self, states: &[(u32, String)]) {
+        if states.is_empty() {
+            return;
+        }
+        let by_ordinal: HashMap<u32, &str> = states.iter().map(|(o, s)| (*o, s.as_str())).collect();
+        let mut state = self.state.lock().await;
+        let mut ordinal: u32 = 0;
+        for message in state.messages.iter_mut() {
+            for block in message.content.iter_mut() {
+                // Only top-level Html blocks correspond to a live canvas
+                // renderer (and thus a ContentBlockId). Deliberately do not
+                // recurse into ToolResult content.
+                if let ContentBlock::Html { state: blob, .. } = block {
+                    if let Some(new_state) = by_ordinal.get(&ordinal) {
+                        *blob = Some((*new_state).to_string());
+                    }
+                    ordinal += 1;
+                }
+            }
+        }
+    }
+
+    /// Persist the current message history as pretty-printed JSON to `path`.
+    ///
+    /// Creates parent directories as needed. The file is written in the
+    /// [`TranscriptFile`] versioned format so [`Self::load_transcript`] can
+    /// round-trip it unambiguously.
+    pub async fn save_transcript(&self, path: &Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let messages = self.messages().await;
+        let saved_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let record = TranscriptFile {
+            schema_version: TRANSCRIPT_SCHEMA_VERSION,
+            model: self.current_model.read().await.clone(),
+            saved_at,
+            messages,
+            // Sidecar populated by SubHost when subagents run; empty here
+            // since this path is the parent host's save flow and we don't
+            // yet plumb the map through.
+            subagent_transcripts: HashMap::new(),
+        };
+        let json = serde_json::to_vec_pretty(&record)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        tokio::fs::write(path, json).await
+    }
+
+    /// Re-hydrate the message history from a previously-saved transcript file.
+    ///
+    /// Accepts two on-disk shapes:
+    ///
+    /// - **Versioned** (`TranscriptFile` object with a `schema_version` field):
+    ///   the schema version must equal [`TRANSCRIPT_SCHEMA_VERSION`]; a mismatch
+    ///   returns [`TranscriptError::SchemaMismatch`].
+    /// - **Legacy bare array** (`[...]`): files written before session-resume
+    ///   was introduced. They are interpreted as v1 transcripts; the messages
+    ///   are loaded as-is.
+    ///
+    /// Existing conversation history is **replaced** by the loaded messages.
+    /// The caller is expected to have verified that a provider is connected
+    /// before calling this; the host does not re-connect automatically.
+    ///
+    /// Returns the loaded [`TranscriptFile`] so callers can surface metadata
+    /// (model, saved_at) in the UI.
+    ///
+    /// # Invariant: must not be called during an in-flight turn
+    ///
+    /// [`Self::run_turn_inner`] snapshots `state.messages` into a local `Vec`
+    /// at turn start and commits that local clone back to `state.messages`
+    /// when the turn completes. Calling `load_transcript` while a turn is
+    /// running therefore appears to succeed, but the in-flight turn will
+    /// silently overwrite the resumed history at the moment it finishes.
+    /// The TUI enforces this by gating `/resume` on its `is_loading` flag.
+    pub async fn load_transcript(&self, path: &Path) -> Result<TranscriptFile, TranscriptError> {
+        let bytes = tokio::fs::read(path).await?;
+        let root: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| TranscriptError::Malformed(e.to_string()))?;
+
+        let transcript = match &root {
+            // Versioned format: top-level object with schema_version.
+            serde_json::Value::Object(map) if map.contains_key("schema_version") => {
+                let record: TranscriptFile = serde_json::from_value(root)
+                    .map_err(|e| TranscriptError::Malformed(e.to_string()))?;
+                if record.schema_version == 1 {
+                    // v1 is forward-compatible with v2 — the only new field
+                    // is `subagent_transcripts`, which `#[serde(default)]`
+                    // already populated as an empty map. Warn so an operator
+                    // who tails logs can see they're loading an older shape.
+                    tracing::warn!(
+                        path = %path.display(),
+                        "loading transcript written with schema v1; subagent_transcripts will be absent"
+                    );
+                } else if record.schema_version != TRANSCRIPT_SCHEMA_VERSION {
+                    return Err(TranscriptError::SchemaMismatch {
+                        found: record.schema_version,
+                        expected: TRANSCRIPT_SCHEMA_VERSION,
+                    });
+                }
+                record
+            }
+            // Legacy bare array: treat as v1, synthesize metadata.
+            serde_json::Value::Array(_) => {
+                let messages: Vec<Message> = serde_json::from_value(root)
+                    .map_err(|e| TranscriptError::Malformed(e.to_string()))?;
+                TranscriptFile {
+                    schema_version: TRANSCRIPT_SCHEMA_VERSION,
+                    model: self.current_model.read().await.clone(),
+                    saved_at: 0,
+                    messages,
+                    subagent_transcripts: HashMap::new(),
+                }
+            }
+            _ => {
+                return Err(TranscriptError::Malformed(
+                    "expected a JSON object or array at the root".into(),
+                ));
+            }
+        };
+
+        {
+            let mut state = self.state.lock().await;
+            state.messages = transcript.messages.clone();
+        }
+        Ok(transcript)
+    }
+
+    /// Drop the per-turn message history without touching connections.
+    pub async fn clear_history(&self) {
+        self.state.lock().await.messages.clear();
+    }
+
+    /// Borrow the active config.
+    pub fn config(&self) -> &HostConfig {
+        &self.config
+    }
+
+    /// Borrow the active sandbox configuration.
+    pub fn sandbox_config(&self) -> &SandboxConfig {
+        &self.sandbox
+    }
+
+    /// Resolve a previously-emitted [`TurnEvent::PermissionRequested`].
+    ///
+    /// Called by the embedder (TUI) once the user picks Allow / Deny in the
+    /// modal. A no-op if `id` is unknown — that handles double-resolves and
+    /// races where the turn was cancelled before the user answered.
+    pub async fn resolve_permission(&self, id: u64, decision: PermissionDecision) {
+        let sender = self.pending.lock().await.remove(&id);
+        if let Some(tx) = sender {
+            let _ = tx.send(decision);
+        }
+    }
+
+    /// Resolve a previously-emitted
+    /// [`TurnEvent::BashNetworkRequested`]. The embedder (TUI) calls this
+    /// after the user picks Once / AlwaysThisSession / DenyOnce /
+    /// DenyAlways from the modal. The corresponding spawn resumes.
+    ///
+    /// A no-op if `id` is unknown — that handles double-resolves and
+    /// races where the spawn was cancelled before the user answered.
+    pub async fn resolve_bash_network_decision(&self, id: u64, choice: BashNetworkChoice) {
+        let tx = self.pending_bash_network.lock().await.remove(&id);
+        if let Some(tx) = tx {
+            let _ = tx.send(choice);
+        }
+    }
+
+    /// Run a single shell command via `tool-bash`. Used by the TUI's
+    /// `/bash` slash command so a user can run a shell command without
+    /// round-tripping through the provider.
+    ///
+    /// Returns `Err("tool registry unavailable")` if the host has been
+    /// shut down. If `tool-bash` is not configured on this host, returns
+    /// `Ok((true, "unknown tool: run"))` from the tool dispatch layer.
+    ///
+    /// `net_override` — per-call sandbox network preference. See
+    /// [`NetOverride`] for the 3-state semantics.
+    ///
+    /// - [`NetOverride::Inherit`] — defer to the configured bash-network
+    ///   policy (default: `Ask`). May park on a user prompt.
+    /// - [`NetOverride::ForceAllow`] — force `allow_net = true` for this
+    ///   call only.
+    /// - [`NetOverride::ForceDeny`] — force `allow_net = false` for this
+    ///   call only.
+    ///
+    /// Per-call overrides do not mutate the session decision cache.
+    ///
+    /// `events` — channel to receive
+    /// [`TurnEvent::BashNetworkRequested`] events during the call.
+    /// Required when the policy is `Ask` and no decision is cached,
+    /// otherwise the resolver collapses to deny.
+    pub async fn run_bash_command(
+        &self,
+        command: &str,
+        net_override: NetOverride,
+        events: Option<mpsc::Sender<TurnEvent>>,
+    ) -> Result<(bool, String), String> {
+        let _events_guard = CurrentTurnEventsGuard::install(&self.current_turn_events, &events);
+        let input = serde_json::json!({ "command": command });
+        let outcome = if let Some(blocked) = self.check_pre_tool_gate("run", &input).await {
+            blocked
+        } else {
+            let guard = self.tools.lock().await;
+            let registry = guard
+                .as_ref()
+                .ok_or_else(|| "tool registry unavailable".to_string())?;
+            registry
+                .call_with_bash_net_override("run", input, net_override)
+                .await
+        };
+        Ok((outcome.is_error, outcome.payload))
+    }
+
+    /// Install the real bash-net resolver into the tool registry. The
+    /// resolver captures `Arc`-shared handles to the permission policy,
+    /// pending-prompt map, current-turn events, and request-id counter
+    /// — exactly the state [`resolve_bash_network_with_state`] needs
+    /// — so the closure can emit `BashNetworkRequested` and await the
+    /// user's answer without holding a reference to `Host` itself.
+    ///
+    /// Idempotent — replacing the resolver multiple times is fine; the
+    /// `ToolRegistry`'s lazy-bash slot reads it under a lock.
+    async fn wire_self_into_resolver(&self) {
+        let resolver: BashNetResolverHandle = Arc::new(HostBashNetResolver {
+            policy: self.policy.clone(),
+            pending: self.pending_bash_network.clone(),
+            next_id: self.next_request_id.clone(),
+            current_events: self.current_turn_events.clone(),
+        });
+        let guard = self.tools.lock().await;
+        if let Some(reg) = guard.as_ref() {
+            reg.install_bash_net_resolver(resolver);
+        }
+    }
+
+    /// Persist a user-recorded Always/Never decision via the policy.
+    ///
+    /// Builds an [`crate::permissions::ArgPattern`] from `(tool_name, args)`
+    /// and writes through to `~/.otto/permissions.toml`. Subsequent
+    /// matching calls — in this session and future ones — short-circuit
+    /// the modal. I/O errors are logged but not surfaced; the in-memory
+    /// rule update still wins immediately.
+    pub async fn add_session_rule(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        decision: PermissionDecision,
+    ) {
+        if let Err(e) = self.policy.add_rule(tool_name, args, decision).await {
+            tracing::warn!(
+                tool = tool_name,
+                error = %e,
+                "failed to persist permission rule to ~/.otto/permissions.toml",
+            );
+        }
+    }
+
+    /// Snapshot of every tool advertised by the connected tool servers, in
+    /// the order they were registered. Used by the TUI's `/tools` command.
+    pub async fn tool_defs(&self) -> Vec<ToolDef> {
+        let guard = self.tools.lock().await;
+        guard.as_ref().map(|t| t.defs.clone()).unwrap_or_default()
+    }
+
+    /// Snapshot of every configured tool server's startup status.
+    pub async fn tool_server_statuses(&self) -> Vec<ToolServerStatus> {
+        let guard = self.tools.lock().await;
+        guard
+            .as_ref()
+            .map(|t| t.statuses().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// What the policy would return for `tool_name` with empty arguments —
+    /// a coarse "verdict at a glance" used by the TUI's `/tools` listing.
+    /// Path-conditional verdicts (e.g. `write_file`) collapse to the
+    /// no-path branch, which is intentionally the more conservative choice.
+    pub fn default_verdict_for(&self, tool_name: &str) -> Verdict {
+        self.policy
+            .evaluate(tool_name, &Value::Object(serde_json::Map::new()))
+    }
+
+    /// Run policy against `(name, input)` and either return `Ok(())` (caller
+    /// proceeds with the call) or `Err(reason)` (caller synthesizes a denied
+    /// `tool_result`). For [`Verdict::Ask`], emits a
+    /// [`TurnEvent::PermissionRequested`] and awaits the matching
+    /// [`Self::resolve_permission`] via a oneshot.
+    async fn gate_tool_call(
+        &self,
+        name: &str,
+        input: &Value,
+        events: Option<&mpsc::Sender<TurnEvent>>,
+    ) -> Result<(), String> {
+        match self.policy.evaluate(name, input) {
+            Verdict::Allow => Ok(()),
+            Verdict::Deny { reason } => Err(reason),
+            Verdict::Ask { summary } => {
+                let Some(tx) = events else {
+                    // No interactive surface — Ask collapses to Deny so the
+                    // model gets a clear "non-interactive turn" tool_result
+                    // instead of hanging on a oneshot that nobody resolves.
+                    return Err("non-interactive turn".into());
+                };
+                let req_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+                let (resolve_tx, resolve_rx) = oneshot::channel();
+                self.pending.lock().await.insert(req_id, resolve_tx);
+                let send_result = tx
+                    .send(TurnEvent::PermissionRequested {
+                        id: req_id,
+                        name: name.to_string(),
+                        summary,
+                        args: input.clone(),
+                    })
+                    .await;
+                if send_result.is_err() {
+                    self.pending.lock().await.remove(&req_id);
+                    return Err("event channel closed before permission could be requested".into());
+                }
+                match resolve_rx.await {
+                    Ok(PermissionDecision::Allow) => Ok(()),
+                    Ok(PermissionDecision::Deny) => Err("denied by user".into()),
+                    Err(_) => Err("permission channel dropped".into()),
+                }
+            }
+        }
+    }
+
+    /// Replace the active prompt segments. Called by the TUI runtime
+    /// each time the enabled-plugin set changes.
+    pub fn set_prompt_segments(&self, segments: Vec<SystemPromptSegment>) {
+        match self.prompt_segments.write() {
+            Ok(mut guard) => *guard = segments,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "prompt_segments RwLock poisoned; skipping set"
+                );
+            }
+        }
+    }
+
+    /// Set the suppression list for the next turn. Called by the slash
+    /// dispatcher *before* invoking `run_turn_streaming` when the
+    /// dispatched slash has a non-empty `suppress_prompt_segments`.
+    /// Cleared automatically after the turn completes.
+    pub fn set_turn_suppression(&self, suppressed: Vec<String>) {
+        match self.pending_slash_suppression.lock() {
+            Ok(mut guard) => *guard = suppressed,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "pending_slash_suppression mutex poisoned; skipping set"
+                );
+            }
+        }
+    }
+
+    /// Snapshot the active prompt segments. Called once per turn inside
+    /// `run_turn_inner` before composing the `CompleteRequest` `system`
+    /// field. The guard is held only for the clone; no `.await` is
+    /// crossed while holding it.
+    pub(crate) fn active_prompt_segments(&self) -> Vec<SystemPromptSegment> {
+        self.prompt_segments
+            .read()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    /// Snapshot and clear the per-turn suppression list. Called once per
+    /// turn inside `run_turn_inner`; clearing ensures stale suppressions
+    /// never bleed into subsequent turns.
+    pub(crate) fn take_suppressed_segments_for_turn(&self) -> Vec<String> {
+        match self.pending_slash_suppression.lock() {
+            Ok(mut guard) => std::mem::take(&mut *guard),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "pending_slash_suppression mutex poisoned; returning empty suppression list"
+                );
+                Vec::new()
+            }
+        }
+    }
+
+    /// Cleanly shut down tool-server children. The provider session is
+    /// dropped along with `self`. Idempotent — calling twice is a no-op for
+    /// the second call.
+    ///
+    /// The wrapped `ToolRegistry::shutdown(self)` consumes the registry,
+    /// so we use `Arc::into_inner` to recover ownership. If any clones
+    /// of the registry are still outstanding (e.g. a live `SubHost`),
+    /// we log a warning and skip the cleanup — the child processes will
+    /// be reaped when the last `Arc` drops.
+    pub async fn shutdown(&self) {
+        let registry = {
+            let mut guard = self.tools.lock().await;
+            guard.take()
+        };
+        if let Some(r) = registry {
+            match Arc::into_inner(r) {
+                Some(reg) => reg.shutdown().await,
+                None => {
+                    tracing::warn!(
+                        "Host::shutdown: ToolRegistry still has outstanding Arc references; \
+                         skipping explicit child cleanup (drop-time cleanup will run)"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Clone the underlying `Arc<ToolRegistry>` for sharing with a
+    /// `SubHost`. Returns `None` if the host has already been shut down.
+    /// Internal API surfaced for the in-process tool path; consumed by
+    /// the `task` tool handler when it builds a `SubHost`.
+    pub async fn tool_registry_arc(&self) -> Option<Arc<crate::tools::ToolRegistry>> {
+        let guard = self.tools.lock().await;
+        guard.as_ref().map(Arc::clone)
+    }
+
+    /// Acquire a [`ProviderLease`] on the currently-active provider.
+    /// Used by [`crate::SubHost`] to drive its own turn loop on the
+    /// parent's pool. Mirrors the lease-acquisition discipline in
+    /// `run_turn_inner`: the pool read guard is taken and dropped
+    /// before any `.await`, so callers can hold the lease across
+    /// `provider.complete` without blocking pool writers.
+    ///
+    /// Returns [`HostError::NoActiveProvider`] when the pool has no
+    /// entry for the active provider id (e.g. mid-disconnect).
+    pub(crate) async fn active_provider_lease(&self) -> Result<ProviderLease, HostError> {
+        let active = self.active_provider.read().await.clone();
+        let pool = self.pool.read().await;
+        let Some(entry) = pool.get(&active) else {
+            return Err(HostError::NoActiveProvider);
+        };
+        Ok(entry.lease())
+    }
+
+    /// Snapshot the model id forwarded in every `CompleteRequest`. Used
+    /// by [`crate::SubHost`] when a subagent doesn't override the model
+    /// in its frontmatter.
+    pub(crate) async fn current_model_snapshot(&self) -> String {
+        self.current_model.read().await.clone()
+    }
+
+    /// The currently-active provider id. Turns are routed to this entry.
+    pub async fn active_provider(&self) -> otto_protocol::ProviderId {
+        self.active_provider.read().await.clone()
+    }
+
+    /// Snapshot of the active provider's capabilities. Returns `None` if
+    /// the pool is empty or the active provider isn't in the pool (which
+    /// would be a bug). Clones the [`ProviderCapabilities`] so the caller
+    /// doesn't hold a pool lock.
+    pub async fn active_capabilities(&self) -> Option<ProviderCapabilities> {
+        let active = self.active_provider.read().await.clone();
+        let pool = self.pool.read().await;
+        pool.get(&active).map(|entry| entry.capabilities().clone())
+    }
+
+    /// Snapshot every connected provider's `(id, capabilities)`. Used by
+    /// the TUI's `/model` picker to show models across the whole pool,
+    /// not just the active provider's catalog.
+    pub async fn pool_snapshot(&self) -> Vec<(otto_protocol::ProviderId, ProviderCapabilities)> {
+        let pool = self.pool.read().await;
+        pool.iter()
+            .map(|(id, entry)| (id.clone(), entry.capabilities().clone()))
+            .collect()
+    }
+
+    /// Update the model id forwarded in every subsequent `CompleteRequest`.
+    ///
+    /// This is the pool-safe alternative to rebuilding the host: the pool
+    /// itself is untouched; only the model field sent to the provider changes.
+    /// The caller is responsible for persisting the choice to
+    /// `~/.otto/models.toml` via `models_pref::save_for_provider`.
+    pub async fn set_model(&self, model: String) {
+        *self.current_model.write().await = model;
+    }
+
+    /// Whether `id` is currently registered (and connected) in the pool.
+    pub async fn is_connected(&self, id: &str) -> bool {
+        let Ok(pid) = otto_protocol::ProviderId::new(id) else {
+            return false;
+        };
+        self.pool.read().await.contains_key(&pid)
+    }
+
+    /// Register a new provider in the pool.
+    ///
+    /// Returns [`PoolError::AlreadyRegistered`] if a provider with the same
+    /// id is already present.
+    pub async fn add_provider(&self, reg: ProviderRegistration) -> Result<(), PoolError> {
+        let mut pool = self.pool.write().await;
+        if pool.contains_key(&reg.id) {
+            return Err(PoolError::AlreadyRegistered(reg.id));
+        }
+        pool.insert(
+            reg.id.clone(),
+            PoolEntry::new(reg.client, reg.capabilities, reg.aliases, reg.display_name),
+        );
+        // Pre-create the cancel broadcast sender so run_turn_inner can
+        // subscribe before acquiring a lease, closing the TOCTOU window.
+        // The pool write lock is still held here; release it first so the
+        // cancel_signal lock order stays consistent (cancel_signal is always
+        // locked after any pool lock drops).
+        drop(pool);
+        self.cancel_signal
+            .lock()
+            .await
+            .entry(reg.id)
+            .or_insert_with(|| broadcast::channel(8).0);
+        Ok(())
+    }
+
+    /// Remove a provider from the pool.
+    ///
+    /// `DisconnectMode::Drain` — removes the entry from the eligibility set
+    /// immediately, then waits for all outstanding [`ProviderLease`]s to drop
+    /// before returning. This lets in-flight turns finish before the entry is
+    /// discarded.
+    ///
+    /// `DisconnectMode::Force` — 3-stage cancellation:
+    /// 1. Sends a cooperative cancel signal to all in-flight turns on this
+    ///    provider; each turn's `select!` will observe it and return
+    ///    [`HostError::Cancelled`].
+    /// 2. Waits up to `HostConfig::force_disconnect_grace_ms` for
+    ///    `active_turn_count` to reach zero.
+    /// 3. If time expires, calls `AbortHandle::abort()` on every registered
+    ///    in-flight task and emits [`TurnEvent::AbortedAfterGrace`] on the
+    ///    current turn's event channel.
+    ///
+    /// Returns [`PoolError::NotRegistered`] if `id` is not in the pool.
+    pub async fn remove_provider(
+        &self,
+        id: &otto_protocol::ProviderId,
+        mode: DisconnectMode,
+    ) -> Result<(), PoolError> {
+        // Remove the entry from the pool immediately so new turns can't
+        // acquire it, then handle outstanding leases according to `mode`.
+        let entry = {
+            let mut pool = self.pool.write().await;
+            pool.remove(id)
+                .ok_or_else(|| PoolError::NotRegistered(id.clone()))?
+            // Write guard dropped here.
+        };
+
+        match mode {
+            DisconnectMode::Drain => {
+                // Poll until all leases are released. Each drop() on a
+                // ProviderLease decrements the counter; we spin with a short
+                // sleep to avoid busy-waiting while holding no locks.
+                while entry.active_turn_count() > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+                }
+            }
+            DisconnectMode::Force => {
+                let reason = CancellationReason::ProviderDisconnected(id.clone());
+
+                // Stage 1: cooperative cancel — broadcast the signal so any
+                // in-flight `run_turn_inner` `select!` can observe it and
+                // return early without waiting for the provider response.
+                {
+                    let map = self.cancel_signal.lock().await;
+                    if let Some(tx) = map.get(id) {
+                        let _ = tx.send(reason.clone());
+                    }
+                }
+
+                // Stage 2: bounded grace — wait for active_turn_count to hit
+                // zero or for the deadline to expire.
+                let grace = std::time::Duration::from_millis(self.config.force_disconnect_grace_ms);
+                let deadline = tokio::time::Instant::now() + grace;
+                loop {
+                    if entry.active_turn_count() == 0 {
+                        break;
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        // Stage 3: hard abort — abort every registered task
+                        // for this provider.
+                        let mut handles = self.turn_handles.lock().await;
+                        if let Some(hs) = handles.remove(id) {
+                            for h in hs {
+                                h.abort();
+                            }
+                        }
+                        drop(handles);
+
+                        // Emit AbortedAfterGrace on the current turn's event
+                        // channel so the TUI can surface it. The channel is
+                        // held behind a std::sync::Mutex. If the mutex is
+                        // poisoned (a prior panic held the lock) we skip the
+                        // emit and log a warning — the hard abort still
+                        // proceeds; only the event surface is lost.
+                        match self.current_turn_events.lock() {
+                            Ok(guard) => {
+                                if let Some(tx) = guard.as_ref() {
+                                    let _ = tx.try_send(TurnEvent::AbortedAfterGrace {
+                                        reason: reason.clone(),
+                                    });
+                                }
+                            }
+                            Err(_) => {
+                                tracing::warn!(
+                                    "current_turn_events mutex poisoned; \
+                                     skipping AbortedAfterGrace emit"
+                                );
+                            }
+                        }
+                        break;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            }
+        }
+
+        // Remove the cancel_signal entry for this provider. This must come
+        // after any Stage-1 send() (Force mode) so the broadcast has already
+        // been dispatched before we drop the Sender. Both Drain and Force
+        // paths converge here, so the map is cleaned up in both cases and
+        // does not grow unboundedly across connect/disconnect cycles.
+        self.cancel_signal.lock().await.remove(id);
+
+        drop(entry);
+        Ok(())
+    }
+
+    /// Switch the active provider. The active provider is the default the
+    /// router falls through to when no `@`-prefix override applies.
+    ///
+    /// Phase 3+: conversation history is **preserved** across this switch.
+    /// The next turn's `tool_use_id`s will be prefixed with the new active
+    /// provider's id; older history blocks keep their original prefixes,
+    /// which the receiving provider's translator accepts as opaque strings
+    /// (Phase 2 cross-vendor gate).
+    ///
+    /// Returns [`PoolError::NotRegistered`] if `id` is not in the pool.
+    pub async fn set_active_provider(&self, id: &ProviderId) -> Result<(), PoolError> {
+        // Validate first, before mutating any state.
+        {
+            let pool = self.pool.read().await;
+            if !pool.contains_key(id) {
+                return Err(PoolError::NotRegistered(id.clone()));
+            }
+        }
+        *self.active_provider.write().await = id.clone();
+        Ok(())
+    }
+
+    /// Acquire a lease on the named provider without going through
+    /// `run_turn`. Used by integration tests to simulate an in-flight turn
+    /// and verify drain-mode semantics.
+    #[doc(hidden)]
+    pub async fn acquire_lease_for_test(
+        &self,
+        id: &otto_protocol::ProviderId,
+    ) -> Result<ProviderLease, PoolError> {
+        let pool = self.pool.read().await;
+        let entry = pool
+            .get(id)
+            .ok_or_else(|| PoolError::NotRegistered(id.clone()))?;
+        Ok(entry.lease())
+    }
+
+    /// Install a `PreToolUseGate`. Overwrites any prior gate. Intended
+    /// to be called exactly once during startup, by the user-hooks
+    /// plugin's `RegisterPreToolGate` effect.
+    pub async fn set_pre_tool_gate(
+        &self,
+        gate: std::sync::Arc<dyn crate::pre_tool_gate::PreToolUseGate>,
+    ) {
+        let mut g = self.pre_tool_gate.write().await;
+        *g = Some(gate);
+    }
+
+    /// Stable session identifier for this `Host` instance. Set at
+    /// construction time via [`HostConfig::with_session_id`] or defaulted
+    /// to a fresh UUID v4. Surfaced to in-process tool handlers through
+    /// [`crate::ToolCallContext`] so subagent hooks can correlate
+    /// across nesting levels.
+    pub fn session_id(&self) -> String {
+        self.session_id.clone()
+    }
+
+    /// Register an `Arc<Self>` reference so that `run_turn_inner` can
+    /// hand a real `Arc<Host>` to in-process tool handlers via
+    /// [`crate::ToolCallContext::host`]. Must be called by the embedder
+    /// after wrapping the host in `Arc`. Idempotent — subsequent calls
+    /// after the first are no-ops.
+    ///
+    /// Embedders that never dispatch in-process tools can skip this
+    /// wiring; the parent dispatch path falls back to a synthesized
+    /// error result in that case.
+    pub fn wire_self_arc(self: &std::sync::Arc<Self>) {
+        let weak = std::sync::Arc::downgrade(self);
+        let _ = self.self_weak.set(weak);
+    }
+
+    /// Try to upgrade the stored `Weak<Self>` into an `Arc<Self>`.
+    /// Returns `None` when [`Self::wire_self_arc`] was never called, or
+    /// when every other `Arc<Self>` has been dropped (impossible while
+    /// `&self` is live since the caller necessarily holds one, but the
+    /// fallible API keeps the contract honest).
+    fn self_arc(&self) -> Option<std::sync::Arc<Self>> {
+        self.self_weak.get().and_then(|w| w.upgrade())
+    }
+
+    /// Borrow the currently-installed gate. Used by the dispatch path.
+    pub(crate) async fn pre_tool_gate_snapshot(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::pre_tool_gate::PreToolUseGate>> {
+        self.pre_tool_gate.read().await.clone()
+    }
+
+    /// Consult the `PreToolUseGate` (if any) before tool dispatch. On
+    /// `Block`, returns `Some(error_outcome)`; the caller short-circuits
+    /// the dispatch with this outcome. `None` means "proceed to dispatch".
+    ///
+    /// Panics inside the gate are caught and treated as `Allow` (fail
+    /// open) to avoid hanging the TUI.
+    pub(crate) async fn check_pre_tool_gate(
+        &self,
+        tool_name: &str,
+        input: &serde_json::Value,
+    ) -> Option<crate::tools::ToolCallOutcome> {
+        let gate = self.pre_tool_gate_snapshot().await?;
+        let name = tool_name.to_string();
+        let input_owned = input.clone();
+        let gate_owned = gate.clone();
+        // Propagate the `SUBAGENT_NAME` task-local across the `tokio::spawn`
+        // boundary — task-locals do not auto-inherit into spawned tasks, so
+        // read the current value here and re-enter a scope inside the
+        // spawned future. Outside any subagent scope this is `None` and
+        // the re-entered scope is harmless.
+        let subagent = crate::subhost::SUBAGENT_NAME
+            .try_with(|v| v.clone())
+            .ok()
+            .flatten();
+        let join = tokio::spawn(async move {
+            crate::subhost::SUBAGENT_NAME
+                .scope(subagent, gate_owned.check(&name, &input_owned))
+                .await
+        })
+        .await;
+        match join {
+            Ok(crate::pre_tool_gate::PreToolDecision::Allow) => None,
+            Ok(crate::pre_tool_gate::PreToolDecision::Block(reason)) => Some(
+                crate::tools::ToolCallOutcome::error(format!("blocked by user hook: {reason}")),
+            ),
+            Err(e) => {
+                tracing::warn!("PreToolUseGate panicked: {e}; failing open");
+                None
+            }
+        }
+    }
+}
+
+// The pool and active_provider are wrapped in `tokio::sync::RwLock` which
+// is `Send + Sync`. `PoolEntry` holds `Arc<dyn ProviderClient + Send + Sync>`
+// which is also `Send + Sync`. The rest of `Host` is too.
+const _: fn() = || {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<Host>();
+};
+
+/// RAII guard that publishes the per-turn events `Sender` to
+/// `Host::current_turn_events` for the lifetime of a turn, and clears
+/// it on drop. Lets the lazy bash-net resolver closure pick up the
+/// channel without having to thread it through every call layer.
+struct CurrentTurnEventsGuard<'a> {
+    slot: &'a std::sync::Mutex<Option<mpsc::Sender<TurnEvent>>>,
+}
+
+impl<'a> CurrentTurnEventsGuard<'a> {
+    fn install(
+        slot: &'a std::sync::Mutex<Option<mpsc::Sender<TurnEvent>>>,
+        events: &Option<mpsc::Sender<TurnEvent>>,
+    ) -> Self {
+        match slot.lock() {
+            Ok(mut guard) => *guard = events.clone(),
+            Err(_) => {
+                tracing::warn!(
+                    "current_turn_events mutex poisoned; \
+                     skipping per-turn event channel install"
+                );
+            }
+        }
+        Self { slot }
+    }
+}
+
+impl Drop for CurrentTurnEventsGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut g) = self.slot.lock() {
+            *g = None;
+        }
+    }
+}
+
+/// Summary text shown to the user when a `tool-bash` spawn requests
+/// network access. Surfaced via [`TurnEvent::BashNetworkRequested`];
+/// consumed by the TUI's bash-network modal. Public so test fixtures and
+/// the production path share a single string.
+pub const BASH_NETWORK_PROMPT_SUMMARY: &str = "tool-bash spawn requests network access";
+
+/// Bootstrap resolver used while the registry is being constructed —
+/// before we have an `Arc<Host>` we can install a resolver that calls
+/// back into the host's permission state. Its `resolve_policy` returns
+/// `false` (deny). The real resolver is installed in
+/// [`Host::wire_self_into_resolver`] right after `Host` construction —
+/// at which point the trait's default `resolve` takes over, so explicit
+/// overrides short-circuit normally.
+struct BootstrapBashNetResolver;
+
+#[async_trait::async_trait]
+impl BashNetResolver for BootstrapBashNetResolver {
+    async fn resolve_policy(&self, _context: BashNetContext<'_>) -> bool {
+        false
+    }
+}
+
+fn bootstrap_bash_net_resolver() -> BashNetResolverHandle {
+    std::sync::Arc::new(BootstrapBashNetResolver)
+}
+
+/// Build the three-layer system prompt for a freshly-connected host:
+/// default-prompt (optional) → embedder override (optional) →
+/// `OTTO.md` body (optional). The default-prompt layer reads
+/// `tools.bash_available()` so the rendered shell-capability paragraph
+/// reflects what the host actually wired.
+fn build_layered_system_prompt(config: &HostConfig, tools: &ToolRegistry) -> Option<String> {
+    let default_prompt_text = if config.default_prompt_enabled {
+        let app_version = match config.app_version.as_deref() {
+            Some(v) => crate::default_prompt::AppVersion::App(v),
+            None => crate::default_prompt::AppVersion::HostCrateFallback,
+        };
+        let env = crate::default_prompt::PromptEnv::probe(
+            &config.project_root,
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            tools.bash_available(),
+            app_version,
+        );
+        Some(crate::default_prompt::build(&env, &tools.defs))
+    } else {
+        None
+    };
+    let otto_md_body = project::parse_otto_md(&config.project_root).body;
+    project::layered_prompt(
+        default_prompt_text.as_deref(),
+        config.system_prompt.as_deref(),
+        otto_md_body.as_deref(),
+    )
+}
+
+/// Production resolver installed by [`Host::wire_self_into_resolver`]
+/// after `Host` construction. Holds `Arc`-shared handles into the host's
+/// permission state so `resolve_policy` can emit a
+/// [`TurnEvent::BashNetworkRequested`] event and await the user's answer.
+struct HostBashNetResolver {
+    policy: PermissionPolicy,
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<BashNetworkChoice>>>>,
+    next_id: Arc<AtomicU64>,
+    current_events: Arc<std::sync::Mutex<Option<mpsc::Sender<TurnEvent>>>>,
+}
+
+#[async_trait::async_trait]
+impl BashNetResolver for HostBashNetResolver {
+    async fn resolve_policy(&self, context: BashNetContext<'_>) -> bool {
+        let events = match self.current_events.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                tracing::warn!(
+                    "current_turn_events mutex poisoned; \
+                     bash-net resolver returning None for events sender"
+                );
+                None
+            }
+        };
+        let summary = format_bash_network_prompt_summary(context.command);
+        match resolve_bash_network_with_state(
+            &self.policy,
+            &self.pending,
+            &self.next_id,
+            events.as_ref(),
+            summary,
+        )
+        .await
+        {
+            Ok(v) => v,
+            // `tracing::error!` — not `warn!`. A resolver failure silently
+            // downgrades the user's bash-network preference to deny, and
+            // the TUI surface for that today is "bash spawn fails with no
+            // visible reason". Future work: surface this on the per-turn
+            // events channel so the TUI can show it as a notice.
+            Err(e) => {
+                tracing::error!("tool-bash net resolver failed: {e}. Defaulting to deny.");
+                false
+            }
+        }
+    }
+}
+
+/// Maximum length of a bash command included in the network-prompt
+/// summary. Commands longer than this are truncated with an ellipsis so
+/// the modal stays readable on narrow terminals.
+const BASH_PROMPT_COMMAND_TRUNCATE: usize = 80;
+
+/// Compose the prompt summary text shown in the bash-network modal.
+/// When the call provided a command, embed a truncated copy on a second
+/// line so the user sees *what* is being asked about rather than only
+/// the generic [`BASH_NETWORK_PROMPT_SUMMARY`] line.
+fn format_bash_network_prompt_summary(command: Option<&str>) -> String {
+    match command {
+        Some(cmd) => {
+            let truncated = if cmd.chars().count() > BASH_PROMPT_COMMAND_TRUNCATE {
+                let head: String = cmd.chars().take(BASH_PROMPT_COMMAND_TRUNCATE - 1).collect();
+                format!("{head}…")
+            } else {
+                cmd.to_string()
+            };
+            format!("{BASH_NETWORK_PROMPT_SUMMARY}\n  $ {truncated}")
+        }
+        None => BASH_NETWORK_PROMPT_SUMMARY.to_string(),
+    }
+}
+
+/// Reasons the lazy bash-network resolver can fail to produce a
+/// decision. Each variant short-circuits the lazy spawn to "deny"
+/// (via the resolver closure installed on the tool registry) and is
+/// logged so an operator can trace why the bash spawn never reached
+/// the user.
+#[derive(Debug, thiserror::Error)]
+pub enum BashNetResolveError {
+    /// `policy = Ask` and the bash spawn was triggered with no
+    /// per-turn events channel installed — there's no surface to
+    /// prompt the user on.
+    #[error("no event channel — running outside a turn")]
+    NoEvents,
+    /// The [`TurnEvent::BashNetworkRequested`] send failed because the
+    /// receiver was already dropped (turn ended / TUI shut down
+    /// between gate decision and send).
+    #[error("event channel closed before the prompt could be sent")]
+    EventChannelClosed,
+    /// The `oneshot::Sender` paired with the pending prompt id was
+    /// dropped without sending a choice — typically because the host
+    /// was shut down while the modal was up.
+    #[error("user prompt cancelled (oneshot dropped)")]
+    PromptCancelled,
+}
+
+/// Shared resolver-state logic. Pure-function over its inputs so the
+/// lazy-bash resolver closure (which can't borrow `&self`) and any
+/// future direct callers can both use it. Emits
+/// [`TurnEvent::BashNetworkRequested`] on the supplied channel when
+/// the policy is `Ask` and no cached decision exists, awaits the
+/// matching [`Host::resolve_bash_network_decision`] call, and
+/// returns the resolved `allow_net`.
+async fn resolve_bash_network_with_state(
+    policy: &PermissionPolicy,
+    pending: &Mutex<HashMap<u64, oneshot::Sender<BashNetworkChoice>>>,
+    next_request_id: &AtomicU64,
+    events: Option<&mpsc::Sender<TurnEvent>>,
+    summary: String,
+) -> Result<bool, BashNetResolveError> {
+    match policy.bash_network() {
+        BashNetworkPolicy::Always => Ok(true),
+        BashNetworkPolicy::Never => Ok(false),
+        BashNetworkPolicy::Ask => {
+            if let Some(cached) = policy.bash_network_cached() {
+                return Ok(cached);
+            }
+            // No cache — emit a prompt and await.
+            let Some(events) = events else {
+                // No interactive surface — collapse to deny so the
+                // spawn doesn't hang on a oneshot that nobody resolves.
+                tracing::warn!(
+                    "tool-bash net resolver: no event channel — running outside a turn; \
+                     defaulting to deny"
+                );
+                return Err(BashNetResolveError::NoEvents);
+            };
+            let id = next_request_id.fetch_add(1, Ordering::Relaxed);
+            let (tx, rx) = oneshot::channel();
+            pending.lock().await.insert(id, tx);
+            if events
+                .send(TurnEvent::BashNetworkRequested {
+                    id,
+                    summary: summary.clone(),
+                })
+                .await
+                .is_err()
+            {
+                pending.lock().await.remove(&id);
+                tracing::warn!(
+                    id,
+                    summary = %summary,
+                    "tool-bash net resolver: event channel closed before prompt could be sent",
+                );
+                return Err(BashNetResolveError::EventChannelClosed);
+            }
+            let choice = rx.await.map_err(|_| {
+                tracing::warn!(
+                    id,
+                    summary = %summary,
+                    "tool-bash net resolver: prompt cancelled (oneshot dropped)",
+                );
+                BashNetResolveError::PromptCancelled
+            })?;
+            // Update cache via the same sync resolver — pass a closure
+            // that returns the choice we already have.
+            let allow = policy.resolve_bash_network(|| choice);
+            Ok(allow)
+        }
+    }
+}
+
+/// Convert a stream of provider [`StreamEvent`]s into [`TurnEvent`]s and
+/// forward them to the host caller.
+///
+/// Translated events:
+/// - `ContentBlockDelta { TextDelta }` → `TurnEvent::TextDelta`
+/// - `ContentBlockStart { Html }` → `TurnEvent::HtmlBlockStart`
+/// - `ContentBlockDelta { HtmlSourceDelta }` → `TurnEvent::HtmlBlockDelta`
+/// - `ContentBlockStop` (for an HTML block) → `TurnEvent::HtmlBlockStop`
+///
+/// All other events are dropped — they're re-derivable from the final
+/// `CompleteResponse`, which the host loop already processes.
+async fn forward_text_deltas(mut rx: mpsc::Receiver<StreamEvent>, out: mpsc::Sender<TurnEvent>) {
+    // Track which block indices are HTML so we can emit HtmlBlockStop at the
+    // right ContentBlockStop event.
+    let mut html_indices: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+    while let Some(ev) = rx.recv().await {
+        let turn_ev = match ev {
+            StreamEvent::ContentBlockDelta {
+                delta: BlockDelta::TextDelta { text },
+                ..
+            } => Some(TurnEvent::TextDelta { text }),
+
+            StreamEvent::ContentBlockStart {
+                index,
+                block: ContentBlock::Html { .. },
+            } => {
+                html_indices.insert(index);
+                Some(TurnEvent::HtmlBlockStart { index })
+            }
+
+            StreamEvent::ContentBlockDelta {
+                index,
+                delta: BlockDelta::HtmlSourceDelta { source },
+            } => Some(TurnEvent::HtmlBlockDelta { index, source }),
+
+            StreamEvent::ContentBlockStop { index } if html_indices.contains(&index) => {
+                html_indices.remove(&index);
+                Some(TurnEvent::HtmlBlockStop { index })
+            }
+
+            _ => None,
+        };
+
+        if let Some(ev) = turn_ev
+            && out.send(ev).await.is_err()
+        {
+            break;
+        }
+    }
+}
+
+/// Drain resource events from `rx` into `cache`. When a turn is live
+/// (i.e. `events_slot` holds a `Some`), also emit a
+/// [`TurnEvent::ResourceUpdated`] so the TUI can render a banner. The
+/// cache mutation always happens regardless of whether a turn is live —
+/// the next iteration boundary will surface the URI via conversation
+/// injection in either case.
+async fn resource_pump(
+    mut rx: mpsc::Receiver<crate::tools::ResourceEvent>,
+    cache: Arc<tokio::sync::Mutex<crate::resources::ResourceCache>>,
+    events_slot: Arc<std::sync::Mutex<Option<mpsc::Sender<TurnEvent>>>>,
+) {
+    while let Some(event) = rx.recv().await {
+        match event {
+            crate::tools::ResourceEvent::Updated { owner, uri } => {
+                {
+                    let mut guard = cache.lock().await;
+                    guard.mark_updated(uri.clone(), owner.clone());
+                    // guard dropped here
+                }
+                // Snapshot the events sender under the std::sync::Mutex,
+                // then drop the guard before awaiting on the send. Same
+                // discipline as current_turn_events use everywhere else
+                // in this file.
+                let maybe_tx = {
+                    let guard = events_slot.lock().expect("events slot poisoned");
+                    guard.clone()
+                };
+                if let Some(tx) = maybe_tx {
+                    let summary = uri.clone();
+                    let _ = tx
+                        .send(TurnEvent::ResourceUpdated {
+                            uri,
+                            owner,
+                            summary,
+                        })
+                        .await;
+                }
+            }
+            crate::tools::ResourceEvent::ListChanged { owner } => {
+                tracing::debug!(
+                    owner = %owner,
+                    "resources/list_changed received; ignored (host pulls on `updated`)"
+                );
+            }
+        }
+    }
+    tracing::debug!("resource_pump channel closed; pump exiting");
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+    use async_trait::async_trait;
+    use otto_mcp::ProviderClient;
+    use otto_protocol::{
+        CompleteRequest, CompleteResponse, ContentBlock, ProviderError, Role, StopReason,
+        StreamEvent, Usage,
+    };
+    use serde_json::json;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::config::{HostConfig, ProviderEndpoint};
+
+    /// Mock provider that on the first `complete` returns one `tool_use` and
+    /// on every subsequent call returns `end_turn`. The first response asks
+    /// for `tool_name` with the supplied JSON `tool_args`.
+    struct ScriptedProvider {
+        calls: AtomicUsize,
+        tool_name: String,
+        tool_args: Value,
+    }
+
+    impl ScriptedProvider {
+        fn new(tool_name: impl Into<String>, tool_args: Value) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                tool_name: tool_name.into(),
+                tool_args,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ProviderClient for ScriptedProvider {
+        async fn complete(
+            &self,
+            req: CompleteRequest,
+            _events: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<CompleteResponse, ProviderError> {
+            let n = self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            let (content, stop_reason) = if n == 0 {
+                (
+                    vec![ContentBlock::ToolUse {
+                        id: "tu_1".into(),
+                        name: self.tool_name.clone(),
+                        input: self.tool_args.clone(),
+                    }],
+                    StopReason::ToolUse,
+                )
+            } else {
+                (
+                    vec![ContentBlock::Text {
+                        text: "done".into(),
+                    }],
+                    StopReason::EndTurn,
+                )
+            };
+            Ok(CompleteResponse {
+                id: format!("resp-{n}"),
+                model: req.model,
+                content,
+                stop_reason,
+                stop_sequence: None,
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    fn config_no_tools() -> HostConfig {
+        let project_root = std::env::temp_dir().join("otto-policy-test");
+        HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(project_root.clone())
+        // Use a transient (in-memory only) policy so tests don't touch the
+        // real `~/.otto/permissions.toml`.
+        .with_policy(PermissionPolicy::transient(project_root))
+    }
+
+    /// `read_file` against `.env` is a default-Deny — host must synthesize an
+    /// error tool_result and emit `ToolCallDenied`, never touching the
+    /// registry.
+    #[tokio::test]
+    async fn deny_path_synthesizes_error_and_emits_event() {
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("read_file", json!({"path": ".env"})));
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
+        let outcome = host.run_turn_streaming("hi", tx).await.unwrap();
+
+        // The model thought a tool ran; we report it as Errored with a
+        // policy-denied payload.
+        assert_eq!(outcome.tool_calls.len(), 1);
+        let call = &outcome.tool_calls[0];
+        assert_eq!(call.name, "read_file");
+        assert_eq!(call.status, ToolCallStatus::Errored);
+        assert!(call.result.contains("denied by policy"), "{}", call.result);
+
+        let mut saw_denied = false;
+        let mut saw_started = false;
+        while let Some(ev) = rx.recv().await {
+            match ev {
+                TurnEvent::ToolCallDenied { ref name, .. } if name == "read_file" => {
+                    saw_denied = true;
+                }
+                TurnEvent::ToolCallStarted { .. } => {
+                    saw_started = true;
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_denied, "expected a ToolCallDenied event");
+        assert!(
+            !saw_started,
+            "ToolCallStarted should not fire for a denied call"
+        );
+    }
+
+    /// `run` is default-Ask — host must emit `PermissionRequested` and wait
+    /// for `resolve_permission`. After Allow, the registry runs (returns
+    /// "unknown tool" since none registered, which is fine — we're testing
+    /// the gating, not the call).
+    #[tokio::test]
+    async fn ask_path_blocks_until_resolved() {
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("run", json!({"command": "echo hi"})));
+        let host = Arc::new(
+            Host::with_components(config_no_tools(), provider)
+                .await
+                .unwrap(),
+        );
+
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
+        let host_for_run = Arc::clone(&host);
+        let runner = tokio::spawn(async move { host_for_run.run_turn_streaming("hi", tx).await });
+
+        // Drain events until we see PermissionRequested, then resolve Allow.
+        let mut request_id: Option<u64> = None;
+        while let Some(ev) = rx.recv().await {
+            if let TurnEvent::PermissionRequested { id, ref name, .. } = ev {
+                assert_eq!(name, "run");
+                request_id = Some(id);
+                break;
+            }
+        }
+        let id = request_id.expect("PermissionRequested never arrived");
+        host.resolve_permission(id, PermissionDecision::Allow).await;
+
+        // Drain the rest.
+        while rx.recv().await.is_some() {}
+
+        let outcome = runner.await.unwrap().unwrap();
+        // The Allow let the call reach the (empty) registry, which returns an
+        // "unknown tool" error. That's the contract we want — the gate said
+        // "go" and the call dispatched.
+        assert_eq!(outcome.tool_calls.len(), 1);
+        let call = &outcome.tool_calls[0];
+        assert_eq!(call.name, "run");
+        assert_eq!(call.status, ToolCallStatus::Errored);
+        assert!(
+            call.result.contains("unknown tool"),
+            "expected dispatch to reach registry, got: {}",
+            call.result
+        );
+    }
+
+    /// A pre-registered Always rule short-circuits the policy: the modal
+    /// never fires and `gate_tool_call` returns the rule's decision. After
+    /// M9 PR 4 the rule is keyed on a normalized [`ArgPattern`] (here:
+    /// command first-word `echo`) and stored in the policy's `toml_rules`
+    /// layer — disk I/O is suppressed because the test policy is transient.
+    #[tokio::test]
+    async fn session_rule_short_circuits_policy() {
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("run", json!({"command": "echo hi"})));
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+        host.add_session_rule(
+            "run",
+            &json!({"command": "echo hi"}),
+            PermissionDecision::Allow,
+        )
+        .await;
+
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
+        let outcome = host.run_turn_streaming("hi", tx).await.unwrap();
+
+        let mut saw_permission = false;
+        while let Some(ev) = rx.recv().await {
+            if matches!(ev, TurnEvent::PermissionRequested { .. }) {
+                saw_permission = true;
+            }
+        }
+        assert!(
+            !saw_permission,
+            "session rule should suppress PermissionRequested"
+        );
+        // Allow lets the call reach the empty registry → "unknown tool".
+        assert!(outcome.tool_calls[0].result.contains("unknown tool"));
+    }
+
+    /// Lazy-spawn end-to-end (no real bash binary): build the exact
+    /// resolver closure `Host::wire_self_into_resolver` builds, drive it
+    /// twice, and confirm only the first call emits a prompt — the
+    /// second hits the session cache after `AlwaysThisSession`. This is
+    /// the contract the lazy `tool-bash` spawn relies on for "prompt
+    /// once per session", and the regression is what made this PR
+    /// necessary: with the old eager spawn the question was already
+    /// settled at registry-connect time.
+    #[tokio::test]
+    async fn lazy_bash_resolver_prompts_once_then_caches_session() {
+        use std::sync::Arc;
+
+        use crate::permissions::BashNetworkPolicy;
+        use crate::tools::{BashNetResolver, NetOverride};
+
+        // Build a transient Ask-policy host and reach into its state to
+        // construct the same resolver struct `wire_self_into_resolver`
+        // installs. We test through the resolver because the registry's
+        // lazy-bash dispatch path runs exactly this code on every call.
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("noop", json!({})));
+        let project_root = std::env::temp_dir().join("otto-lazy-bash-test");
+        let config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(project_root.clone())
+        .with_policy(
+            PermissionPolicy::transient(project_root).with_bash_network(BashNetworkPolicy::Ask),
+        );
+        let host = Arc::new(Host::with_components(config, provider).await.unwrap());
+
+        let resolver = Arc::new(super::HostBashNetResolver {
+            policy: host.policy.clone(),
+            pending: host.pending_bash_network.clone(),
+            next_id: host.next_request_id.clone(),
+            current_events: host.current_turn_events.clone(),
+        });
+
+        // Publish a per-turn events channel into the host's slot — same
+        // as `CurrentTurnEventsGuard::install` would do at turn start.
+        let (events_tx, mut events_rx) = mpsc::channel::<TurnEvent>(8);
+        *host.current_turn_events.lock().unwrap() = Some(events_tx);
+
+        // Spawn the first resolve in a task so we can pump events and
+        // call resolve_bash_network_decision concurrently.
+        let resolver_clone = resolver.clone();
+        let first = tokio::spawn(async move {
+            resolver_clone
+                .resolve(NetOverride::Inherit, BashNetContext::default())
+                .await
+        });
+
+        // We expect a single BashNetworkRequested. Pluck its id, then
+        // answer AlwaysThisSession so the cache populates.
+        let id = loop {
+            match events_rx.recv().await {
+                Some(TurnEvent::BashNetworkRequested { id, .. }) => break id,
+                Some(_other) => continue,
+                None => panic!("events channel closed before BashNetworkRequested arrived"),
+            }
+        };
+        host.resolve_bash_network_decision(id, BashNetworkChoice::AlwaysThisSession)
+            .await;
+
+        let allow_first = first.await.unwrap();
+        assert!(allow_first, "AlwaysThisSession must resolve allow_net=true");
+
+        // Second resolve: should NOT emit another prompt (cache hit).
+        let allow_second = resolver
+            .resolve(NetOverride::Inherit, BashNetContext::default())
+            .await;
+        assert!(
+            allow_second,
+            "second resolve must reuse the cached AlwaysThisSession decision"
+        );
+
+        // Drain any pending events with a tiny window and assert none
+        // are BashNetworkRequested. We use try_recv repeatedly with no
+        // sleep — the channel either has the message already or it
+        // never will because the resolve_bash_network_with_state path
+        // short-circuited via `policy.bash_network_cached()`.
+        loop {
+            match events_rx.try_recv() {
+                Ok(TurnEvent::BashNetworkRequested { .. }) => {
+                    panic!("second resolve must NOT emit a BashNetworkRequested");
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+
+        // Drop the resolver so the test exits cleanly.
+        drop(resolver);
+    }
+
+    /// The trait's default `resolve` impl short-circuits explicit
+    /// overrides *before* it touches the session decision cache. This
+    /// pins that contract: even after running the resolver with both
+    /// `ForceAllow` and `ForceDeny` back-to-back, the policy's cached
+    /// decision must stay `None`.
+    #[tokio::test]
+    async fn per_call_override_short_circuits_without_touching_cache() {
+        use std::sync::Arc;
+
+        use crate::permissions::BashNetworkPolicy;
+        use crate::tools::{BashNetResolver, NetOverride};
+
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("noop", json!({})));
+        let project_root = std::env::temp_dir().join("otto-per-call-override-test");
+        let config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(project_root.clone())
+        .with_policy(
+            PermissionPolicy::transient(project_root).with_bash_network(BashNetworkPolicy::Ask),
+        );
+        let host = Arc::new(Host::with_components(config, provider).await.unwrap());
+
+        let resolver = Arc::new(super::HostBashNetResolver {
+            policy: host.policy.clone(),
+            pending: host.pending_bash_network.clone(),
+            next_id: host.next_request_id.clone(),
+            current_events: host.current_turn_events.clone(),
+        });
+
+        let allow = resolver
+            .resolve(NetOverride::ForceAllow, BashNetContext::default())
+            .await;
+        assert!(allow);
+        assert_eq!(
+            host.policy.bash_network_cached(),
+            None,
+            "ForceAllow must NOT update the cache"
+        );
+
+        let allow = resolver
+            .resolve(NetOverride::ForceDeny, BashNetContext::default())
+            .await;
+        assert!(!allow);
+        assert_eq!(
+            host.policy.bash_network_cached(),
+            None,
+            "ForceDeny must NOT update the cache"
+        );
+    }
+
+    /// `non-streaming` `run_turn` has no event channel, so any Ask collapses
+    /// to a Deny rather than hanging on a oneshot that nobody resolves.
+    #[tokio::test]
+    async fn ask_with_no_events_collapses_to_deny() {
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("run", json!({"command": "echo hi"})));
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+
+        let outcome = host.run_turn("hi").await.unwrap();
+        assert_eq!(outcome.tool_calls.len(), 1);
+        assert_eq!(outcome.tool_calls[0].status, ToolCallStatus::Errored);
+        assert!(
+            outcome.tool_calls[0]
+                .result
+                .contains("non-interactive turn"),
+            "{}",
+            outcome.tool_calls[0].result
+        );
+    }
+
+    /// Some providers (notably Gemini) emit `stop_reason=end_turn`
+    /// alongside `tool_use` content blocks because their wire format has no
+    /// distinct "tool_use" finish reason. The host must treat tool_use
+    /// blocks as authoritative and dispatch them rather than rejecting the
+    /// response.
+    #[tokio::test]
+    async fn tool_use_blocks_run_even_when_stop_reason_says_end_turn() {
+        struct EndTurnWithToolUseProvider {
+            calls: AtomicUsize,
+        }
+
+        #[async_trait]
+        impl ProviderClient for EndTurnWithToolUseProvider {
+            async fn complete(
+                &self,
+                req: CompleteRequest,
+                _events: Option<mpsc::Sender<StreamEvent>>,
+            ) -> Result<CompleteResponse, ProviderError> {
+                let n = self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+                let content = if n == 0 {
+                    vec![ContentBlock::ToolUse {
+                        id: "tu_1".into(),
+                        name: "definitely_no_such_tool".into(),
+                        input: json!({"arg": "value"}),
+                    }]
+                } else {
+                    vec![ContentBlock::Text {
+                        text: "all done".into(),
+                    }]
+                };
+                Ok(CompleteResponse {
+                    id: format!("resp-{n}"),
+                    model: req.model,
+                    content,
+                    stop_reason: StopReason::EndTurn,
+                    stop_sequence: None,
+                    usage: Usage::default(),
+                })
+            }
+        }
+
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(EndTurnWithToolUseProvider {
+                calls: AtomicUsize::new(0),
+            });
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+        host.add_session_rule(
+            "definitely_no_such_tool",
+            &json!({"arg": "value"}),
+            PermissionDecision::Allow,
+        )
+        .await;
+
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
+        let outcome = host.run_turn_streaming("hi", tx).await.unwrap();
+        while rx.recv().await.is_some() {}
+
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "host must dispatch the tool_use block even when stop_reason=end_turn"
+        );
+        assert_eq!(outcome.text, "all done");
+    }
+
+    /// A response that pairs `tool_use` with `StopReason::MaxTokens` still
+    /// runs the tool — the new "content is authoritative" rule applies to
+    /// every non-`EndTurn` stop reason, not just `EndTurn`. This pins the
+    /// behavior so a future refactor can't accidentally restore a
+    /// `stop_reason`-gated short-circuit for `MaxTokens`/`Refusal`/etc.
+    #[tokio::test]
+    async fn tool_use_blocks_run_even_when_stop_reason_is_max_tokens() {
+        struct MaxTokensWithToolUseProvider {
+            calls: AtomicUsize,
+        }
+
+        #[async_trait]
+        impl ProviderClient for MaxTokensWithToolUseProvider {
+            async fn complete(
+                &self,
+                req: CompleteRequest,
+                _events: Option<mpsc::Sender<StreamEvent>>,
+            ) -> Result<CompleteResponse, ProviderError> {
+                let n = self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+                let (content, stop_reason) = if n == 0 {
+                    (
+                        vec![ContentBlock::ToolUse {
+                            id: "tu_max".into(),
+                            name: "definitely_no_such_tool".into(),
+                            input: json!({}),
+                        }],
+                        StopReason::MaxTokens,
+                    )
+                } else {
+                    (
+                        vec![ContentBlock::Text {
+                            text: "done".into(),
+                        }],
+                        StopReason::EndTurn,
+                    )
+                };
+                Ok(CompleteResponse {
+                    id: format!("resp-{n}"),
+                    model: req.model,
+                    content,
+                    stop_reason,
+                    stop_sequence: None,
+                    usage: Usage::default(),
+                })
+            }
+        }
+
+        let provider: Box<dyn ProviderClient + Send + Sync> =
+            Box::new(MaxTokensWithToolUseProvider {
+                calls: AtomicUsize::new(0),
+            });
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+        host.add_session_rule(
+            "definitely_no_such_tool",
+            &json!({}),
+            PermissionDecision::Allow,
+        )
+        .await;
+
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
+        let outcome = host.run_turn_streaming("hi", tx).await.unwrap();
+        while rx.recv().await.is_some() {}
+
+        assert_eq!(outcome.tool_calls.len(), 1);
+        assert_eq!(outcome.text, "done");
+    }
+
+    /// Many real responses (Gemini especially) carry preamble text in the
+    /// same turn as a tool_use ("I'll check that for you" + `functionCall`).
+    /// The host must still dispatch the tool and continue; the intermediate
+    /// turn's text is not exposed via `TurnOutcome` (only the final turn's
+    /// text is), so we assert on the assistant turn the host commits to
+    /// `state.messages`.
+    #[tokio::test]
+    async fn mixed_text_and_tool_use_in_one_response_runs_tool() {
+        struct MixedProvider {
+            calls: AtomicUsize,
+        }
+
+        #[async_trait]
+        impl ProviderClient for MixedProvider {
+            async fn complete(
+                &self,
+                req: CompleteRequest,
+                _events: Option<mpsc::Sender<StreamEvent>>,
+            ) -> Result<CompleteResponse, ProviderError> {
+                let n = self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+                let content = if n == 0 {
+                    vec![
+                        ContentBlock::Text {
+                            text: "I'll check that.".into(),
+                        },
+                        ContentBlock::ToolUse {
+                            id: "tu_mixed".into(),
+                            name: "definitely_no_such_tool".into(),
+                            input: json!({}),
+                        },
+                    ]
+                } else {
+                    vec![ContentBlock::Text {
+                        text: "final reply".into(),
+                    }]
+                };
+                Ok(CompleteResponse {
+                    id: format!("resp-{n}"),
+                    model: req.model,
+                    content,
+                    stop_reason: StopReason::EndTurn,
+                    stop_sequence: None,
+                    usage: Usage::default(),
+                })
+            }
+        }
+
+        let provider: Box<dyn ProviderClient + Send + Sync> = Box::new(MixedProvider {
+            calls: AtomicUsize::new(0),
+        });
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+        host.add_session_rule(
+            "definitely_no_such_tool",
+            &json!({}),
+            PermissionDecision::Allow,
+        )
+        .await;
+
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
+        let outcome = host.run_turn_streaming("hi", tx).await.unwrap();
+        while rx.recv().await.is_some() {}
+
+        assert_eq!(outcome.tool_calls.len(), 1);
+        assert_eq!(outcome.text, "final reply");
+
+        // The intermediate assistant turn that mixed text + tool_use must
+        // round-trip into session state verbatim — both blocks preserved.
+        let state = host.state.lock().await;
+        let first_assistant = state
+            .messages
+            .iter()
+            .find(|m| matches!(m.role, Role::Assistant))
+            .expect("session must record the assistant turn");
+        assert_eq!(
+            first_assistant.content.len(),
+            2,
+            "intermediate assistant turn must keep both Text and ToolUse blocks"
+        );
+        assert!(matches!(
+            &first_assistant.content[0],
+            ContentBlock::Text { text } if text == "I'll check that."
+        ));
+        assert!(matches!(
+            &first_assistant.content[1],
+            ContentBlock::ToolUse { name, .. } if name == "definitely_no_such_tool"
+        ));
+    }
+
+    #[test]
+    fn format_prompt_summary_without_command_is_static() {
+        let s = super::format_bash_network_prompt_summary(None);
+        assert_eq!(s, super::BASH_NETWORK_PROMPT_SUMMARY);
+    }
+
+    #[test]
+    fn format_prompt_summary_with_short_command_includes_command_line() {
+        let s = super::format_bash_network_prompt_summary(Some("curl https://example.com"));
+        assert!(
+            s.starts_with(super::BASH_NETWORK_PROMPT_SUMMARY),
+            "summary must still lead with the static line: {s}"
+        );
+        assert!(
+            s.contains("$ curl https://example.com"),
+            "summary must show the command after a $ prompt: {s}"
+        );
+        assert!(
+            !s.contains("…"),
+            "short commands must not be truncated: {s}"
+        );
+    }
+
+    #[test]
+    fn format_prompt_summary_truncates_long_command_with_ellipsis() {
+        let long = "x".repeat(super::BASH_PROMPT_COMMAND_TRUNCATE + 50);
+        let s = super::format_bash_network_prompt_summary(Some(&long));
+        assert!(
+            s.contains('…'),
+            "commands longer than the truncate limit must end with an ellipsis: {s}"
+        );
+        // The truncated portion must respect the limit (limit-1 chars + '…' = limit chars total).
+        let body_line = s.lines().nth(1).expect("summary should have a 2nd line");
+        let visible: String = body_line.chars().skip_while(|c| *c != 'x').collect();
+        assert_eq!(
+            visible.chars().count(),
+            super::BASH_PROMPT_COMMAND_TRUNCATE,
+            "truncated body must be exactly the truncate limit in chars: {visible:?}"
+        );
+    }
+
+    /// Records the `system` field of every `CompleteRequest`, then returns
+    /// an `end_turn` response. Used to verify what the host puts in
+    /// `req.system` after layering.
+    struct CapturingProvider {
+        captured: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    }
+
+    impl CapturingProvider {
+        fn new() -> (Self, Arc<std::sync::Mutex<Vec<Option<String>>>>) {
+            let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
+            (
+                Self {
+                    captured: captured.clone(),
+                },
+                captured,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl ProviderClient for CapturingProvider {
+        async fn complete(
+            &self,
+            req: CompleteRequest,
+            _events: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<CompleteResponse, ProviderError> {
+            self.captured.lock().unwrap().push(req.system.clone());
+            Ok(CompleteResponse {
+                id: "resp-cap".into(),
+                model: req.model,
+                content: vec![ContentBlock::Text {
+                    text: "done".into(),
+                }],
+                stop_reason: StopReason::EndTurn,
+                stop_sequence: None,
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn host_start_default_prompt_enabled_attaches_system_message() {
+        let d = tempfile::tempdir().unwrap();
+        let config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(d.path().to_path_buf())
+        .with_app_version("9.9.9")
+        .with_policy(PermissionPolicy::transient(d.path().to_path_buf()));
+
+        let (provider, captured) = CapturingProvider::new();
+        let host = Host::with_components(config, Box::new(provider))
+            .await
+            .unwrap();
+        host.run_turn("hello").await.unwrap();
+
+        let captured = captured.lock().unwrap();
+        let system = captured
+            .first()
+            .expect("at least one completion captured")
+            .as_ref()
+            .expect("system prompt must be Some when default is enabled");
+        assert!(
+            system.contains("# Otto default prompt"),
+            "missing default heading in:\n{system}"
+        );
+        assert!(system.contains("You are Otto"));
+        assert!(system.contains("Otto version: 9.9.9"));
+    }
+
+    #[tokio::test]
+    async fn host_start_default_prompt_disabled_omits_default() {
+        let d = tempfile::tempdir().unwrap();
+        let config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(d.path().to_path_buf())
+        .with_default_prompt_disabled()
+        .with_policy(PermissionPolicy::transient(d.path().to_path_buf()));
+
+        let (provider, captured) = CapturingProvider::new();
+        let host = Host::with_components(config, Box::new(provider))
+            .await
+            .unwrap();
+        host.run_turn("hello").await.unwrap();
+
+        let captured = captured.lock().unwrap();
+        let system = captured.first().expect("at least one completion captured");
+        assert!(
+            system.is_none(),
+            "expected None system when default disabled with no override + no OTTO.md, got: {system:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn host_start_default_plus_otto_md_composes_in_order() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("OTTO.md"), "BODY_TEXT\n").unwrap();
+        let config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(d.path().to_path_buf())
+        .with_policy(PermissionPolicy::transient(d.path().to_path_buf()));
+
+        let (provider, captured) = CapturingProvider::new();
+        let host = Host::with_components(config, Box::new(provider))
+            .await
+            .unwrap();
+        host.run_turn("hello").await.unwrap();
+
+        let captured = captured.lock().unwrap();
+        let system = captured.first().unwrap().as_ref().unwrap();
+        let i_default = system.find("# Otto default prompt").expect(system);
+        let i_body = system
+            .find("# Project context (from OTTO.md)")
+            .expect(system);
+        assert!(i_default < i_body, "{system}");
+        assert!(system.contains("BODY_TEXT"));
+    }
+
+    #[tokio::test]
+    async fn host_start_with_system_prompt_attaches_host_override_section() {
+        // `HostConfig::system_prompt = Some("...")` should appear in
+        // the rendered prompt as the middle layer (between default and
+        // OTTO.md body). Pins the override-layer wiring through
+        // the real `build_layered_system_prompt` path.
+        let d = tempfile::tempdir().unwrap();
+        let mut config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(d.path().to_path_buf())
+        .with_policy(PermissionPolicy::transient(d.path().to_path_buf()));
+        config.system_prompt = Some("OVERRIDE_PAYLOAD".to_string());
+
+        let (provider, captured) = CapturingProvider::new();
+        let host = Host::with_components(config, Box::new(provider))
+            .await
+            .unwrap();
+        host.run_turn("hello").await.unwrap();
+
+        let captured = captured.lock().unwrap();
+        let system = captured.first().unwrap().as_ref().unwrap();
+        let i_default = system.find("# Otto default prompt").expect(system);
+        let i_override = system.find("# Host override").expect(system);
+        assert!(i_default < i_override, "{system}");
+        assert!(system.contains("OVERRIDE_PAYLOAD"));
+    }
+
+    #[tokio::test]
+    async fn host_start_without_app_version_uses_host_crate_label() {
+        // When `HostConfig::app_version` is unset, the prompt should
+        // render the `AppVersion::HostCrateFallback` label so a
+        // library embedder forgetting `with_app_version` is visible.
+        let d = tempfile::tempdir().unwrap();
+        let config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(d.path().to_path_buf())
+        .with_policy(PermissionPolicy::transient(d.path().to_path_buf()));
+        // Note: no `.with_app_version(...)` call.
+
+        let (provider, captured) = CapturingProvider::new();
+        let host = Host::with_components(config, Box::new(provider))
+            .await
+            .unwrap();
+        host.run_turn("hello").await.unwrap();
+
+        let captured = captured.lock().unwrap();
+        let system = captured.first().unwrap().as_ref().unwrap();
+        assert!(
+            system.contains("Otto host crate version:"),
+            "expected host-crate fallback label, got:\n{system}"
+        );
+        assert!(
+            !system.contains("Otto version:"),
+            "App-version label leaked when no embedder version was set: {system}"
+        );
+    }
+
+    /// Direct unit test of the shared `build_layered_system_prompt`
+    /// helper that both `Host::start` and `Host::with_components`
+    /// call. A regression that changes one constructor's wiring but
+    /// not the other wouldn't be caught by the constructor-level
+    /// `CapturingProvider` tests alone — this test pins the helper's
+    /// behaviour in isolation so any future refactor that bypasses
+    /// it from one constructor would surface as a coverage gap, not
+    /// a silent regression.
+    #[tokio::test]
+    async fn build_layered_system_prompt_helper_composes_all_three_layers() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("OTTO.md"), "PROJECT_BODY\n").unwrap();
+        let mut config = HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(d.path().to_path_buf())
+        .with_app_version("7.7.7")
+        .with_policy(PermissionPolicy::transient(d.path().to_path_buf()));
+        config.system_prompt = Some("MIDDLE_LAYER".to_string());
+
+        let sandbox = crate::sandbox::SandboxConfig::default();
+        let resolver = bootstrap_bash_net_resolver();
+        let (resource_tx, _resource_rx) =
+            tokio::sync::mpsc::channel::<crate::tools::ResourceEvent>(64);
+        let tools = crate::tools::ToolRegistry::connect(
+            &[],
+            &config.project_root,
+            &sandbox,
+            Duration::from_millis(config.connect_timeout_ms),
+            resolver,
+            resource_tx,
+        )
+        .await
+        .unwrap();
+
+        let prompt = super::build_layered_system_prompt(&config, &tools)
+            .expect("default + override + body must produce Some");
+
+        // All three layer headings present.
+        for h in &[
+            "# Otto default prompt",
+            "# Host override",
+            "# Project context (from OTTO.md)",
+        ] {
+            assert!(prompt.contains(h), "missing heading {h} in:\n{prompt}");
+        }
+        // Override and body content rendered.
+        assert!(prompt.contains("MIDDLE_LAYER"));
+        assert!(prompt.contains("PROJECT_BODY"));
+        // Default-section content reflects the embedder version label.
+        assert!(prompt.contains("Otto version: 7.7.7"));
+        // Bash isn't wired in this fixture, but the registry always
+        // advertises the synthetic `read_resource` tool, so the affordances
+        // section renders the populated branch rather than the no-tools one.
+        assert!(prompt.contains("The host has wired the following tools"));
+        assert!(prompt.contains("`read_resource`"));
+    }
+
+    #[test]
+    fn turn_event_resource_updated_carries_uri_owner_summary() {
+        // Pinning the variant fields so an accidental rename in a later
+        // refactor doesn't silently change the wire surface the TUI matches on.
+        let ev = TurnEvent::ResourceUpdated {
+            uri: "lsp://diagnostics/src/foo.rs".into(),
+            owner: "tool-lsp".into(),
+            summary: "3 errors, 1 warning".into(),
+        };
+        match ev {
+            TurnEvent::ResourceUpdated {
+                uri,
+                owner,
+                summary,
+            } => {
+                assert_eq!(uri, "lsp://diagnostics/src/foo.rs");
+                assert_eq!(owner, "tool-lsp");
+                assert_eq!(summary, "3 errors, 1 warning");
+            }
+            _ => panic!("constructed variant didn't match"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_tool_gate_starts_none_and_can_be_set() {
+        use crate::pre_tool_gate::{PreToolDecision, PreToolUseGate};
+        use async_trait::async_trait;
+        use serde_json::Value;
+
+        struct Allow;
+        #[async_trait]
+        impl PreToolUseGate for Allow {
+            async fn check(&self, _: &str, _: &Value) -> PreToolDecision {
+                PreToolDecision::Allow
+            }
+        }
+
+        let provider: Box<dyn otto_mcp::ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("noop", serde_json::json!({})));
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+
+        assert!(host.pre_tool_gate_snapshot().await.is_none());
+        host.set_pre_tool_gate(std::sync::Arc::new(Allow)).await;
+        assert!(host.pre_tool_gate_snapshot().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn pre_tool_gate_block_short_circuits_dispatch() {
+        use crate::pre_tool_gate::{PreToolDecision, PreToolUseGate};
+        use async_trait::async_trait;
+        use serde_json::Value;
+
+        struct Deny;
+        #[async_trait]
+        impl PreToolUseGate for Deny {
+            async fn check(&self, _: &str, _: &Value) -> PreToolDecision {
+                PreToolDecision::Block("test deny".into())
+            }
+        }
+
+        let provider: Box<dyn otto_mcp::ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("noop", serde_json::json!({})));
+        let host = Host::with_components(config_no_tools(), provider)
+            .await
+            .unwrap();
+
+        host.set_pre_tool_gate(std::sync::Arc::new(Deny)).await;
+
+        // check_pre_tool_gate returns Some(error_outcome) when the gate blocks.
+        let outcome = host
+            .check_pre_tool_gate("run", &serde_json::json!({"command": "echo hi"}))
+            .await;
+        let outcome = outcome.expect("Deny gate must return Some");
+        assert!(outcome.is_error, "blocked outcome must be an error");
+        assert!(
+            outcome.payload.contains("test deny"),
+            "payload must contain the gate reason; got: {}",
+            outcome.payload
+        );
+
+        // Allow gate returns None (proceed to dispatch).
+        struct Allow;
+        #[async_trait]
+        impl PreToolUseGate for Allow {
+            async fn check(&self, _: &str, _: &Value) -> PreToolDecision {
+                PreToolDecision::Allow
+            }
+        }
+        host.set_pre_tool_gate(std::sync::Arc::new(Allow)).await;
+        let allow_outcome = host
+            .check_pre_tool_gate("run", &serde_json::json!({"command": "echo hi"}))
+            .await;
+        assert!(
+            allow_outcome.is_none(),
+            "Allow gate must return None (proceed)"
+        );
+
+        // No gate installed → check_pre_tool_gate returns None without
+        // spawning any task. Construct a fresh host to verify the
+        // no-gate code path directly (rather than relying on the gate
+        // being unset on the existing host).
+        let provider2: Box<dyn otto_mcp::ProviderClient + Send + Sync> =
+            Box::new(ScriptedProvider::new("noop", serde_json::json!({})));
+        let host_no_gate = Host::with_components(config_no_tools(), provider2)
+            .await
+            .unwrap();
+        let no_gate = host_no_gate
+            .check_pre_tool_gate("run", &serde_json::json!({}))
+            .await;
+        assert!(no_gate.is_none(), "no-gate case must return None");
+    }
+}
+
+#[cfg(test)]
+mod list_models_tests {
+    use async_trait::async_trait;
+    use otto_mcp::{InProcessProviderClient, ProviderClient, ProviderHandler, StreamEmitter};
+    use otto_protocol::{
+        CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ModelInfo, ProviderError,
+    };
+
+    use super::*;
+    use crate::config::{HostConfig, ProviderEndpoint};
+
+    /// Handler that advertises a tiny curated list. Used to exercise the
+    /// `Host::list_models` facade end-to-end via the in-process bridge.
+    struct CuratedHandler;
+
+    #[async_trait]
+    impl ProviderHandler for CuratedHandler {
+        async fn complete(
+            &self,
+            _req: CompleteRequest,
+            _emit: Option<&dyn StreamEmitter>,
+        ) -> Result<CompleteResponse, ProviderError> {
+            unreachable!("complete is not exercised in list_models tests")
+        }
+        async fn list_models(&self) -> Result<ListModelsResponse, ProviderError> {
+            Ok(ListModelsResponse {
+                models: vec![
+                    ModelInfo {
+                        id: "alpha".into(),
+                        display_name: Some("Alpha".into()),
+                        context_window: Some(8192),
+                    },
+                    ModelInfo {
+                        id: "beta".into(),
+                        display_name: None,
+                        context_window: None,
+                    },
+                ],
+                default_model_id: Some("alpha".into()),
+            })
+        }
+    }
+
+    /// Handler that inherits the default `list_models` trait impl, signaling
+    /// "not advertised" to host callers.
+    struct SilentHandler;
+
+    #[async_trait]
+    impl ProviderHandler for SilentHandler {
+        async fn complete(
+            &self,
+            _req: CompleteRequest,
+            _emit: Option<&dyn StreamEmitter>,
+        ) -> Result<CompleteResponse, ProviderError> {
+            unreachable!("complete is not exercised in list_models tests")
+        }
+    }
+
+    fn config() -> HostConfig {
+        let project_root = std::env::temp_dir().join("otto-list-models-test");
+        HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "alpha".to_string(),
+        )
+        .with_project_root(project_root.clone())
+        .with_policy(PermissionPolicy::transient(project_root))
+    }
+
+    #[tokio::test]
+    async fn host_list_models_returns_provider_list() {
+        let provider: Box<dyn ProviderClient + Send + Sync> = Box::new(
+            InProcessProviderClient::new(std::sync::Arc::new(CuratedHandler)),
+        );
+        let host = Host::with_components(config(), provider).await.unwrap();
+        let resp = host
+            .list_models()
+            .await
+            .expect("list_models should succeed");
+        let ids: Vec<_> = resp.models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, vec!["alpha", "beta"]);
+        assert_eq!(resp.default_model_id, Some("alpha".into()));
+    }
+
+    #[tokio::test]
+    async fn host_list_models_surfaces_not_advertised_error() {
+        let provider: Box<dyn ProviderClient + Send + Sync> = Box::new(
+            InProcessProviderClient::new(std::sync::Arc::new(SilentHandler)),
+        );
+        let host = Host::with_components(config(), provider).await.unwrap();
+        let err = host
+            .list_models()
+            .await
+            .expect_err("default impl must error");
+        assert!(matches!(err.kind, ErrorKind::NotImplemented));
+        assert!(err.message.contains("list_models"), "msg: {}", err.message);
+    }
+}
+
+#[cfg(test)]
+mod transcript_tests {
+    use async_trait::async_trait;
+    use otto_mcp::ProviderClient;
+    use otto_protocol::{
+        CompleteRequest, CompleteResponse, ContentBlock, Message, ProviderError, Role, StopReason,
+        Usage,
+    };
+    use tempfile::tempdir;
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::config::{HostConfig, ProviderEndpoint};
+    use crate::permissions::PermissionPolicy;
+
+    /// Minimal provider that immediately returns end_turn with no content.
+    struct NoopProvider;
+
+    #[async_trait]
+    impl ProviderClient for NoopProvider {
+        async fn complete(
+            &self,
+            req: CompleteRequest,
+            _events: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<CompleteResponse, ProviderError> {
+            Ok(CompleteResponse {
+                id: "noop".into(),
+                model: req.model,
+                content: vec![ContentBlock::Text { text: "ok".into() }],
+                stop_reason: StopReason::EndTurn,
+                stop_sequence: None,
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    fn tmp_config(dir: &std::path::Path) -> HostConfig {
+        HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://test".into(),
+            },
+            "test-model".to_string(),
+        )
+        .with_project_root(dir.to_path_buf())
+        .with_policy(PermissionPolicy::transient(dir.to_path_buf()))
+    }
+
+    /// Round-trip: save then load recovers the same message history.
+    #[tokio::test]
+    async fn round_trip_recovers_messages() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("t.json");
+
+        // Build a host with some history.
+        let host1 = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+        host1.run_turn("hello").await.unwrap();
+        host1.save_transcript(&path).await.unwrap();
+        let saved = host1.messages().await;
+
+        // Load into a fresh host.
+        let host2 = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+        let record = host2.load_transcript(&path).await.unwrap();
+        let loaded = host2.messages().await;
+
+        assert_eq!(saved, loaded, "message history must survive round-trip");
+        assert_eq!(record.schema_version, TRANSCRIPT_SCHEMA_VERSION);
+        assert_eq!(record.model, "test-model");
+    }
+
+    /// `set_canvas_states` writes each blob into the matching top-level
+    /// `Html` block, keyed by stream ordinal (0-indexed across messages,
+    /// content order). Tool-emitted `Html` (nested in `ToolResult`) is not
+    /// counted, so it neither shifts the ordinal nor receives a blob.
+    #[tokio::test]
+    async fn set_canvas_states_injects_into_nth_html_block() {
+        let dir = tempdir().unwrap();
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+
+        // Seed: [text, Html#0, text, ToolResult{Html(nested)}, Html#1].
+        // The nested Html must NOT be counted as an ordinal.
+        {
+            let mut state = host.state.lock().await;
+            state.messages = vec![
+                Message {
+                    role: Role::Assistant,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "intro".into(),
+                        },
+                        ContentBlock::Html {
+                            source: "<p>first</p>".into(),
+                            state: None,
+                        },
+                    ],
+                },
+                Message {
+                    role: Role::User,
+                    content: vec![
+                        ContentBlock::Text {
+                            text: "between".into(),
+                        },
+                        ContentBlock::ToolResult {
+                            tool_use_id: "t1".into(),
+                            content: vec![ContentBlock::Html {
+                                source: "<p>tool-emitted</p>".into(),
+                                state: None,
+                            }],
+                            is_error: false,
+                        },
+                    ],
+                },
+                Message {
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::Html {
+                        source: "<p>second</p>".into(),
+                        state: None,
+                    }],
+                },
+            ];
+        }
+
+        host.set_canvas_states(&[(0, "AAA".into()), (1, "BBB".into())])
+            .await;
+
+        let messages = host.messages().await;
+        // Top-level Html#0 in message 0.
+        match &messages[0].content[1] {
+            ContentBlock::Html { state, .. } => {
+                assert_eq!(state.as_deref(), Some("AAA"), "ordinal 0 → first Html")
+            }
+            other => panic!("expected Html, got {other:?}"),
+        }
+        // Tool-emitted Html stays None (not counted, not targeted).
+        match &messages[1].content[1] {
+            ContentBlock::ToolResult { content, .. } => match &content[0] {
+                ContentBlock::Html { state, .. } => {
+                    assert_eq!(state.as_deref(), None, "nested Html must be untouched")
+                }
+                other => panic!("expected nested Html, got {other:?}"),
+            },
+            other => panic!("expected ToolResult, got {other:?}"),
+        }
+        // Top-level Html#1 in message 2 gets ordinal 1, not 2.
+        match &messages[2].content[0] {
+            ContentBlock::Html { state, .. } => {
+                assert_eq!(state.as_deref(), Some("BBB"), "ordinal 1 → second Html")
+            }
+            other => panic!("expected Html, got {other:?}"),
+        }
+
+        // Out-of-range ordinals are ignored without panicking.
+        host.set_canvas_states(&[(99, "ZZZ".into())]).await;
+        match &host.messages().await[2].content[0] {
+            ContentBlock::Html { state, .. } => assert_eq!(state.as_deref(), Some("BBB")),
+            other => panic!("expected Html, got {other:?}"),
+        }
+    }
+
+    /// Schema version mismatch yields a typed error, not a panic.
+    #[tokio::test]
+    async fn schema_mismatch_returns_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("future.json");
+
+        let future_file = serde_json::json!({
+            "schema_version": TRANSCRIPT_SCHEMA_VERSION + 1,
+            "model": "some-model",
+            "saved_at": 0,
+            "messages": []
+        });
+        tokio::fs::write(&path, serde_json::to_vec(&future_file).unwrap())
+            .await
+            .unwrap();
+
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+        let err = host.load_transcript(&path).await.unwrap_err();
+        assert!(
+            matches!(err, TranscriptError::SchemaMismatch { .. }),
+            "expected SchemaMismatch, got {err:?}"
+        );
+    }
+
+    /// Malformed JSON returns an error without panicking.
+    #[tokio::test]
+    async fn malformed_json_returns_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bad.json");
+        tokio::fs::write(&path, b"{ not valid json !!!")
+            .await
+            .unwrap();
+
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+        let err = host.load_transcript(&path).await.unwrap_err();
+        assert!(
+            matches!(err, TranscriptError::Malformed(_)),
+            "expected Malformed, got {err:?}"
+        );
+    }
+
+    /// Legacy bare-array transcripts (pre-resume) are accepted transparently.
+    #[tokio::test]
+    async fn legacy_bare_array_loads_ok() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+
+        let messages = vec![Message {
+            role: Role::User,
+            content: vec![ContentBlock::Text {
+                text: "legacy message".into(),
+            }],
+        }];
+        tokio::fs::write(&path, serde_json::to_vec_pretty(&messages).unwrap())
+            .await
+            .unwrap();
+
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+        let record = host.load_transcript(&path).await.unwrap();
+        assert_eq!(record.messages, messages);
+        assert_eq!(record.schema_version, TRANSCRIPT_SCHEMA_VERSION);
+    }
+
+    /// Pin the schema version constant so accidental rollbacks fail loudly.
+    #[tokio::test]
+    async fn transcript_schema_version_is_two() {
+        assert_eq!(TRANSCRIPT_SCHEMA_VERSION, 2);
+    }
+
+    /// A `TranscriptFile` carrying a `subagent_transcripts` entry round-trips
+    /// through serde without losing the sidecar payload.
+    #[tokio::test]
+    async fn subagent_transcript_round_trip() {
+        let mut map: HashMap<String, SubagentTranscript> = HashMap::new();
+        map.insert(
+            "toolu_abc".into(),
+            SubagentTranscript {
+                agent_name: "code-reviewer".into(),
+                model: Some("claude-sonnet-4-6".into()),
+                messages: vec![Message {
+                    role: Role::User,
+                    content: vec![ContentBlock::Text {
+                        text: "review this".into(),
+                    }],
+                }],
+            },
+        );
+        let original = TranscriptFile {
+            schema_version: TRANSCRIPT_SCHEMA_VERSION,
+            model: "m".into(),
+            saved_at: 1234,
+            messages: vec![],
+            subagent_transcripts: map,
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let parsed: TranscriptFile = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.subagent_transcripts.len(), 1);
+        let sub = parsed.subagent_transcripts.get("toolu_abc").expect("entry");
+        assert_eq!(sub.agent_name, "code-reviewer");
+        assert_eq!(sub.model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(sub.messages.len(), 1);
+    }
+
+    /// v1 transcripts (no `subagent_transcripts` field) deserialize cleanly
+    /// thanks to `#[serde(default)]`, with an empty sidecar map.
+    #[tokio::test]
+    async fn transcript_v1_without_subagent_field_loads_clean() {
+        let v1_json = serde_json::json!({
+            "schema_version": 1,
+            "model": "m",
+            "saved_at": 1234,
+            "messages": []
+        });
+        let parsed: TranscriptFile = serde_json::from_value(v1_json).expect("v1 deserializes");
+        assert_eq!(parsed.schema_version, 1);
+        assert!(parsed.subagent_transcripts.is_empty());
+    }
+
+    /// `load_transcript` accepts a v1 file (warn-logged), returning a record
+    /// whose `schema_version` is still 1 and whose sidecar map is empty.
+    #[tokio::test]
+    async fn load_transcript_accepts_v1_with_warn_log() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("v1.json");
+        let v1_content = serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "model": "m",
+            "saved_at": 0,
+            "messages": []
+        }))
+        .unwrap();
+        tokio::fs::write(&path, v1_content).await.unwrap();
+
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+        let record = host
+            .load_transcript(&path)
+            .await
+            .expect("v1 transcript should load");
+        assert_eq!(record.schema_version, 1);
+        assert!(record.subagent_transcripts.is_empty());
+        assert!(record.messages.is_empty());
+    }
+
+    /// Saving omits an empty `subagent_transcripts` from the JSON output so
+    /// transcripts that don't use subagents stay visually clean.
+    #[tokio::test]
+    async fn save_transcript_omits_empty_subagent_map_from_json() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("clean.json");
+
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+        host.save_transcript(&path).await.unwrap();
+
+        let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(
+            !on_disk.contains("subagent_transcripts"),
+            "empty sidecar map must be skipped in serialized form; got:\n{on_disk}"
+        );
+    }
+
+    /// `run_turn_streaming_with_blocks` must push the caller's blocks
+    /// verbatim onto the user message — no transformation, no extra
+    /// text-only wrapping. This pins the public surface that a future
+    /// image-attachment UI will use to submit image-bearing turns.
+    #[tokio::test]
+    async fn run_turn_streaming_with_blocks_pushes_user_message_verbatim() {
+        use otto_protocol::{ImageSource, MediaType};
+        let dir = tempdir().unwrap();
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(NoopProvider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+
+        let (tx, mut _rx) = mpsc::channel(8);
+        let blocks = vec![
+            ContentBlock::Text {
+                text: "what is this?".into(),
+            },
+            ContentBlock::Image {
+                source: ImageSource::Base64 {
+                    media_type: MediaType::Png,
+                    data: "AAAA".into(),
+                },
+            },
+        ];
+        host.run_turn_streaming_with_blocks(blocks.clone(), tx)
+            .await
+            .expect("turn runs");
+
+        // The just-submitted user message must contain the blocks we
+        // passed in, in order. The leading text has no `@`-prefix, so
+        // the parser leaves it untouched.
+        let messages = host.messages().await;
+        let user_msg = messages
+            .iter()
+            .rev()
+            .find(|m| matches!(m.role, Role::User))
+            .expect("at least one user message");
+        assert_eq!(user_msg.content, blocks);
+    }
+
+    /// Provider stub that records every `CompleteRequest` it observes
+    /// and returns an immediate `end_turn`. Used to inspect the
+    /// `messages` slice that the iteration-boundary injection assembles
+    /// before it dispatches to the provider.
+    #[derive(Default)]
+    struct RecordingProvider {
+        captured: Arc<std::sync::Mutex<Vec<CompleteRequest>>>,
+    }
+
+    impl RecordingProvider {
+        fn new() -> (Self, Arc<std::sync::Mutex<Vec<CompleteRequest>>>) {
+            let captured = Arc::new(std::sync::Mutex::new(Vec::new()));
+            (
+                Self {
+                    captured: captured.clone(),
+                },
+                captured,
+            )
+        }
+    }
+
+    #[async_trait]
+    impl ProviderClient for RecordingProvider {
+        async fn complete(
+            &self,
+            req: CompleteRequest,
+            _events: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<CompleteResponse, ProviderError> {
+            self.captured.lock().unwrap().push(req.clone());
+            Ok(CompleteResponse {
+                id: "rec".into(),
+                model: req.model,
+                content: vec![ContentBlock::Text { text: "ok".into() }],
+                stop_reason: StopReason::EndTurn,
+                stop_sequence: None,
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn iteration_boundary_injects_resource_updated_block_into_history() {
+        // Pre-populate the resource cache as if the pump task had
+        // observed an update arriving between turns, then run a turn
+        // and inspect the first `CompleteRequest` the provider saw.
+        let dir = tempdir().unwrap();
+        let (provider, captured) = RecordingProvider::new();
+        let host = Host::with_components(
+            tmp_config(dir.path()),
+            Box::new(provider) as Box<dyn ProviderClient + Send + Sync>,
+        )
+        .await
+        .unwrap();
+
+        {
+            let mut cache = host.resources.lock().await;
+            cache.mark_updated("lsp://diagnostics/foo.rs", "fixture-tool");
+        }
+
+        let (tx, mut rx) = mpsc::channel::<TurnEvent>(64);
+        let _outcome = host.run_turn_streaming("hi", tx).await.unwrap();
+        while rx.recv().await.is_some() {} // drain events
+
+        let captured = captured.lock().unwrap();
+        let last_req = captured
+            .last()
+            .cloned()
+            .expect("at least one CompleteRequest recorded");
+        let has_injection = last_req.messages.iter().any(|m| {
+            matches!(m.role, Role::User)
+                && m.content.iter().any(|b| match b {
+                    ContentBlock::Text { text } => {
+                        text.contains("[resource updated: lsp://diagnostics/foo.rs]")
+                    }
+                    _ => false,
+                })
+        });
+        assert!(
+            has_injection,
+            "first iteration's CompleteRequest must include the injected \
+             [resource updated: …] user-text block; messages were: {:#?}",
+            last_req.messages
+        );
+    }
+}

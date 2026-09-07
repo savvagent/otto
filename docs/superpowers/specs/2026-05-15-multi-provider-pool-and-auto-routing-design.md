@@ -11,9 +11,9 @@ Related: project_connect_command (in-process providers, `/connect`), project_hos
 Two complaints, one root cause.
 
 1. **`/connect <provider>` always re-prompts for the API key**, even after the user has already entered it. The keyring entry is intact and startup auto-connects fine, but `handle_slash` in every provider plugin
-   (`crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs:134-145`, mirrored in `provider_gemini` and `provider_openai`) unconditionally emits `Effect::PromptApiKey`. The user is expected to press Enter on the empty modal to "use stored key" (`crates/savvagent/src/main.rs:2059-2083`), which is undiscoverable and feels like the key was forgotten.
+   (`crates/otto/src/plugin/builtin/provider_anthropic/mod.rs:134-145`, mirrored in `provider_gemini` and `provider_openai`) unconditionally emits `Effect::PromptApiKey`. The user is expected to press Enter on the empty modal to "use stored key" (`crates/otto/src/main.rs:2059-2083`), which is undiscoverable and feels like the key was forgotten.
 
-2. **Only one provider can be connected at a time.** `host_slot: Arc<RwLock<Option<Arc<Host>>>>` (`crates/savvagent/src/main.rs:75`) holds a single Host; each Host owns a single `Box<dyn ProviderClient>` (`crates/savvagent-host/src/session.rs:208-243`). `perform_connect` swaps the host out, shuts down the old one, and clears history (`main.rs:1341-1357`). There is no way to keep Anthropic and Gemini connected at the same time, let alone route different turns to different models within one conversation.
+2. **Only one provider can be connected at a time.** `host_slot: Arc<RwLock<Option<Arc<Host>>>>` (`crates/otto/src/main.rs:75`) holds a single Host; each Host owns a single `Box<dyn ProviderClient>` (`crates/otto-host/src/session.rs:208-243`). `perform_connect` swaps the host out, shuts down the old one, and clears history (`main.rs:1341-1357`). There is no way to keep Anthropic and Gemini connected at the same time, let alone route different turns to different models within one conversation.
 
 Both complaints dissolve if connected providers persist as a **pool** and the host gains a small **router** that picks which provider serves each user turn. After that change, `/connect` becomes additive ("add this provider to the pool") and re-prompting is no longer needed — silent connect from the keyring is the default.
 
@@ -31,8 +31,8 @@ Both complaints dissolve if connected providers persist as a **pool** and the ho
 - An intent classifier that learns from usage. The v1 heuristic classifier is static keyword/length rules; an ML-based router is not in scope.
 - Cross-provider streaming of a single turn (e.g., model A drafts, model B refines). Routing boundary is the user turn; once a provider takes a turn, it runs it end-to-end including all tool-use iterations.
 - A `/route` editor inside the TUI. Rules are edited in a file; the TUI offers `/route reload` and `/route show` only.
-- Persisted pool state as a separate "connected providers" file. The pool is rebuilt at startup according to the explicit policy described in "Startup auto-connect policy" — by default, only the providers the user opts into are auto-connected, not every keyring entry. State of "what was connected last session" lives in `~/.savvagent/state.toml` only when the user picks the `last-used` policy.
-- Changes to the SPP wire format. The `Message`/`ContentBlock` shapes in `crates/savvagent-protocol` are unchanged; routing operates above SPP.
+- Persisted pool state as a separate "connected providers" file. The pool is rebuilt at startup according to the explicit policy described in "Startup auto-connect policy" — by default, only the providers the user opts into are auto-connected, not every keyring entry. State of "what was connected last session" lives in `~/.otto/state.toml` only when the user picks the `last-used` policy.
+- Changes to the SPP wire format. The `Message`/`ContentBlock` shapes in `crates/otto-protocol` are unchanged; routing operates above SPP.
 
 ## Approach
 
@@ -40,15 +40,15 @@ The Host gains a `provider_pool: HashMap<ProviderId, PoolEntry>` in place of its
 
 `PoolEntry` holds the provider client behind an `Arc<dyn ProviderClient + Send + Sync>` (not `Box`) plus its `ProviderCapabilities` and active-turn counter. The `Arc` is what makes turn leasing safe: see "Pool lifecycle and turn leases" below.
 
-Capabilities cross the crate boundary via `HostConfig`, not by reaching back into plugin manifests. The TUI is responsible for collecting each plugin's `ProviderCapabilities` (already declared in its manifest) and packing it into a `ProviderRegistration` before calling `Host::add_provider`. The host depends only on `savvagent-protocol` and `savvagent-mcp`; it does not know about `Plugin` or `Manifest`. See "Crate boundary and capability flow" below.
+Capabilities cross the crate boundary via `HostConfig`, not by reaching back into plugin manifests. The TUI is responsible for collecting each plugin's `ProviderCapabilities` (already declared in its manifest) and packing it into a `ProviderRegistration` before calling `Host::add_provider`. The host depends only on `otto-protocol` and `otto-mcp`; it does not know about `Plugin` or `Manifest`. See "Crate boundary and capability flow" below.
 
 Routing layers run in priority order, first match wins:
 
 1. **`@provider:model` prefix** in the user input (stripped before submission). Always wins.
 2. **Modality match.** If the input contains an `Image` content block and the current default provider/model has `supports_vision = false`, route to the highest-priority connected model that does. Same logic applies to PDF and audio if/when those modalities land.
-3. **User rules** from `~/.savvagent/routing.toml`. Top-to-bottom; first match wins.
+3. **User rules** from `~/.otto/routing.toml`. Top-to-bottom; first match wins.
 4. **Heuristic classifier** (opt-in). Short factoid → cheap fast model; keyword "refactor"/"implement"/"debug" → coding-strong model; else default. Off by default in v1; user enables via routing.toml.
-5. **Default model.** The current `/model` selection, generalized to identify both a provider and a model. Mirrors today's `SAVVAGENT_MODEL` precedence (env → `~/.savvagent/models.toml` → provider's `default_model`).
+5. **Default model.** The current `/model` selection, generalized to identify both a provider and a model. Mirrors today's `OTTO_MODEL` precedence (env → `~/.otto/models.toml` → provider's `default_model`).
 
 The router emits a `RoutingDecision { provider_id, model_id, reason }` that the host pins for the duration of the user turn. The reason is one of the layer names (Override / Modality / Rule(name) / Heuristic / Default) and gets surfaced in the transcript.
 
@@ -66,7 +66,7 @@ The picker (`ConnectPickerScreen`) gains a "Re-enter key" sub-option per provide
 ## Modules
 
 ```
-crates/savvagent-host/src/
+crates/otto-host/src/
 ├── session.rs            // Host: provider field → provider_pool: HashMap<ProviderId, PoolEntry>
 │                         //       + per-entry turn-lease counter + disconnect modes
 ├── pool.rs               // PoolEntry, disconnect modes (Drain/Force), lease guards
@@ -81,11 +81,11 @@ crates/savvagent-host/src/
 │   ├── heuristics.rs     // opt-in keyword/length classifier
 │   ├── prefix.rs         // parse_at_prefix("@anthropic:opus-4.7 …") -> (override, rest);
 │   │                     //   handles @@-escape, unknown-token fallthrough
-│   └── legacy_model.rs   // SAVVAGENT_MODEL parser + ambiguity resolver
+│   └── legacy_model.rs   // OTTO_MODEL parser + ambiguity resolver
 └── lib.rs                // re-export Router, RoutingDecision, ProviderRegistration,
                           //   StartupConnectPolicy, DisconnectMode
 
-crates/savvagent/src/
+crates/otto/src/
 ├── main.rs               // host_slot stays Arc<RwLock<Option<Arc<Host>>>>; perform_connect → add_provider
 ├── plugin/builtin/
 │   ├── provider_anthropic/mod.rs   // handle_slash: silent if key stored; --rekey flag opens modal
@@ -96,7 +96,7 @@ crates/savvagent/src/
 └── ui.rs                 // status bar lists all pool members; transcript shows per-turn routing badge
 ```
 
-The router lives in `savvagent-host` (not `savvagent`) because it operates on `CompleteRequest` (SPP) and provider capability metadata, neither of which the TUI crate should know about. The TUI only invokes `host.run_turn_streaming(req)` as today; the router runs inside that call.
+The router lives in `otto-host` (not `otto`) because it operates on `CompleteRequest` (SPP) and provider capability metadata, neither of which the TUI crate should know about. The TUI only invokes `host.run_turn_streaming(req)` as today; the router runs inside that call.
 
 `ProviderCapabilities` is a new type carried by each `ProviderSpec` already declared in plugin manifests. It lists the models the provider exposes plus per-model flags (`supports_vision`, `supports_audio`, `context_window`, `cost_tier`). The Anthropic/Gemini/OpenAI plugins each populate this from their hardcoded model lists today (no new network calls).
 
@@ -157,10 +157,10 @@ count zero and the underlying ProviderClient is dropped.
 | Plugin already connected | Prompt opens; submit re-keys via stored-key fallback | "already connected; use --rekey to re-enter" note, no modal |
 | User wants to re-enter the key | Open `/connect`, press Enter on empty modal | `/connect <provider> --rekey` (or alt-Enter on picker row) |
 
-## Routing config — `~/.savvagent/routing.toml`
+## Routing config — `~/.otto/routing.toml`
 
 ```toml
-# Default model (provider/model). Overridable by SAVVAGENT_MODEL env var,
+# Default model (provider/model). Overridable by OTTO_MODEL env var,
 # matching the precedence the host already uses for /model selection.
 default = "anthropic/claude-opus-4-7"
 
@@ -252,12 +252,12 @@ The point of the three-stage protocol: the user always gets a deterministic reso
 
 ## Crate boundary and capability flow
 
-The router lives in `savvagent-host`, which depends on `savvagent-protocol` and `savvagent-mcp` but **not** on `savvagent` (the TUI crate). Plugin manifests live in `savvagent`. That dependency direction is fixed by the workspace topology and must not invert.
+The router lives in `otto-host`, which depends on `otto-protocol` and `otto-mcp` but **not** on `otto` (the TUI crate). Plugin manifests live in `otto`. That dependency direction is fixed by the workspace topology and must not invert.
 
 Capabilities therefore flow *into* the host at construction time:
 
 ```rust
-// In savvagent-host::config
+// In otto-host::config
 pub struct ProviderRegistration {
     pub id: ProviderId,
     pub display_name: String,
@@ -275,7 +275,7 @@ pub struct HostConfig {
     // … existing fields …
     pub providers: Vec<ProviderRegistration>,
     pub startup_connect: StartupConnectPolicy,
-    pub routing_rules_path: Option<PathBuf>, // ~/.savvagent/routing.toml by default
+    pub routing_rules_path: Option<PathBuf>, // ~/.otto/routing.toml by default
 }
 
 pub struct ProviderCapabilities {
@@ -305,7 +305,7 @@ Mirror methods on `Host` for runtime updates:
 - `Host::update_capabilities(id: &ProviderId, caps: ProviderCapabilities)` — used when a provider plugin refreshes its model list at runtime (rare). Does not affect the active turn lease.
 - `Host::reload_routing_rules()` — re-reads `routing.toml`; errors fall back to "no user rules" + a styled note in the log.
 
-The TUI's provider plugins continue to declare their `ProviderSpec` in their `Manifest` as today; the TUI's startup wiring (in `crates/savvagent/src/main.rs`) reads those specs to construct each `ProviderRegistration`. The host never sees `Manifest`, `Plugin`, or any other plugin-runtime type.
+The TUI's provider plugins continue to declare their `ProviderSpec` in their `Manifest` as today; the TUI's startup wiring (in `crates/otto/src/main.rs`) reads those specs to construct each `ProviderRegistration`. The host never sees `Manifest`, `Plugin`, or any other plugin-runtime type.
 
 ## Phase 2 gate: cross-vendor tool_use ID compatibility
 
@@ -313,7 +313,7 @@ Phase 3 (`@provider:model` override) introduces the first scenario where one use
 
 Phase 2 of the phasing plan is dedicated to standing up the CI compatibility matrix that proves (or, where needed, fixes) this assumption *before* any user-facing routing ships. This is a **release blocker for Phase 3 and every subsequent phase**. The gate:
 
-1. **Per-vendor compatibility test.** New `crates/savvagent-host/tests/cross_vendor_history.rs` builds a synthetic `Vec<Message>` containing a `ContentBlock::ToolUse { id: "foreign-prefix:abc-123", … }` followed by a `ContentBlock::ToolResult { tool_use_id: "foreign-prefix:abc-123", … }`. For each `(sender_provider, receiver_provider)` pair across the three vendors, the test submits a `CompleteRequest` with that history and asserts the call succeeds (no 4xx, no `ProviderError::BadRequest`). Tests run against the vendor SDKs in-process; they hit the real vendor APIs only in nightly CI gated behind credentials, and run against vendor mocks/replays in PR CI.
+1. **Per-vendor compatibility test.** New `crates/otto-host/tests/cross_vendor_history.rs` builds a synthetic `Vec<Message>` containing a `ContentBlock::ToolUse { id: "foreign-prefix:abc-123", … }` followed by a `ContentBlock::ToolResult { tool_use_id: "foreign-prefix:abc-123", … }`. For each `(sender_provider, receiver_provider)` pair across the three vendors, the test submits a `CompleteRequest` with that history and asserts the call succeeds (no 4xx, no `ProviderError::BadRequest`). Tests run against the vendor SDKs in-process; they hit the real vendor APIs only in nightly CI gated behind credentials, and run against vendor mocks/replays in PR CI.
 2. **Vendor-specific fallback strategy** for any failing pair. If e.g. Gemini rejects Anthropic-style IDs, the Gemini adapter rewrites foreign IDs to short opaque hashes (`sha256(provider_id || ":" || original_id)` truncated to 8 chars, namespaced to avoid collision with Gemini's own ID format) before serialization, and restores them on the way back. The opaque token is recorded in a per-turn map kept in `SessionState` so the next turn's history serializer can map them back to canonical namespaced IDs.
 3. **Default-fallthrough behavior.** Until the gate passes for a vendor, that vendor is excluded from cross-provider routing in release builds: the `@`-override and modality routing refuse to switch *to* it from a different provider mid-conversation, and the user sees a styled note ("Anthropic → Gemini routing is unavailable in this build; ID compatibility test not yet green"). Single-provider conversations are unaffected.
 
@@ -321,10 +321,10 @@ Phase 3 cannot ship to master until every vendor pair in the current shipping se
 
 ## Startup auto-connect policy
 
-The host accepts `StartupConnectPolicy` in `HostConfig`. The TUI reads the user's choice from `~/.savvagent/config.toml` (a new file; `routing.toml` would be the wrong home for an account/connectivity knob) and constructs the policy at launch:
+The host accepts `StartupConnectPolicy` in `HostConfig`. The TUI reads the user's choice from `~/.otto/config.toml` (a new file; `routing.toml` would be the wrong home for an account/connectivity knob) and constructs the policy at launch:
 
 ```toml
-# ~/.savvagent/config.toml
+# ~/.otto/config.toml
 [startup]
 # "opt-in" (default): only connect providers in startup_providers
 # "all":              today's behavior — every provider with a keyring entry
@@ -351,7 +351,7 @@ None of these block the TUI from coming up; the user can always finish startup w
 
 **Migration.** Users upgrading from a pre-pool release already have keyring entries. Writing every detected key into `startup_providers` would silently restore the "auto-connect everything" behavior we just made opt-in — defeating the purpose of the new default. Instead:
 
-- On first launch of the new version (gated on a `~/.savvagent/state.toml` "migration_v1_done" marker), if more than one keyring entry exists, the TUI opens a one-time **startup-providers picker** modal: "We found stored keys for Anthropic, Gemini, OpenAI. Which should auto-connect when savvagent starts? [space to toggle, Enter to confirm]." The user's selection writes `config.toml` with `policy = "opt-in"` and `startup_providers = [their selection]`. The marker is set regardless of choice so the picker never re-runs.
+- On first launch of the new version (gated on a `~/.otto/state.toml` "migration_v1_done" marker), if more than one keyring entry exists, the TUI opens a one-time **startup-providers picker** modal: "We found stored keys for Anthropic, Gemini, OpenAI. Which should auto-connect when otto starts? [space to toggle, Enter to confirm]." The user's selection writes `config.toml` with `policy = "opt-in"` and `startup_providers = [their selection]`. The marker is set regardless of choice so the picker never re-runs.
 - If the user dismisses the modal (Esc), the TUI falls back to a deterministic single default: Anthropic if a key exists, else the alphabetically first detected provider id. `config.toml` is written with that one provider in `startup_providers`. The user can edit later.
 - If exactly one keyring entry exists, no modal — `startup_providers` is written with just that provider (same effective behavior as today, no surprise).
 - If zero keyring entries exist, `config.toml` is written with `startup_providers = []` and the user goes through normal `/connect` flow.
@@ -360,22 +360,22 @@ The migration is one-time per user (the marker prevents re-prompts) and the moda
 
 ## Legacy environment compatibility
 
-`SAVVAGENT_MODEL` exists today as a bare model name (e.g., `claude-opus-4-7`). With multi-provider, the canonical form is `provider/model` (e.g., `anthropic/claude-opus-4-7`). The router's `legacy_model.rs` resolver handles both shapes with this precedence:
+`OTTO_MODEL` exists today as a bare model name (e.g., `claude-opus-4-7`). With multi-provider, the canonical form is `provider/model` (e.g., `anthropic/claude-opus-4-7`). The router's `legacy_model.rs` resolver handles both shapes with this precedence:
 
 1. **`provider/model` form.** Split on the first `/`. Validate provider is in the pool. If provider exists but the model is unknown to that provider, log a warning and fall back to the provider's default model (not to a different provider). If provider is not in the pool, log a warning and fall back to the default model from `routing.toml`.
 2. **Bare-model form** (no `/`). Scan all *connected* providers' `ModelCapabilities` lists for a model with a matching `id` or `alias`. Resolution rules:
-   - Exactly one match → use it. Log at `info` ("`SAVVAGENT_MODEL=claude-opus-4-7` resolved to `anthropic/claude-opus-4-7`") so the resolution is auditable.
-   - Multiple matches → ambiguous. Log a warning naming every match, ignore `SAVVAGENT_MODEL`, fall back to the default. The user fixes by switching to `provider/model` form.
+   - Exactly one match → use it. Log at `info` ("`OTTO_MODEL=claude-opus-4-7` resolved to `anthropic/claude-opus-4-7`") so the resolution is auditable.
+   - Multiple matches → ambiguous. Log a warning naming every match, ignore `OTTO_MODEL`, fall back to the default. The user fixes by switching to `provider/model` form.
    - Zero matches → log a warning, ignore, fall back to default.
-3. **`~/.savvagent/models.toml`** legacy entries follow the same parser. The model field there has always been a bare string; entries that resolve ambiguously get the same warning + fallback. The user can edit the file to the new `provider/model` form to silence the warning.
+3. **`~/.otto/models.toml`** legacy entries follow the same parser. The model field there has always been a bare string; entries that resolve ambiguously get the same warning + fallback. The user can edit the file to the new `provider/model` form to silence the warning.
 
-The parser is pure (no I/O once `ProviderCapabilities` is in hand), tested in isolation in `crates/savvagent-host/src/router/legacy_model.rs`, and runs on every startup and on every `/model` invocation. Warnings surface as styled notes in the TUI log, not just `tracing::warn!`, so users see them when they happen.
+The parser is pure (no I/O once `ProviderCapabilities` is in hand), tested in isolation in `crates/otto-host/src/router/legacy_model.rs`, and runs on every startup and on every `/model` invocation. Warnings surface as styled notes in the TUI log, not just `tracing::warn!`, so users see them when they happen.
 
 ## Phasing
 
 Shipping all four routing signals + the pool refactor as one PR is too big. Proposed slicing — each phase is independently shippable and observable:
 
-1. **Pool foundation.** Host gains `provider_pool` with `PoolEntry`/`ProviderLease`; `Host::add_provider`/`remove_provider` land with both `Drain` and `Force` disconnect modes; `HostConfig::providers` and `StartupConnectPolicy` land; `/connect` becomes additive and silent-when-stored; `--rekey` flag implemented; `~/.savvagent/config.toml` migration runs; status bar lists all pool members. The host carries an **`active_provider: ProviderId`** field. **All turns in Phase 1 route to the active provider; `/model` in Phase 1 only lists models from the active provider's `ProviderCapabilities`.** Switching to a different provider's model requires explicit `/use <provider>` (a temporary Phase 1 slash command) which clears the conversation (same as today's provider swap) and updates `active_provider`. This deliberately defers cross-provider history paths until the Phase 2 gate is green — Phase 1's user-visible multi-provider behavior is "multiple connected, one active per conversation." The new `legacy_model.rs` resolver lands in this phase to handle bare-model `SAVVAGENT_MODEL` against the active provider's catalog. **This phase alone closes the re-prompt complaint, and ships with the lifecycle/lease contract so later phases inherit safe semantics.**
+1. **Pool foundation.** Host gains `provider_pool` with `PoolEntry`/`ProviderLease`; `Host::add_provider`/`remove_provider` land with both `Drain` and `Force` disconnect modes; `HostConfig::providers` and `StartupConnectPolicy` land; `/connect` becomes additive and silent-when-stored; `--rekey` flag implemented; `~/.otto/config.toml` migration runs; status bar lists all pool members. The host carries an **`active_provider: ProviderId`** field. **All turns in Phase 1 route to the active provider; `/model` in Phase 1 only lists models from the active provider's `ProviderCapabilities`.** Switching to a different provider's model requires explicit `/use <provider>` (a temporary Phase 1 slash command) which clears the conversation (same as today's provider swap) and updates `active_provider`. This deliberately defers cross-provider history paths until the Phase 2 gate is green — Phase 1's user-visible multi-provider behavior is "multiple connected, one active per conversation." The new `legacy_model.rs` resolver lands in this phase to handle bare-model `OTTO_MODEL` against the active provider's catalog. **This phase alone closes the re-prompt complaint, and ships with the lifecycle/lease contract so later phases inherit safe semantics.**
 2. **Phase 2 gate: cross-vendor tool_use ID compatibility.** Not a user-visible feature — this is a CI-only deliverable that establishes the `release-gate` test target described in "Phase 2 gate." No code other than tests + per-vendor fallback adapters ships. **No subsequent phase merges to master until this gate is green.** Until then, Phase 1's "one active provider per conversation" constraint is the active safety invariant.
 3. **`@provider:model` override + cross-provider conversations.** Removes Phase 1's "one active per conversation" constraint. Adds the `@`-prefix parser (with `@@`-escape rules), the `Router` skeleton, `RoutingDecision`, and the transcript badge. This is the first phase where one conversation's history can contain tool_use blocks from multiple providers; it depends on the Phase 2 gate being green for every vendor pair the user has connected. `/use <provider>` from Phase 1 graduates to a normal model picker since cross-provider history is now safe.
 4. **Modality routing.** Add `ProviderCapabilities` consumption + per-model `supports_vision` flag; router auto-redirects image-bearing turns. This is the marquee multi-model use case ("Gemini Vision for multimodal tasks").
@@ -386,22 +386,22 @@ Each phase gets its own version bump + release notes + README update (per [[feed
 
 ## Testing strategy
 
-- **Pool foundation:** unit tests in `savvagent-host/src/session.rs` for `add_provider` / `remove_provider` / `PoolError::AlreadyRegistered`. Integration test in `crates/savvagent/tests/` that connects two providers in sequence via `/connect` and asserts both `ProviderRegistered` events fired and both render in the status bar slot. Re-prompt regression: assert that `/connect anthropic` with a stored key does **not** emit `Effect::PromptApiKey`.
+- **Pool foundation:** unit tests in `otto-host/src/session.rs` for `add_provider` / `remove_provider` / `PoolError::AlreadyRegistered`. Integration test in `crates/otto/tests/` that connects two providers in sequence via `/connect` and asserts both `ProviderRegistered` events fired and both render in the status bar slot. Re-prompt regression: assert that `/connect anthropic` with a stored key does **not** emit `Effect::PromptApiKey`.
 - **Lease and disconnect — cooperative path:** `remove_provider(id, Drain)` while a synthetic streaming turn holds a `ProviderLease` keeps the inner `Arc<dyn ProviderClient>` alive until the lease drops; the provider is gone from new-turn eligibility immediately but the in-flight turn completes successfully. `remove_provider(id, Force)` against a cancellation-cooperative stub provider causes the in-flight turn to emit `TurnEvent::Cancelled { reason: ProviderDisconnected }` and exit within a few ms.
 - **Lease and disconnect — uncooperative path:** stub `ProviderClient::complete` that holds for 5s without awaiting any cancel-cooperative point. `remove_provider(id, Force)` emits `Cancelled` immediately, waits 500ms (`force_disconnect_grace_ms`), then aborts the task and emits `AbortedAfterGrace`. Assert the total wall-clock from `/disconnect --force` to `active_turns == 0` is ≤ 600ms (500ms grace + slack for task scheduling). This guards against the project_rmcp_progress_gotcha pattern leaking into the pool.
 - **Lock hygiene:** assert no test scenario holds the pool `RwLock` across an `.await` (use `tokio::task::yield_now()` between `Router::pick` and `complete` to expose any accidental guard retention).
-- **Phase 1 cross-provider safety:** with Anthropic and Gemini both connected, `/model` only lists Anthropic's models if `active_provider == anthropic`; the list updates after `/use gemini`. Direct attempts to set a model from the inactive provider (e.g. via `SAVVAGENT_MODEL`) get a styled note + fall back to the active provider's default. `/use <provider>` clears history before switching `active_provider`. Regression test: assert that after a turn on Anthropic + `/use gemini` + new turn, the second `CompleteRequest` has empty prior-turn history (no `anthropic:`-namespaced tool_use IDs leak across).
+- **Phase 1 cross-provider safety:** with Anthropic and Gemini both connected, `/model` only lists Anthropic's models if `active_provider == anthropic`; the list updates after `/use gemini`. Direct attempts to set a model from the inactive provider (e.g. via `OTTO_MODEL`) get a styled note + fall back to the active provider's default. `/use <provider>` clears history before switching `active_provider`. Regression test: assert that after a turn on Anthropic + `/use gemini` + new turn, the second `CompleteRequest` has empty prior-turn history (no `anthropic:`-namespaced tool_use IDs leak across).
 - **Startup policy:** with `policy = "opt-in"` and `startup_providers = ["anthropic"]`, only Anthropic is in the pool after `Host::start` even though Gemini and OpenAI both have keyring entries. With `policy = "all"`, all three are connected. With `policy = "none"`, the pool is empty. Connect timeout: a registration whose provider client build takes > `connect_timeout_ms` is abandoned with a styled note; the host comes up regardless.
-- **Migration:** pre-existing `~/.savvagent/state.toml` absent + multiple keyring entries → on first launch, the startup-providers picker opens. Confirming a selection writes `policy = "opt-in"` + `startup_providers = <selection>` and sets the migration marker. Dismissing the picker writes `startup_providers = ["anthropic"]` (or first alphabetically if no anthropic). Exactly one keyring entry → no picker; that one provider is written. Zero entries → empty `startup_providers`. Re-run with marker present → picker never opens again regardless of pool contents.
-- **Phase 2 gate (`crates/savvagent-host/tests/cross_vendor_history.rs`):** for each `(sender, receiver)` pair across Anthropic, Gemini, OpenAI, submit a `CompleteRequest` with prior-turn history containing a `ContentBlock::ToolUse { id: "<sender>:abc-123", … }` and matching `ToolResult`. Assert the call succeeds. PR CI uses recorded vendor replays; nightly CI uses real credentials. Any failing pair must have a fallback adapter that rewrites IDs to short opaque hashes and tests the round trip.
-- **Router layered dispatch:** unit tests in `savvagent-host/src/router/` per layer — override prefix parsing (including `@@`-escape and unknown-token fallthrough), modality detection on synthetic `CompleteRequest`s, rule eval with a fixture `routing.toml`, heuristic classifier on canned inputs, `legacy_model.rs` resolver for bare/qualified `SAVVAGENT_MODEL` including ambiguity warnings. End-to-end test: build a request with an image attached, default model lacks vision, router picks the vision-capable provider, `RoutingDecision.reason == Modality(image)`.
+- **Migration:** pre-existing `~/.otto/state.toml` absent + multiple keyring entries → on first launch, the startup-providers picker opens. Confirming a selection writes `policy = "opt-in"` + `startup_providers = <selection>` and sets the migration marker. Dismissing the picker writes `startup_providers = ["anthropic"]` (or first alphabetically if no anthropic). Exactly one keyring entry → no picker; that one provider is written. Zero entries → empty `startup_providers`. Re-run with marker present → picker never opens again regardless of pool contents.
+- **Phase 2 gate (`crates/otto-host/tests/cross_vendor_history.rs`):** for each `(sender, receiver)` pair across Anthropic, Gemini, OpenAI, submit a `CompleteRequest` with prior-turn history containing a `ContentBlock::ToolUse { id: "<sender>:abc-123", … }` and matching `ToolResult`. Assert the call succeeds. PR CI uses recorded vendor replays; nightly CI uses real credentials. Any failing pair must have a fallback adapter that rewrites IDs to short opaque hashes and tests the round trip.
+- **Router layered dispatch:** unit tests in `otto-host/src/router/` per layer — override prefix parsing (including `@@`-escape and unknown-token fallthrough), modality detection on synthetic `CompleteRequest`s, rule eval with a fixture `routing.toml`, heuristic classifier on canned inputs, `legacy_model.rs` resolver for bare/qualified `OTTO_MODEL` including ambiguity warnings. End-to-end test: build a request with an image attached, default model lacks vision, router picks the vision-capable provider, `RoutingDecision.reason == Modality(image)`.
 - **History with namespaced tool_use IDs:** turn 1 routes to Gemini, returns a tool_use; turn 2 routes to Anthropic; assert Anthropic sees `gemini:<id>` in history and the matching tool_result resolves correctly. (Use the existing `MockProvider` pattern in `provider-anthropic`/`provider-gemini` test modules.)
 - **Locale isolation** for any test that reads styled notes: per [[feedback_test_locale_isolation]], reset to "en" inside `HOME_LOCK` so parallel test runs don't poison the mutex.
 - **Streaming permissions** for any router tests that exercise tool_use loops: pre-register `Allow` via `host.add_session_rule(...)` per [[feedback_streaming_test_permissions]] so the synthetic turn doesn't hang.
 
 ## Open questions / risks
 
-Resolved in this design and no longer open: vendor tool_use ID acceptance (now the "Phase 2 gate" with explicit fallback strategy); concurrent pool mutation safety (now "Pool lifecycle and turn leases" with `Drain`/`Force` + cooperative cancel + bounded grace + abort); startup auto-connect surprise (now "Startup auto-connect policy" with opt-in default and one-time migration picker); host/plugin capability ownership (now "Crate boundary and capability flow" with `Arc`-end-to-end `ProviderRegistration`); prefix override stealing user text (now `@@`-escape + unrecognized-token fallthrough); legacy `SAVVAGENT_MODEL` ambiguity (now "Legacy environment compatibility"); cross-provider history paths in Phase 1 (now blocked by the "one active provider per conversation" invariant; lifted in Phase 3 once the gate is green).
+Resolved in this design and no longer open: vendor tool_use ID acceptance (now the "Phase 2 gate" with explicit fallback strategy); concurrent pool mutation safety (now "Pool lifecycle and turn leases" with `Drain`/`Force` + cooperative cancel + bounded grace + abort); startup auto-connect surprise (now "Startup auto-connect policy" with opt-in default and one-time migration picker); host/plugin capability ownership (now "Crate boundary and capability flow" with `Arc`-end-to-end `ProviderRegistration`); prefix override stealing user text (now `@@`-escape + unrecognized-token fallthrough); legacy `OTTO_MODEL` ambiguity (now "Legacy environment compatibility"); cross-provider history paths in Phase 1 (now blocked by the "one active provider per conversation" invariant; lifted in Phase 3 once the gate is green).
 
 Still open:
 

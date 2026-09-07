@@ -1,4 +1,4 @@
-# Releasing savvagent
+# Releasing otto
 
 This repository normally automates releases with
 [release-plz](https://release-plz.dev/) (see `release-plz.toml` and

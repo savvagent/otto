@@ -30,7 +30,7 @@ Verbatim from the parent spec (listed only so reviewers can spot drift): heurist
 
 The substantive choices the developer is being asked to confirm:
 
-1. **Classifier module location: `crates/savvagent-host/src/router/heuristics.rs`.** Exactly where the parent spec's "Modules" section places it. Single new file, pure functions, no async, no I/O — symmetric with `modality.rs` and `prefix.rs`.
+1. **Classifier module location: `crates/otto-host/src/router/heuristics.rs`.** Exactly where the parent spec's "Modules" section places it. Single new file, pure functions, no async, no I/O — symmetric with `modality.rs` and `prefix.rs`.
 
 2. **Two `HeuristicKind` variants only — `ShortFactoid` and `Coding`.** The parent spec lists exactly these two categories. Both are extensible behind `#[non_exhaustive]` so a future `Translation`, `Summarization`, etc. can land additively without a breaking change. Anything that matches neither category falls through to Default — there is no `HeuristicKind::Default`; the absence of a match *is* the default path.
 
@@ -67,7 +67,7 @@ The substantive choices the developer is being asked to confirm:
 
 17. **i18n strings** (`routing.show-heuristics-active`, error/info notes) are added to en.toml as canonical; es/pt/hi get TODO placeholders. rust_i18n falls back to en automatically — same convention as Phases 4-5.
 
-18. **The dead-code rule** ([[feedback_dead_code_in_binary_crate.md]]): every new public TUI item is consumed by non-test code, no `#[allow(dead_code)]` introduced. The classifier lives entirely in `savvagent-host`; the TUI changes are limited to one new locale line and the `render_routing_show` branch.
+18. **The dead-code rule** ([[feedback_dead_code_in_binary_crate.md]]): every new public TUI item is consumed by non-test code, no `#[allow(dead_code)]` introduced. The classifier lives entirely in `otto-host`; the TUI changes are limited to one new locale line and the `render_routing_show` branch.
 
 19. **No new plugin.** `/route show` already exists (Phase 5). `RoutePlugin` does not need a new subcommand because the classifier is gated entirely by the existing `heuristics = true` toggle in `routing.toml`. Users disable by editing the file and running `/route reload`.
 
@@ -75,7 +75,7 @@ The substantive choices the developer is being asked to confirm:
 
 ## Goal & Success Criteria
 
-Ship Layer 4 of the parent spec's router stack: a hardcoded heuristic classifier that, when the user opts in via `heuristics = true` in `~/.savvagent/routing.toml`, routes short factoid turns to cheap models and coding-keyword turns to premium models. Override, Modality, and matching Rules all still win when they apply. The classifier is observable via the existing transcript badge (`Heuristic(short)` / `Heuristic(coding)`) and discoverable via the existing `/route show` (which now describes the active categories instead of the Phase 5 "ships in a future release" placeholder).
+Ship Layer 4 of the parent spec's router stack: a hardcoded heuristic classifier that, when the user opts in via `heuristics = true` in `~/.otto/routing.toml`, routes short factoid turns to cheap models and coding-keyword turns to premium models. Override, Modality, and matching Rules all still win when they apply. The classifier is observable via the existing transcript badge (`Heuristic(short)` / `Heuristic(coding)`) and discoverable via the existing `/route show` (which now describes the active categories instead of the Phase 5 "ships in a future release" placeholder).
 
 Measurable success criteria:
 
@@ -86,21 +86,21 @@ Measurable success criteria:
 5. When the active model is already in the target tier (e.g. user is on Haiku and asks `"what is 2+2?"`), the classifier returns no decision — Default fires.
 6. Layered precedence holds: `@override`, Modality (image-bearing turn that requires vision), and a matching user `[[rule]]` all still win when they apply — verified by integration tests covering each pair (`override > heuristic`, `modality > heuristic`, `rule > heuristic`).
 7. `/route show` with `heuristics = true` prints a one-line summary describing both categories and their triggers; with `heuristics = false`, no heuristic line is printed (today's behavior).
-8. Workspace + per-crate `cargo test --workspace` is green, including the new `crates/savvagent-host/src/router/heuristics.rs` unit tests, two new scenarios in `crates/savvagent-host/tests/route_rules_e2e.rs` (or a new `heuristic_e2e.rs`), and the updated `render_routing_show_tests` cases.
+8. Workspace + per-crate `cargo test --workspace` is green, including the new `crates/otto-host/src/router/heuristics.rs` unit tests, two new scenarios in `crates/otto-host/tests/route_rules_e2e.rs` (or a new `heuristic_e2e.rs`), and the updated `render_routing_show_tests` cases.
 9. README and CHANGELOG updated in the version-bump commit; `release(0.20.0)` commit message follows the project's existing `release(0.X.0): <one-line>` convention.
 
 ## Scope
 
 ### In
 
-- New `crates/savvagent-host/src/router/heuristics.rs` module: `HeuristicKind` enum (variants `ShortFactoid`, `Coding`; `#[non_exhaustive]`); `classify(user_text: &str) -> Option<HeuristicKind>`; `pick_for_kind(kind, active_provider, active_model, providers) -> Option<DefaultPick>` returning the chosen `(provider, model)` or `None` when no connected model satisfies the desired tier or when the active model is already in-tier.
+- New `crates/otto-host/src/router/heuristics.rs` module: `HeuristicKind` enum (variants `ShortFactoid`, `Coding`; `#[non_exhaustive]`); `classify(user_text: &str) -> Option<HeuristicKind>`; `pick_for_kind(kind, active_provider, active_model, providers) -> Option<DefaultPick>` returning the chosen `(provider, model)` or `None` when no connected model satisfies the desired tier or when the active model is already in-tier.
 - `Router::pick` gains a Layer-4 step between Rules and Default that calls `heuristics::classify` + `heuristics::pick_for_kind` when `rules.heuristics == true`. Same signature as today (zero new parameters).
 - `RoutingReason::Heuristic { kind: HeuristicKind }` variant on the existing `#[non_exhaustive]` enum; Display impl renders `Heuristic(short)` / `Heuristic(coding)`.
-- `crates/savvagent-host/src/router/mod.rs` declares and re-exports the new module + `HeuristicKind`.
-- `crates/savvagent-host/src/lib.rs` re-exports `HeuristicKind` for the TUI's `/route show` formatting (parallels existing `RequiredModalityKind` re-export).
-- TUI: extend `render_routing_show` in `crates/savvagent/src/main.rs` to branch on `rules.heuristics` and emit the new active-classifier line via `routing.show-heuristics-active` (replacing the existing `routing.show-heuristics-pending` line when active).
+- `crates/otto-host/src/router/mod.rs` declares and re-exports the new module + `HeuristicKind`.
+- `crates/otto-host/src/lib.rs` re-exports `HeuristicKind` for the TUI's `/route show` formatting (parallels existing `RequiredModalityKind` re-export).
+- TUI: extend `render_routing_show` in `crates/otto/src/main.rs` to branch on `rules.heuristics` and emit the new active-classifier line via `routing.show-heuristics-active` (replacing the existing `routing.show-heuristics-pending` line when active).
 - New i18n key `routing.show-heuristics-active` in en.toml (canonical) + TODO placeholders in es/pt/hi/de.
-- Integration coverage: extend `crates/savvagent-host/tests/route_rules_e2e.rs` with at least four scenarios (short-factoid + cheap connected; coding + premium connected; heuristic off → default; coding beats short-factoid for ambiguous input). Add a `render_routing_show` test for the new active-heuristic line.
+- Integration coverage: extend `crates/otto-host/tests/route_rules_e2e.rs` with at least four scenarios (short-factoid + cheap connected; coding + premium connected; heuristic off → default; coding beats short-factoid for ambiguous input). Add a `render_routing_show` test for the new active-heuristic line.
 - README user-facing section: add a "Heuristic classifier" paragraph under the routing-rules section, with the exact triggers, the cheap/premium mapping, and an explicit note that keyword matching is **substring-based** (e.g. `function` matches `functional`) so users aren't surprised by false positives.
 - CHANGELOG `## 0.20.0 - 2026-05-19` entry.
 - Workspace version bump to `0.20.0` (mirrored in `[workspace.dependencies]` literals per [[feedback_semver]]).
@@ -118,7 +118,7 @@ Measurable success criteria:
 
 ### Data types
 
-`crates/savvagent-host/src/router/heuristics.rs` — new module. Public items:
+`crates/otto-host/src/router/heuristics.rs` — new module. Public items:
 
 ```rust
 //! Layer 4 of the router stack — hardcoded heuristic classifier.
@@ -127,7 +127,7 @@ Measurable success criteria:
 //! no async. Adding new `HeuristicKind` variants is additive thanks to
 //! `#[non_exhaustive]`.
 
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 
 use crate::capabilities::CostTier;
 use crate::router::ProviderView;
@@ -182,7 +182,7 @@ pub fn pick_for_kind(
 ) -> Option<DefaultPick> { /* … */ }
 ```
 
-`crates/savvagent-host/src/router/router.rs` gains one new `RoutingReason` variant:
+`crates/otto-host/src/router/router.rs` gains one new `RoutingReason` variant:
 
 ```rust
 #[non_exhaustive]
@@ -277,7 +277,7 @@ TUI badge renders "▸ anthropic/claude-opus-4-7 — Heuristic(coding)"
 
 ### TUI changes
 
-One file: `crates/savvagent/src/main.rs::render_routing_show`. Replace:
+One file: `crates/otto/src/main.rs::render_routing_show`. Replace:
 
 ```rust
 if rules.heuristics {
@@ -297,7 +297,7 @@ The `routing.show-heuristics-pending` key stays in the catalog (no removal — n
 
 ### i18n changes
 
-`crates/savvagent/locales/en.toml` — extend the existing `[routing]` table:
+`crates/otto/locales/en.toml` — extend the existing `[routing]` table:
 
 ```toml
 [routing]
@@ -320,13 +320,13 @@ show-heuristics-active = "heuristics: enabled — short-factoid (≤200 chars + 
 - **Heuristic on + `@gemini:flash` override** — Override (Layer 1) wins. Heuristic never runs. Verified.
 - **`heuristics = true` with empty pool** — only the active provider's models (if any) are considered; if pool is empty `Router::pick` is not called (host short-circuits via `NoActiveProvider`). Out of scope here.
 - **Tool-use loop iterations within a turn** — heuristic runs *once* at turn start. Subsequent iterations use the same `RoutingDecision` (pinned by the host). Matches Phase 3/4/5 behavior; no special handling.
-- **`/route reload` racing an in-flight turn** — the host snapshots `RoutingRules` by `.clone()` before any `.await` (see `crates/savvagent-host/src/session.rs:769`); the classifier in `Router::pick` reads from that snapshot, not from the live `RwLock`. A reload landing mid-turn does not flip the turn's classifier decision. Phase 6 inherits Phase 5's snapshot discipline unchanged.
+- **`/route reload` racing an in-flight turn** — the host snapshots `RoutingRules` by `.clone()` before any `.await` (see `crates/otto-host/src/session.rs:769`); the classifier in `Router::pick` reads from that snapshot, not from the live `RwLock`. A reload landing mid-turn does not flip the turn's classifier decision. Phase 6 inherits Phase 5's snapshot discipline unchanged.
 - **Heuristic chose a provider that gets disconnected mid-turn** — host's existing `ProviderLease` invariants apply; the lease holds the `Arc<dyn ProviderClient>` until the turn completes. Same as Override or Rule scenarios.
 - **Locale fallback** — non-en locale missing `routing.show-heuristics-active`: rust_i18n auto-falls-back to en. Tested per [[feedback_test_locale_isolation]] by adding the placeholder to all locales.
 
 ## Testing Approach
 
-**Unit tests** (`crates/savvagent-host/src/router/heuristics.rs` `#[cfg(test)] mod tests`):
+**Unit tests** (`crates/otto-host/src/router/heuristics.rs` `#[cfg(test)] mod tests`):
 
 1. `classify_returns_none_for_empty_input` — `""`, `"  "`, `"hello"`.
 2. `classify_short_factoid_requires_question_mark` — `"what is 2+2?"` → `Some(ShortFactoid)`; `"what is 2+2"` → `None`.
@@ -341,7 +341,7 @@ show-heuristics-active = "heuristics: enabled — short-factoid (≤200 chars + 
 11. `pick_for_kind_walks_pool_when_active_provider_has_no_match` — active provider exposes only `Standard`; `ShortFactoid` finds a `Cheap` on a sibling provider.
 12. `pick_for_kind_prefers_active_provider_over_sibling_at_same_tier` — both active and sibling expose a `Premium`; active wins. Pins the same-provider-first guarantee.
 
-**Router-integration tests** (existing `crates/savvagent-host/src/router/router.rs` `#[cfg(test)] mod tests`):
+**Router-integration tests** (existing `crates/otto-host/src/router/router.rs` `#[cfg(test)] mod tests`):
 
 13. `pick_heuristic_short_factoid_routes_to_cheap` — heuristics on, short factoid, active is Premium, pool has Cheap → routes to Cheap with `RoutingReason::Heuristic { ShortFactoid }`.
 14. `pick_heuristic_coding_routes_to_premium` — heuristics on, coding keyword, active is Cheap, pool has Premium → routes to Premium.
@@ -352,7 +352,7 @@ show-heuristics-active = "heuristics: enabled — short-factoid (≤200 chars + 
 19. `pick_heuristic_returns_default_when_active_already_in_tier` — confirms the no-op short-circuit.
 20. `routing_reason_heuristic_displays` — Display impl renders `Heuristic(short)` / `Heuristic(coding)`.
 
-**End-to-end** (new file `crates/savvagent-host/tests/heuristic_e2e.rs`, or extending `route_rules_e2e.rs`):
+**End-to-end** (new file `crates/otto-host/tests/heuristic_e2e.rs`, or extending `route_rules_e2e.rs`):
 
 21. `heuristic_short_factoid_e2e` — synthetic `Host` with two providers (Anthropic `haiku`+`opus`, Gemini `flash`), `heuristics=true`, active = opus. Send `"what is 2+2?"`. Assert `RouteSelected` event carries `Heuristic(ShortFactoid)` and provider=anthropic, model=haiku.
 22. `heuristic_coding_e2e` — same setup, send `"refactor this function"`. Assert routed to opus (Premium). Active was haiku.
@@ -360,7 +360,7 @@ show-heuristics-active = "heuristics: enabled — short-factoid (≤200 chars + 
 
 Per [[feedback_streaming_test_permissions]], pre-register `Allow` via `host.add_session_rule(...)` so synthetic tool-use turns don't hang.
 
-**TUI render test** (`crates/savvagent/src/main.rs::render_routing_show_tests`):
+**TUI render test** (`crates/otto/src/main.rs::render_routing_show_tests`):
 
 24. `render_routing_show_shows_heuristic_active_line_when_enabled` — Build `RoutingRules { heuristics: true, …Default::default() }`; render; assert one log line contains the localized active-heuristic text.
 25. `render_routing_show_omits_heuristic_line_when_disabled` — `heuristics: false`; assert no heuristic line appears.

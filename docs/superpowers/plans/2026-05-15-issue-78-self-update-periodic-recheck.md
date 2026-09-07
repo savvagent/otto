@@ -6,7 +6,7 @@
 
 **Architecture:** Extend the existing `on_event(HostStarting)` spawned task. Today it runs the check-and-maybe-install body once and exits; instead wrap that body in a `tokio::time::interval` loop. First tick fires immediately (preserves startup behavior, reads on-disk cache). Subsequent ticks fire every 2 hours, bypass the cache read, and run the same `check_for_update` → `run_install` pipeline. Skip rules at the top of each iteration: `Disabled` and `Updated` break the loop; `Installing` skips the tick; `InstallFailed { latest: failed, .. }` re-runs the check but installs only if the live tag differs from the previously failed one. `MissedTickBehavior::Delay` is set so suspends or long installs don't cause burst catch-up.
 
-**Tech Stack:** Rust, `tokio::time::interval`, `async_trait`, existing `savvagent-plugin` trait surface, no new crates.
+**Tech Stack:** Rust, `tokio::time::interval`, `async_trait`, existing `otto-plugin` trait surface, no new crates.
 
 **Spec:** `docs/superpowers/specs/2026-05-15-issue-78-self-update-periodic-recheck-design.md`
 
@@ -20,8 +20,8 @@
 
 | Path | Role | Tasks |
 |------|------|-------|
-| `crates/savvagent/src/plugin/builtin/self_update/cache.rs` | Broaden `load` / `save` signatures from `&PathBuf` to `&Path` | 1 |
-| `crates/savvagent/src/plugin/builtin/self_update/mod.rs` | Plugin implementation + tests | 1–6 |
+| `crates/otto/src/plugin/builtin/self_update/cache.rs` | Broaden `load` / `save` signatures from `&PathBuf` to `&Path` | 1 |
+| `crates/otto/src/plugin/builtin/self_update/mod.rs` | Plugin implementation + tests | 1–6 |
 | `Cargo.toml` (root) | Workspace version bump | 7 |
 | `CHANGELOG.md` | Release notes entry | 8 |
 | `README.md` | Self-update paragraph update | 9 |
@@ -35,14 +35,14 @@ Implementation work concentrates in `self_update/mod.rs`. The plan progressively
 **Goal:** Make `cache::load` and `cache::save` accept `&Path` so the rest of the plan's helper signatures can use the idiomatic borrow form. No behavior change — `&PathBuf` deref-coerces to `&Path`, so existing callers (including the cache module's own tests) continue to work without edits.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/cache.rs:11` (add `Path` import)
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/cache.rs:77` (`load` signature)
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/cache.rs:104` (`save` signature)
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/mod.rs:351` (call site uses `.as_ref()` → `.as_deref()`)
+- Modify: `crates/otto/src/plugin/builtin/self_update/cache.rs:11` (add `Path` import)
+- Modify: `crates/otto/src/plugin/builtin/self_update/cache.rs:77` (`load` signature)
+- Modify: `crates/otto/src/plugin/builtin/self_update/cache.rs:104` (`save` signature)
+- Modify: `crates/otto/src/plugin/builtin/self_update/mod.rs:351` (call site uses `.as_ref()` → `.as_deref()`)
 
 - [ ] **Step 1: Confirm baseline tests pass**
 
-Run: `cargo test -p savvagent self_update`
+Run: `cargo test -p otto self_update`
 Expected: all current tests pass.
 
 - [ ] **Step 2: Update `cache.rs` imports**
@@ -106,20 +106,20 @@ After:
 
 - [ ] **Step 6: Run tests**
 
-Run: `cargo test -p savvagent self_update`
+Run: `cargo test -p otto self_update`
 Expected: all tests pass — `&PathBuf` arguments in the cache module's tests deref-coerce to `&Path`.
 
 - [ ] **Step 7: Clippy + fmt**
 
-Run: `rustup run stable cargo clippy -p savvagent --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto --all-targets -- -D warnings`
 Run: `rustup run stable cargo fmt --all -- --check`
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/self_update/cache.rs \
-        crates/savvagent/src/plugin/builtin/self_update/mod.rs
+git add crates/otto/src/plugin/builtin/self_update/cache.rs \
+        crates/otto/src/plugin/builtin/self_update/mod.rs
 git commit -m "refactor(self-update/cache): take &Path instead of &PathBuf
 
 Idiomatic borrow form for the load/save signatures. Existing
@@ -135,11 +135,11 @@ as_deref(). Prepares for the periodic-recheck helper signature."
 **Goal:** Lift the body of the `tokio::spawn` block in `on_event` into a private free function `run_check_once`. No behavior change. All existing tests must pass unchanged.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/mod.rs:306-411` (the `on_event` impl and the spawn body)
+- Modify: `crates/otto/src/plugin/builtin/self_update/mod.rs:306-411` (the `on_event` impl and the spawn body)
 
 - [ ] **Step 1: Confirm baseline tests pass**
 
-Run: `cargo test -p savvagent self_update::tests`
+Run: `cargo test -p otto self_update::tests`
 Expected: all tests in the existing `self_update::tests` module pass.
 
 - [ ] **Step 2: Add the helper function**
@@ -250,19 +250,19 @@ In `on_event`, replace the `tokio::spawn(async move { ... });` block (currently 
 
 - [ ] **Step 4: Run existing tests**
 
-Run: `cargo test -p savvagent self_update::tests`
+Run: `cargo test -p otto self_update::tests`
 Expected: all tests pass. The behavior is identical — `run_check_once` is just the extracted body.
 
 - [ ] **Step 5: Clippy + fmt**
 
-Run: `rustup run stable cargo clippy -p savvagent --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto --all-targets -- -D warnings`
 Run: `rustup run stable cargo fmt --all -- --check`
 Expected: clean.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/self_update/mod.rs
+git add crates/otto/src/plugin/builtin/self_update/mod.rs
 git commit -m "refactor(self-update): extract run_check_once helper
 
 Pure refactor: the body of on_event's spawn becomes a reusable
@@ -277,7 +277,7 @@ the cache module accepts &Path). No behavior change."
 **Goal:** Introduce `periodic_interval: Duration` on `SelfUpdatePlugin`, a test-only setter, and the `tokio::time::interval` construct with `MissedTickBehavior::Delay`. Still only one tick is awaited (no loop yet), so behavior is unchanged.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/self_update/mod.rs`
 
 - [ ] **Step 1: Add `Duration` and `MissedTickBehavior` imports**
 
@@ -389,19 +389,19 @@ The `let periodic_interval = self.periodic_interval;` line must appear with the 
 
 - [ ] **Step 6: Run existing tests**
 
-Run: `cargo test -p savvagent self_update::tests`
+Run: `cargo test -p otto self_update::tests`
 Expected: all tests pass. `interval.tick().await` resolves immediately for the first call, so behavior is identical to Task 2.
 
 - [ ] **Step 7: Clippy + fmt**
 
-Run: `rustup run stable cargo clippy -p savvagent --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto --all-targets -- -D warnings`
 Run: `rustup run stable cargo fmt --all -- --check`
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/self_update/mod.rs
+git add crates/otto/src/plugin/builtin/self_update/mod.rs
 git commit -m "feat(self-update): add periodic_interval scaffolding
 
 Adds PERIODIC_INTERVAL const, periodic_interval field with a
@@ -417,7 +417,7 @@ loop follows. No behavior change for users."
 **Goal:** Convert the single-tick await into a real loop with `Disabled` and `Updated` skip rules AND add the first-tick-only cache read. These two changes ship together because the multi-tick proof (`periodic_check_runs_multiple_ticks`) only works once subsequent ticks bypass the cache — otherwise the first tick poisons every subsequent tick into a cache hit and the fetcher count stalls at 1.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/self_update/mod.rs`
 
 - [ ] **Step 1: Add the `CountingFetcher` test double**
 
@@ -664,8 +664,8 @@ Add the following helpers and tests inside the `#[cfg(test)] mod tests` block, a
 
 - [ ] **Step 3: Run the new tests — expect failures**
 
-Run: `cargo test -p savvagent self_update::tests::periodic_check`
-Run: `cargo test -p savvagent self_update::tests::first_tick`
+Run: `cargo test -p otto self_update::tests::periodic_check`
+Run: `cargo test -p otto self_update::tests::first_tick`
 
 Expected: All four tests fail (or hang — kill the run with Ctrl-C if a test hangs):
 - `periodic_check_runs_multiple_ticks` FAILS: fetcher is called only once at the first tick; subsequent calls to `interval.tick().await` never happen because the spawned task has already exited.
@@ -748,26 +748,26 @@ In `on_event`'s spawn body (from Task 3), replace the single-tick await with a r
 
 - [ ] **Step 5: Run the new tests — expect pass**
 
-Run: `cargo test -p savvagent self_update::tests::periodic_check`
-Run: `cargo test -p savvagent self_update::tests::first_tick`
+Run: `cargo test -p otto self_update::tests::periodic_check`
+Run: `cargo test -p otto self_update::tests::first_tick`
 
 Expected: all four tests pass.
 
 - [ ] **Step 6: Run the full module's tests**
 
-Run: `cargo test -p savvagent self_update::tests`
+Run: `cargo test -p otto self_update::tests`
 Expected: all pass (28 existing + 4 new = 32 total).
 
 - [ ] **Step 7: Clippy + fmt**
 
-Run: `rustup run stable cargo clippy -p savvagent --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto --all-targets -- -D warnings`
 Run: `rustup run stable cargo fmt --all -- --check`
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/self_update/mod.rs
+git add crates/otto/src/plugin/builtin/self_update/mod.rs
 git commit -m "feat(self-update): multi-tick loop with first-tick cache gating
 
 Converts the single-tick await to a tokio::time::interval loop with
@@ -788,7 +788,7 @@ first-tick-cache / subsequent-tick-bypass split."
 **Goal:** Add the `Installing` skip rule and prove it works via a test that models a concurrent `/update` invocation parked on a blocking installer. The slash task must reach `Installing` *before* the periodic loop starts so the loop's first tick deterministically observes the skip case.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/self_update/mod.rs`
 
 - [ ] **Step 1: Add `BlockingStubInstaller` test double**
 
@@ -919,7 +919,7 @@ Add inside the `mod tests` block, after the four tests from Task 4. Sequencing: 
 
 - [ ] **Step 3: Run the test — expect failure**
 
-Run: `cargo test -p savvagent self_update::tests::periodic_check_skips_during_concurrent_slash_install`
+Run: `cargo test -p otto self_update::tests::periodic_check_skips_during_concurrent_slash_install`
 
 Expected: FAIL. Without the `Installing` skip rule, the loop's first tick falls through to `run_check_once`, classifies `Available`, calls `run_install`, which sets state back to `Installing` (no-op overwrite) and invokes `BlockingStubInstaller::install` a SECOND time — `installer.invocation_count()` becomes 2, failing the `== 1` assertion.
 
@@ -938,24 +938,24 @@ In the spawn body in `on_event`, update the match statement at the top of the lo
 
 - [ ] **Step 5: Run the test — expect pass**
 
-Run: `cargo test -p savvagent self_update::tests::periodic_check_skips_during_concurrent_slash_install`
+Run: `cargo test -p otto self_update::tests::periodic_check_skips_during_concurrent_slash_install`
 Expected: PASS.
 
 - [ ] **Step 6: Run full module tests**
 
-Run: `cargo test -p savvagent self_update::tests`
+Run: `cargo test -p otto self_update::tests`
 Expected: all pass (28 + 5 new).
 
 - [ ] **Step 7: Clippy + fmt**
 
-Run: `rustup run stable cargo clippy -p savvagent --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto --all-targets -- -D warnings`
 Run: `rustup run stable cargo fmt --all -- --check`
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/self_update/mod.rs
+git add crates/otto/src/plugin/builtin/self_update/mod.rs
 git commit -m "feat(self-update): skip periodic tick while state is Installing
 
 Adds the Installing skip rule and a test that models the real
@@ -972,7 +972,7 @@ BlockingStubInstaller backs the parking behavior."
 **Goal:** When pre-tick state is `InstallFailed { latest: failed, .. }`, run the network check but install only if the live tag differs from `failed`. Adds two tests.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/self_update/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/self_update/mod.rs`
 
 - [ ] **Step 1: Write the two failing tests**
 
@@ -1063,7 +1063,7 @@ Add inside `mod tests`, after the test from Task 5:
 
 - [ ] **Step 2: Run the tests — expect failure**
 
-Run: `cargo test -p savvagent self_update::tests::install_failed_periodic`
+Run: `cargo test -p otto self_update::tests::install_failed_periodic`
 Expected: `install_failed_periodic_skips_install_when_tag_unchanged` FAILS — the current loop body sees pre-state `InstallFailed`, runs the check, classifies `Available`, then calls `run_install` and installs. The `installer.invocation_count() == 0` assertion fails (count is 1).
 
 `install_failed_periodic_installs_when_new_tag_appears` may pass coincidentally with current behavior.
@@ -1154,24 +1154,24 @@ In `on_event`'s spawn body, the loop already snapshots `pre_state` for the skip 
 
 - [ ] **Step 5: Run the new tests**
 
-Run: `cargo test -p savvagent self_update::tests::install_failed_periodic`
+Run: `cargo test -p otto self_update::tests::install_failed_periodic`
 Expected: both pass.
 
 - [ ] **Step 6: Run the full module's tests**
 
-Run: `cargo test -p savvagent self_update::tests`
+Run: `cargo test -p otto self_update::tests`
 Expected: all pass (28 existing + 7 new = 35 total). If the existing `slash_update_when_install_failed_retries_install` (currently at `mod.rs:846`) fails, the regression is in the new decision logic — `handle_slash` calls `run_install` directly without going through `run_check_once`, so it should be unaffected; debug before moving on.
 
 - [ ] **Step 7: Clippy + fmt**
 
-Run: `rustup run stable cargo clippy -p savvagent --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto --all-targets -- -D warnings`
 Run: `rustup run stable cargo fmt --all -- --check`
 Expected: clean.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/self_update/mod.rs
+git add crates/otto/src/plugin/builtin/self_update/mod.rs
 git commit -m "feat(self-update): periodic InstallFailed retries only on new tag
 
 When pre-tick state is InstallFailed { latest: failed, .. }, the
@@ -1193,16 +1193,16 @@ same-tag-skip and new-tag-installs."
 Update these specific lines (verified against grep output 2026-05-15):
 
 - Line 20: `version = "0.14.2"` → `version = "0.14.3"`
-- Line 28: `savvagent-plugin = { path = "crates/savvagent-plugin", version = "0.14.2" }` → `version = "0.14.3"`
-- Line 29: `savvagent-protocol = { path = "crates/savvagent-protocol", version = "0.14.2" }` → `version = "0.14.3"`
-- Line 30: `savvagent-mcp = { path = "crates/savvagent-mcp", version = "0.14.2" }` → `version = "0.14.3"`
-- Line 31: `savvagent-host = { path = "crates/savvagent-host", version = "0.14.2" }` → `version = "0.14.3"`
+- Line 28: `otto-plugin = { path = "crates/otto-plugin", version = "0.14.2" }` → `version = "0.14.3"`
+- Line 29: `otto-protocol = { path = "crates/otto-protocol", version = "0.14.2" }` → `version = "0.14.3"`
+- Line 30: `otto-mcp = { path = "crates/otto-mcp", version = "0.14.2" }` → `version = "0.14.3"`
+- Line 31: `otto-host = { path = "crates/otto-host", version = "0.14.2" }` → `version = "0.14.3"`
 
 (No per-crate `Cargo.toml` literals — each crate inherits `version.workspace = true`.)
 
 - [ ] **Step 2: Verify build**
 
-Run: `cargo build -p savvagent`
+Run: `cargo build -p otto`
 Expected: success. The `Cargo.lock` will update to reflect the new version.
 
 - [ ] **Step 3: Verify no stray 0.14.2 references**
@@ -1240,7 +1240,7 @@ Add the following block immediately after line 7 (just before `## v0.14.2 — Ge
   published mid-session. The spawned check task now runs on a
   `tokio::time::interval` with a 2-hour cadence: the first tick
   preserves today's startup behavior (and the 24h on-disk cache at
-  `~/.savvagent/update-check.json`), while subsequent ticks bypass the
+  `~/.otto/update-check.json`), while subsequent ticks bypass the
   cache and re-query GitHub. New releases auto-install in exactly the
   same way as the startup path; the banner shows the progression and
   the existing restart hint fires on exit.
@@ -1287,13 +1287,13 @@ git commit -m "docs: changelog entry for v0.14.3 (#78)"
 Currently at `README.md:123` (verified against grep output 2026-05-15):
 
 ```
-| `/update` | Re-run the latest-release install. As of the next release the TUI installs available updates automatically on launch (the banner above the prompt reports progress); `/update` is only needed to retry after a failed install or to force the install before the next polling window. Replaces every binary in the release archive — `savvagent` plus the six helpers. Opt out with `SAVVAGENT_NO_UPDATE_CHECK=1` or `--no-update-check`. |
+| `/update` | Re-run the latest-release install. As of the next release the TUI installs available updates automatically on launch (the banner above the prompt reports progress); `/update` is only needed to retry after a failed install or to force the install before the next polling window. Replaces every binary in the release archive — `otto` plus the six helpers. Opt out with `OTTO_NO_UPDATE_CHECK=1` or `--no-update-check`. |
 ```
 
 Replace with:
 
 ```
-| `/update` | Re-run the latest-release install. The TUI checks for new releases on launch AND re-checks every 2 hours while the TUI is open, auto-installing any newer release (the banner above the prompt reports progress). `/update` is only needed to retry after a failed install or to force the install before the next 2-hour tick. Replaces every binary in the release archive — `savvagent` plus the six helpers. Opt out with `SAVVAGENT_NO_UPDATE_CHECK=1` or `--no-update-check`. |
+| `/update` | Re-run the latest-release install. The TUI checks for new releases on launch AND re-checks every 2 hours while the TUI is open, auto-installing any newer release (the banner above the prompt reports progress). `/update` is only needed to retry after a failed install or to force the install before the next 2-hour tick. Replaces every binary in the release archive — `otto` plus the six helpers. Opt out with `OTTO_NO_UPDATE_CHECK=1` or `--no-update-check`. |
 ```
 
 - [ ] **Step 2: Edit the env-var description**
@@ -1301,13 +1301,13 @@ Replace with:
 Currently at `README.md:317`:
 
 ```
-| `SAVVAGENT_NO_UPDATE_CHECK` | `savvagent` | (unset) | When set, disables the launch-time version check and `/update`. CLI equivalent: `--no-update-check`. |
+| `OTTO_NO_UPDATE_CHECK` | `otto` | (unset) | When set, disables the launch-time version check and `/update`. CLI equivalent: `--no-update-check`. |
 ```
 
 Replace with:
 
 ```
-| `SAVVAGENT_NO_UPDATE_CHECK` | `savvagent` | (unset) | When set, disables the launch-time and periodic (2-hour) version check, and the `/update` slash command. CLI equivalent: `--no-update-check`. |
+| `OTTO_NO_UPDATE_CHECK` | `otto` | (unset) | When set, disables the launch-time and periodic (2-hour) version check, and the `/update` slash command. CLI equivalent: `--no-update-check`. |
 ```
 
 - [ ] **Step 3: Commit**

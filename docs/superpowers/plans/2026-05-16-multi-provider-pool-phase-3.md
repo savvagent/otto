@@ -5,7 +5,7 @@
 **Goal:** Lift Phase 1's "one active provider per conversation" constraint. Users can route individual turns to a specific provider/model via an `@provider:model` (or `@provider`, or `@alias`) prefix on the message; everything else still defaults to the active provider. Conversation history survives cross-provider turns because the host now namespaces `tool_use_id`s with the issuing provider at insertion time, and strips the receiver's own prefix back off before sending each request. The Phase 2 gate (`v0.16.0`) is the safety net that lets this ship: it already proved every receiver's translator accepts foreign-prefixed ids on the wire.
 
 **Architecture:**
-- **Router lives in `savvagent-host`.** A new `router/router.rs` module exports `Router::pick(req, ctx, override) -> RoutingDecision` plus the supporting types (`RoutingDecision`, `RoutingReason`, `RoutingOverride`). Phase 3 activates only two of the five planned layers: Layer 1 (`@`-prefix override) and Layer 5 (default). Layers 2-4 (modality, user rules, heuristics) are reserved for Phases 4-6; the `RoutingReason` enum is `#[non_exhaustive]` so adding them later isn't a breaking change.
+- **Router lives in `otto-host`.** A new `router/router.rs` module exports `Router::pick(req, ctx, override) -> RoutingDecision` plus the supporting types (`RoutingDecision`, `RoutingReason`, `RoutingOverride`). Phase 3 activates only two of the five planned layers: Layer 1 (`@`-prefix override) and Layer 5 (default). Layers 2-4 (modality, user rules, heuristics) are reserved for Phases 4-6; the `RoutingReason` enum is `#[non_exhaustive]` so adding them later isn't a breaking change.
 - **`@`-prefix parser is pure.** `router/prefix.rs` exposes `parse_at_prefix(input, providers, aliases) -> ParsedPrefix` returning `(Option<RoutingOverride>, body)`. The function never touches I/O; the caller (host) is responsible for catching unresolved `@`-tokens (which fall through with `Default` reason) and surfacing the resulting reason in the routing decision. `@@<rest>` strips one leading `@` and treats the body as literal text. Unknown `@token`s do NOT consume the prefix — the message passes through verbatim and the router records `reason = Default` so the user can see their `@token` wasn't recognized.
 - **Cross-provider history is keyed by namespaced ids.** The host owns one canonical `Vec<Message>` per conversation. On the way INTO history (after `provider.complete` returns), every `ContentBlock::ToolUse.id` and matching `ContentBlock::ToolResult.tool_use_id` is rewritten to `<provider_id>:<original_id>` — the provider id is the one the router picked for that turn. On the way OUT (before the next `provider.complete` call, for whichever provider is handling the next turn), any id prefixed with the *receiver's own* provider id is stripped back to its raw form; foreign-prefixed ids flow through verbatim. The Phase 2 gate's mocked matrix is the proof that step works.
 - **The active provider becomes the default, not a constraint.** `Host::set_active_provider` keeps the conceptual role of "what `/use` and the router's Layer-5 default point at," but no longer clears history. Cross-provider history is now safe; clearing on every `/use` would actually defeat the new capability. The Phase 1 test that locks in the old behavior is updated as part of this plan.
@@ -21,24 +21,24 @@
 ## File structure (Phase 3)
 
 **New files:**
-- `crates/savvagent-host/src/router/prefix.rs` — pure `@`-prefix parser.
-- `crates/savvagent-host/src/router/router.rs` — `Router`, `RoutingDecision`, `RoutingReason`, `RoutingOverride`.
-- `crates/savvagent-host/src/router/namespace.rs` — pure ID namespacing/stripping helpers used by `Host::run_turn_inner`.
-- `crates/savvagent-host/tests/cross_provider_history.rs` — integration test that runs a two-turn conversation across two providers and asserts namespaced ids round-trip.
+- `crates/otto-host/src/router/prefix.rs` — pure `@`-prefix parser.
+- `crates/otto-host/src/router/router.rs` — `Router`, `RoutingDecision`, `RoutingReason`, `RoutingOverride`.
+- `crates/otto-host/src/router/namespace.rs` — pure ID namespacing/stripping helpers used by `Host::run_turn_inner`.
+- `crates/otto-host/tests/cross_provider_history.rs` — integration test that runs a two-turn conversation across two providers and asserts namespaced ids round-trip.
 
 **Modified files:**
-- `crates/savvagent-host/src/router/mod.rs` — declare and re-export the new submodules.
-- `crates/savvagent-host/src/lib.rs` — re-export `Router`, `RoutingDecision`, `RoutingReason`, `RoutingOverride`.
-- `crates/savvagent-host/src/session.rs` — `TurnEvent::RouteSelected` variant; `run_turn_inner` parses `@`-prefix, invokes router, namespaces ids on append, strips own-prefix on egress; `set_active_provider` no longer calls `clear_history`. Currently 2828 lines; the changes are localized and don't warrant splitting the file.
-- `crates/savvagent-host/src/pool.rs` — `PoolEntry::aliases` field; getter; constructor takes aliases.
-- `crates/savvagent-host/src/config.rs` — already has `ProviderRegistration::aliases`; no schema change, just flows through to `PoolEntry` now.
-- `crates/savvagent-host/tests/pool_lifecycle.rs` — flip `set_active_provider_clears_history_before_swap` to `set_active_provider_preserves_history` (Phase 3 inverts this contract).
-- `crates/savvagent/src/app.rs` — `Entry::RouteBadge(String)` variant; `apply_turn_event` handles `TurnEvent::RouteSelected`.
-- `crates/savvagent/src/ui.rs` — render `Entry::RouteBadge` as a muted single line.
-- `crates/savvagent/src/main.rs` — `/use` no longer clears `app.entries`; `/model` picker no longer filters to the active provider's catalog (picker shows every connected provider's models, qualified as `provider/model`).
-- `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs` — populate `ModelAlias` entries (`opus`, `sonnet`, `haiku`).
-- `crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs` — populate `ModelAlias` entries (`flash`, `pro`).
-- `crates/savvagent/src/plugin/builtin/provider_openai/mod.rs` — populate `ModelAlias` entries (`gpt-5`, `gpt-4o`).
+- `crates/otto-host/src/router/mod.rs` — declare and re-export the new submodules.
+- `crates/otto-host/src/lib.rs` — re-export `Router`, `RoutingDecision`, `RoutingReason`, `RoutingOverride`.
+- `crates/otto-host/src/session.rs` — `TurnEvent::RouteSelected` variant; `run_turn_inner` parses `@`-prefix, invokes router, namespaces ids on append, strips own-prefix on egress; `set_active_provider` no longer calls `clear_history`. Currently 2828 lines; the changes are localized and don't warrant splitting the file.
+- `crates/otto-host/src/pool.rs` — `PoolEntry::aliases` field; getter; constructor takes aliases.
+- `crates/otto-host/src/config.rs` — already has `ProviderRegistration::aliases`; no schema change, just flows through to `PoolEntry` now.
+- `crates/otto-host/tests/pool_lifecycle.rs` — flip `set_active_provider_clears_history_before_swap` to `set_active_provider_preserves_history` (Phase 3 inverts this contract).
+- `crates/otto/src/app.rs` — `Entry::RouteBadge(String)` variant; `apply_turn_event` handles `TurnEvent::RouteSelected`.
+- `crates/otto/src/ui.rs` — render `Entry::RouteBadge` as a muted single line.
+- `crates/otto/src/main.rs` — `/use` no longer clears `app.entries`; `/model` picker no longer filters to the active provider's catalog (picker shows every connected provider's models, qualified as `provider/model`).
+- `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs` — populate `ModelAlias` entries (`opus`, `sonnet`, `haiku`).
+- `crates/otto/src/plugin/builtin/provider_gemini/mod.rs` — populate `ModelAlias` entries (`flash`, `pro`).
+- `crates/otto/src/plugin/builtin/provider_openai/mod.rs` — populate `ModelAlias` entries (`gpt-5`, `gpt-4o`).
 - `Cargo.toml` (workspace) — bump `[workspace.package].version` to `0.17.0` and every `version = "0.16.0"` literal in `[workspace.dependencies]` to `0.17.0`.
 - `CHANGELOG.md` — add `## 0.17.0 - 2026-05-16` entry.
 - `README.md` — short note in the user-facing slash-command section about the `@provider[:model]` prefix.
@@ -48,13 +48,13 @@
 ## Task 1: Add `RoutingOverride` + `RoutingReason` + `RoutingDecision` types
 
 **Files:**
-- Create: `crates/savvagent-host/src/router/router.rs`
+- Create: `crates/otto-host/src/router/router.rs`
 
 These are pure data types — no I/O, no async. The full `Router::pick` function lands in Task 4; this task just stands up the types and `RoutingReason`'s exhaustive Phase 3 variants. The enum is `#[non_exhaustive]` so Phases 4-6 can add `Modality`, `Rule`, `Heuristic` without breaking downstream `match` arms.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-host/src/router/router.rs`:
+Create `crates/otto-host/src/router/router.rs`:
 
 ```rust
 //! Per-turn routing decisions for the multi-provider pool.
@@ -74,7 +74,7 @@ Create `crates/savvagent-host/src/router/router.rs`:
 //! Phases 4-6; `RoutingReason` is `#[non_exhaustive]` so adding them
 //! later is additive, not breaking.
 
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 
 /// An explicit routing override the user expressed via an `@`-prefix.
 /// Always wins over every other layer in [`Router::pick`].
@@ -158,7 +158,7 @@ mod tests {
 
 - [ ] **Step 2: Declare the module and re-export the types**
 
-Edit `crates/savvagent-host/src/router/mod.rs`. Replace its contents with:
+Edit `crates/otto-host/src/router/mod.rs`. Replace its contents with:
 
 ```rust
 //! Routing layers. Phase 3 ships the router skeleton plus `@`-prefix
@@ -172,7 +172,7 @@ pub use legacy_model::{LegacyModelResolution, ProviderView, resolve_legacy_model
 pub use router::{RoutingDecision, RoutingOverride, RoutingReason};
 ```
 
-Edit `crates/savvagent-host/src/lib.rs`. Below the existing `pub use router::…` line, extend the list so the new types are re-exported at the crate root:
+Edit `crates/otto-host/src/lib.rs`. Below the existing `pub use router::…` line, extend the list so the new types are re-exported at the crate root:
 
 ```rust
 pub use router::{
@@ -183,7 +183,7 @@ pub use router::{
 
 - [ ] **Step 3: Run the unit tests**
 
-Run: `cargo test -p savvagent-host router::router::tests -- --nocapture`
+Run: `cargo test -p otto-host router::router::tests -- --nocapture`
 Expected: three tests pass (`routing_reason_displays`, `routing_override_constructs`, `routing_decision_constructs`).
 
 **Heads-up — the `prefix` module declared in `mod.rs` doesn't exist yet.** `cargo test` will fail to compile until Task 2 creates the file. To verify Task 1 in isolation before committing, temporarily comment the `pub mod prefix;` line, run the tests, then uncomment before the next task. Alternatively, defer running these tests until Task 2 lands and run the whole `router::` module in one shot.
@@ -191,9 +191,9 @@ Expected: three tests pass (`routing_reason_displays`, `routing_override_constru
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/mod.rs \
-        crates/savvagent-host/src/router/router.rs \
-        crates/savvagent-host/src/lib.rs
+git add crates/otto-host/src/router/mod.rs \
+        crates/otto-host/src/router/router.rs \
+        crates/otto-host/src/lib.rs
 git commit -m "feat(host): add RoutingDecision/Reason/Override types (Phase 3 skeleton)"
 ```
 
@@ -202,13 +202,13 @@ git commit -m "feat(host): add RoutingDecision/Reason/Override types (Phase 3 sk
 ## Task 2: Pure `@`-prefix parser
 
 **Files:**
-- Create: `crates/savvagent-host/src/router/prefix.rs`
+- Create: `crates/otto-host/src/router/prefix.rs`
 
 Pure function. Walks the connected pool's providers and aliases to resolve a leading `@`-token. Handles `@provider:model`, `@provider`, `@alias`, `@@<rest>` escape, and unknown-token fallthrough. Recognises that slash commands (`/connect …`) bypass `@`-parsing entirely — but slash-command interception lives in the TUI's command palette long before user input reaches the host, so the parser doesn't have to know about it.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `crates/savvagent-host/src/router/prefix.rs`:
+Create `crates/otto-host/src/router/prefix.rs`:
 
 ```rust
 //! `@provider[:model]` / `@alias` prefix parser.
@@ -221,7 +221,7 @@ Create `crates/savvagent-host/src/router/prefix.rs`:
 //! See spec section "`@provider:model` override syntax" for the full
 //! contract, including `@@`-escape and unknown-token fallthrough.
 
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 
 use crate::capabilities::ModelAlias;
 use crate::router::router::RoutingOverride;
@@ -621,13 +621,13 @@ mod tests {
 
 - [ ] **Step 2: Run the tests**
 
-Run: `cargo test -p savvagent-host router::prefix -- --nocapture`
+Run: `cargo test -p otto-host router::prefix -- --nocapture`
 Expected: every test passes (11 tests). If any fail, debug the parser before moving on — bugs here corrupt every subsequent task.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/prefix.rs
+git add crates/otto-host/src/router/prefix.rs
 git commit -m "feat(host): @-prefix parser with @@-escape + unknown-token fallthrough"
 ```
 
@@ -636,7 +636,7 @@ git commit -m "feat(host): @-prefix parser with @@-escape + unknown-token fallth
 ## Task 3: Pure ID namespacing helpers
 
 **Files:**
-- Create: `crates/savvagent-host/src/router/namespace.rs`
+- Create: `crates/otto-host/src/router/namespace.rs`
 
 Two pure functions plus a small struct used by `Host::run_turn_inner`:
 
@@ -647,7 +647,7 @@ Both functions are pure and unit-tested in isolation. The host wires them into t
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `crates/savvagent-host/src/router/namespace.rs`:
+Create `crates/otto-host/src/router/namespace.rs`:
 
 ```rust
 //! Pure helpers for cross-provider `tool_use_id` namespacing.
@@ -664,7 +664,7 @@ Create `crates/savvagent-host/src/router/namespace.rs`:
 //! Both functions are pure — they take ownership / borrow only of the
 //! values they need, never touch I/O.
 
-use savvagent_protocol::{ContentBlock, Message, ProviderId};
+use otto_protocol::{ContentBlock, Message, ProviderId};
 
 /// Rewrite every `ContentBlock::ToolUse.id` in `blocks` to
 /// `<provider_id>:<id>`. Idempotent: if a block's id is already prefixed
@@ -746,7 +746,7 @@ fn strip_block(block: &ContentBlock, prefix: &str) -> ContentBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use savvagent_protocol::Role;
+    use otto_protocol::Role;
     use serde_json::json;
 
     fn anth() -> ProviderId {
@@ -860,7 +860,7 @@ mod tests {
 
 - [ ] **Step 2: Declare the module**
 
-Edit `crates/savvagent-host/src/router/mod.rs` to add the new submodule. After the existing `pub mod router;` line:
+Edit `crates/otto-host/src/router/mod.rs` to add the new submodule. After the existing `pub mod router;` line:
 
 ```rust
 pub mod namespace;
@@ -870,14 +870,14 @@ The functions are crate-internal — they're only used by `session.rs` — so no
 
 - [ ] **Step 3: Run the tests**
 
-Run: `cargo test -p savvagent-host router::namespace -- --nocapture`
+Run: `cargo test -p otto-host router::namespace -- --nocapture`
 Expected: six tests pass.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/namespace.rs \
-        crates/savvagent-host/src/router/mod.rs
+git add crates/otto-host/src/router/namespace.rs \
+        crates/otto-host/src/router/mod.rs
 git commit -m "feat(host): pure helpers for cross-provider tool_use_id namespacing"
 ```
 
@@ -886,14 +886,14 @@ git commit -m "feat(host): pure helpers for cross-provider tool_use_id namespaci
 ## Task 4: `PoolEntry::aliases` + propagate through `add_provider`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/pool.rs`
-- Modify: `crates/savvagent-host/src/session.rs` (the `Host::add_provider` body)
+- Modify: `crates/otto-host/src/pool.rs`
+- Modify: `crates/otto-host/src/session.rs` (the `Host::add_provider` body)
 
 The router needs access to every connected provider's aliases at decision time. `ProviderRegistration::aliases` already exists in `config.rs`; this task plumbs it into a new `PoolEntry` field and exposes a getter so the host can collect aliases when invoking the router.
 
 - [ ] **Step 1: Extend `PoolEntry`**
 
-Edit `crates/savvagent-host/src/pool.rs`. In the `PoolEntry` struct, add an `aliases` field. In `PoolEntry::new`, take `aliases` as the third constructor argument (between `capabilities` and `display_name` for symmetry with `ProviderRegistration`), and store it.
+Edit `crates/otto-host/src/pool.rs`. In the `PoolEntry` struct, add an `aliases` field. In `PoolEntry::new`, take `aliases` as the third constructor argument (between `capabilities` and `display_name` for symmetry with `ProviderRegistration`), and store it.
 
 Locate the struct (around line 53):
 
@@ -975,7 +975,7 @@ Update the existing `PoolEntry::new(...)` call inside the `tests` module at the 
 - [ ] **Step 2: Update every `PoolEntry::new` call site outside `pool.rs`**
 
 Run: `grep -rn 'PoolEntry::new' crates/`
-Expected hits: `crates/savvagent-host/src/session.rs` (three call sites — `Host::start`'s pool-build path, `Host::start`'s legacy fallback, and `Host::with_components`), plus the `add_provider` body. Update each to pass the new `aliases` argument:
+Expected hits: `crates/otto-host/src/session.rs` (three call sites — `Host::start`'s pool-build path, `Host::start`'s legacy fallback, and `Host::with_components`), plus the `add_provider` body. Update each to pass the new `aliases` argument:
 
 In `Host::start`'s pool-build path (around line 336), the call is currently:
 
@@ -1042,18 +1042,18 @@ pool.insert(
 
 - [ ] **Step 3: Verify the changes compile**
 
-Run: `cargo check -p savvagent-host --tests`
+Run: `cargo check -p otto-host --tests`
 Expected: clean build. If any `PoolEntry::new` call site is missing the new argument, the compiler points at it.
 
 - [ ] **Step 4: Run the pool tests**
 
-Run: `cargo test -p savvagent-host pool::tests -- --nocapture`
+Run: `cargo test -p otto-host pool::tests -- --nocapture`
 Expected: both `lease_increments_and_drop_decrements` and `lease_keeps_client_alive_after_entry_drop` still pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/pool.rs crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/pool.rs crates/otto-host/src/session.rs
 git commit -m "feat(host): thread ModelAlias into PoolEntry"
 ```
 
@@ -1062,14 +1062,14 @@ git commit -m "feat(host): thread ModelAlias into PoolEntry"
 ## Task 5: `Router::pick` + `TurnEvent::RouteSelected`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/router.rs` (add `Router::pick`)
-- Modify: `crates/savvagent-host/src/session.rs` (add `TurnEvent::RouteSelected`)
+- Modify: `crates/otto-host/src/router/router.rs` (add `Router::pick`)
+- Modify: `crates/otto-host/src/session.rs` (add `TurnEvent::RouteSelected`)
 
 The router takes the parsed `@`-prefix override (if any), the snapshot of connected providers, and the active provider + model. Phase 3 layers: if `override_` is `Some` → `Override`; else → `Default` (active provider + active model).
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/savvagent-host/src/router/router.rs`, below the existing `#[cfg(test)] mod tests {` block (extend the same module, don't open a new one). Replace the existing `tests` module with:
+Append to `crates/otto-host/src/router/router.rs`, below the existing `#[cfg(test)] mod tests {` block (extend the same module, don't open a new one). Replace the existing `tests` module with:
 
 ```rust
 #[cfg(test)]
@@ -1270,12 +1270,12 @@ impl Router {
 
 - [ ] **Step 2: Run the router tests**
 
-Run: `cargo test -p savvagent-host router::router -- --nocapture`
+Run: `cargo test -p otto-host router::router -- --nocapture`
 Expected: seven tests pass (the original three from Task 1, plus four new `pick_*` tests).
 
 - [ ] **Step 3: Add `TurnEvent::RouteSelected`**
 
-Edit `crates/savvagent-host/src/session.rs`. Locate the `TurnEvent` enum (around line 169) and insert a new variant before `IterationStarted`:
+Edit `crates/otto-host/src/session.rs`. Locate the `TurnEvent` enum (around line 169) and insert a new variant before `IterationStarted`:
 
 ```rust
     /// The router picked a `(provider, model)` for this turn. Emitted
@@ -1283,7 +1283,7 @@ Edit `crates/savvagent-host/src/session.rs`. Locate the `TurnEvent` enum (around
     /// per-turn routing badge above the assistant's response.
     RouteSelected {
         /// The chosen provider for this turn.
-        provider_id: savvagent_protocol::ProviderId,
+        provider_id: otto_protocol::ProviderId,
         /// The chosen model for this turn.
         model_id: String,
         /// Why the router picked it (rendered as "Override" / "Default" today).
@@ -1295,14 +1295,14 @@ Adding the variant doesn't break callers that consume `TurnEvent` via `match` be
 
 - [ ] **Step 4: Verify it compiles**
 
-Run: `cargo check -p savvagent-host`
+Run: `cargo check -p otto-host`
 Expected: clean. The new variant is not yet emitted, so no runtime behavior changes — Task 6 wires it in.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/router.rs \
-        crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/router/router.rs \
+        crates/otto-host/src/session.rs
 git commit -m "feat(host): Router::pick + TurnEvent::RouteSelected (Phase 3 layers 1+5)"
 ```
 
@@ -1311,7 +1311,7 @@ git commit -m "feat(host): Router::pick + TurnEvent::RouteSelected (Phase 3 laye
 ## Task 6: Wire prefix parser + router + ID namespacing into `Host::run_turn_inner`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 The big integration task. `run_turn_inner` already lives at around line 547-887. Phase 3 adds:
 
@@ -1324,7 +1324,7 @@ The big integration task. `run_turn_inner` already lives at around line 547-887.
 
 - [ ] **Step 1: Read the current `run_turn_inner` body so the diff below is unambiguous**
 
-Run: `sed -n '547,887p' crates/savvagent-host/src/session.rs`
+Run: `sed -n '547,887p' crates/otto-host/src/session.rs`
 Expected: the function body from "`async fn run_turn_inner`" to its closing brace. Skim it once before editing — the changes below replace specific spans, not the whole function.
 
 - [ ] **Step 2: Parse the `@`-prefix and run the router at the start of `run_turn_inner`**
@@ -1502,18 +1502,18 @@ The `tool_uses` vec now carries already-namespaced `tool_use_id` strings; the su
 
 - [ ] **Step 5: Verify the change compiles**
 
-Run: `cargo check -p savvagent-host`
+Run: `cargo check -p otto-host`
 Expected: clean. The new code paths use only types already in scope (`ProviderView`, `ModelAlias`, `Router`, `prefix::parse_at_prefix`, `namespace::strip_own_prefix_in_history`, `namespace::namespace_assistant_content`).
 
 - [ ] **Step 6: Run the host's existing test suite to confirm no regressions**
 
-Run: `cargo test -p savvagent-host --no-fail-fast`
+Run: `cargo test -p otto-host --no-fail-fast`
 Expected: every test passes except `set_active_provider_clears_history_before_swap` in `tests/pool_lifecycle.rs` — that's Phase 1's contract, which Task 7 flips. (If anything else fails, debug before moving on.)
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "feat(host): route turns via Router + namespace tool_use_ids on history append"
 ```
 
@@ -1522,14 +1522,14 @@ git commit -m "feat(host): route turns via Router + namespace tool_use_ids on hi
 ## Task 7: `Host::set_active_provider` no longer clears history; flip the Phase 1 test
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
-- Modify: `crates/savvagent-host/tests/pool_lifecycle.rs`
+- Modify: `crates/otto-host/src/session.rs`
+- Modify: `crates/otto-host/tests/pool_lifecycle.rs`
 
 Phase 3 makes cross-provider history safe — clearing it on every `/use` defeats the new capability. `set_active_provider` now just swaps the active id; the user keeps their conversation.
 
 - [ ] **Step 1: Remove `clear_history` from `set_active_provider`**
 
-Edit `crates/savvagent-host/src/session.rs`. Locate `set_active_provider` (around line 1361-1378) and update both the doc comment and the body:
+Edit `crates/otto-host/src/session.rs`. Locate `set_active_provider` (around line 1361-1378) and update both the doc comment and the body:
 
 ```rust
     /// Switch the active provider. The active provider is the default the
@@ -1557,7 +1557,7 @@ Edit `crates/savvagent-host/src/session.rs`. Locate `set_active_provider` (aroun
 
 - [ ] **Step 2: Flip the Phase 1 history-clear test**
 
-Edit `crates/savvagent-host/tests/pool_lifecycle.rs`. Locate `set_active_provider_clears_history_before_swap` (around line 686-733). Replace the entire function — including its doc comment — with:
+Edit `crates/otto-host/tests/pool_lifecycle.rs`. Locate `set_active_provider_clears_history_before_swap` (around line 686-733). Replace the entire function — including its doc comment — with:
 
 ```rust
 /// Verifies that `set_active_provider` **preserves** the conversation
@@ -1599,27 +1599,27 @@ async fn set_active_provider_preserves_history() {
 }
 ```
 
-**Heads-up:** This test uses two helpers that may not exist yet: `build_host_with_two_providers()` and `host.append_message_for_test(...)`. Check whether they're already defined elsewhere in this test file or in `crates/savvagent-host/tests/support/mod.rs`:
+**Heads-up:** This test uses two helpers that may not exist yet: `build_host_with_two_providers()` and `host.append_message_for_test(...)`. Check whether they're already defined elsewhere in this test file or in `crates/otto-host/tests/support/mod.rs`:
 
-Run: `grep -n 'build_host_with_two_providers\|append_message_for_test' crates/savvagent-host/`
+Run: `grep -n 'build_host_with_two_providers\|append_message_for_test' crates/otto-host/`
 - If `build_host_with_two_providers` is missing, copy the setup from the old `set_active_provider_clears_history_before_swap` body (it built exactly this) into a fresh helper at the top of `pool_lifecycle.rs`.
 - If `append_message_for_test` is missing, add a `#[doc(hidden)] pub async fn append_message_for_test(&self, msg: Message)` method on `Host` that locks `state` and pushes the message. That's the minimum surgery to keep the test honest; a fuller fix is "expose a `Host` constructor that takes initial history" but YAGNI for Phase 3.
 
 - [ ] **Step 3: Run the affected test**
 
-Run: `cargo test -p savvagent-host --test pool_lifecycle set_active_provider_preserves_history -- --nocapture`
+Run: `cargo test -p otto-host --test pool_lifecycle set_active_provider_preserves_history -- --nocapture`
 Expected: passes.
 
 - [ ] **Step 4: Re-run the whole crate's tests to confirm no other regression**
 
-Run: `cargo test -p savvagent-host --no-fail-fast`
+Run: `cargo test -p otto-host --no-fail-fast`
 Expected: every test passes.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs \
-        crates/savvagent-host/tests/pool_lifecycle.rs
+git add crates/otto-host/src/session.rs \
+        crates/otto-host/tests/pool_lifecycle.rs
 git commit -m "feat(host): set_active_provider preserves history; cross-provider safe in Phase 3"
 ```
 
@@ -1628,14 +1628,14 @@ git commit -m "feat(host): set_active_provider preserves history; cross-provider
 ## Task 8: TUI handles `TurnEvent::RouteSelected`; render route badge
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
-- Modify: `crates/savvagent/src/ui.rs`
+- Modify: `crates/otto/src/app.rs`
+- Modify: `crates/otto/src/ui.rs`
 
 A new `Entry::RouteBadge(String)` variant captures the muted single-line badge that renders above each assistant response. Pushing it as a separate entry (rather than threading state into `Entry::Assistant`) keeps every existing `Entry::Assistant(_)` call site — including transcript persistence — untouched. The badge text format mirrors the spec: `provider/model — Reason`.
 
 - [ ] **Step 1: Add the new entry variant**
 
-Edit `crates/savvagent/src/app.rs`. Locate the `Entry` enum (around line 173) and add a variant. Replace the enum with:
+Edit `crates/otto/src/app.rs`. Locate the `Entry` enum (around line 173) and add a variant. Replace the enum with:
 
 ```rust
 /// One row in the conversation log.
@@ -1667,7 +1667,7 @@ pub enum Entry {
 
 - [ ] **Step 2: Handle `TurnEvent::RouteSelected` in `apply_turn_event`**
 
-Edit `crates/savvagent/src/app.rs`. Locate `apply_turn_event` (around line 531) and add a new match arm. Add it right before the `TurnEvent::IterationStarted` arm so the badge lands before any tool / text rendering for the turn:
+Edit `crates/otto/src/app.rs`. Locate `apply_turn_event` (around line 531) and add a new match arm. Add it right before the `TurnEvent::IterationStarted` arm so the badge lands before any tool / text rendering for the turn:
 
 ```rust
             TurnEvent::RouteSelected {
@@ -1689,28 +1689,28 @@ Edit `crates/savvagent/src/app.rs`. Locate `apply_turn_event` (around line 531) 
 
 Search for existing exhaustive matches on `Entry`. The compiler will flag any missing arms.
 
-Run: `cargo check -p savvagent`
+Run: `cargo check -p otto`
 Expected: any "non-exhaustive patterns" error points at sites that need an `Entry::RouteBadge(_) => …` arm. Likely call sites (per the grep done during plan write-up):
-  - `crates/savvagent/src/app.rs:655` — `update_metrics` byte-count tally. Treat as the same length category as `Note`:
+  - `crates/otto/src/app.rs:655` — `update_metrics` byte-count tally. Treat as the same length category as `Note`:
 
     ```rust
     Entry::User(t) | Entry::Assistant(t) | Entry::Note(t) | Entry::RouteBadge(t) => t.len(),
     ```
 
-  - `crates/savvagent/src/app.rs:1309` — transcript export. Add:
+  - `crates/otto/src/app.rs:1309` — transcript export. Add:
 
     ```rust
     Entry::RouteBadge(t) => format!("route: {t}"),
     ```
 
     above the existing `Entry::Note(t)` arm.
-  - `crates/savvagent/src/app.rs:1765` — entries → notes filter. Decide: badges are NOT notes; leave them out of the filter (`Entry::RouteBadge(_) => None`).
+  - `crates/otto/src/app.rs:1765` — entries → notes filter. Decide: badges are NOT notes; leave them out of the filter (`Entry::RouteBadge(_) => None`).
 
 Add an arm to every match found by `cargo check`. None of them should panic on the new variant; each treats the badge as either a short string or skips it.
 
 - [ ] **Step 4: Render `Entry::RouteBadge` in the transcript**
 
-Edit `crates/savvagent/src/ui.rs`. The per-entry rendering switch already handles `Entry::User` / `Entry::Assistant` / `Entry::Tool` / `Entry::Note` — `cargo check` from Step 3 pointed at it as a non-exhaustive match site.
+Edit `crates/otto/src/ui.rs`. The per-entry rendering switch already handles `Entry::User` / `Entry::Assistant` / `Entry::Tool` / `Entry::Note` — `cargo check` from Step 3 pointed at it as a non-exhaustive match site.
 
 Render `Entry::RouteBadge` as a single muted line prefixed with `"▸ "`, copying the styling pattern `Entry::Note` already uses (both are short, secondary messages). The difference is the prefix glyph (`▸` for routing, no prefix for notes). Concrete snippet, slotted alongside the existing `Entry::Note` arm:
 
@@ -1728,16 +1728,16 @@ If `Palette` exposes its muted helper under a different name (`palette.muted` fi
 
 - [ ] **Step 5: Verify compilation + tests**
 
-Run: `cargo check -p savvagent`
+Run: `cargo check -p otto`
 Expected: clean — every previously-missing arm now exists.
 
-Run: `cargo test -p savvagent --no-fail-fast`
+Run: `cargo test -p otto --no-fail-fast`
 Expected: any TUI tests that snapshot the entries vector may need an additional `Entry::RouteBadge` row (or filter it out). Fix as the failures point them out.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs crates/savvagent/src/ui.rs
+git add crates/otto/src/app.rs crates/otto/src/ui.rs
 git commit -m "feat(tui): render per-turn routing badge from TurnEvent::RouteSelected"
 ```
 
@@ -1746,13 +1746,13 @@ git commit -m "feat(tui): render per-turn routing badge from TurnEvent::RouteSel
 ## Task 9: TUI `/use` no longer clears `app.entries`; `/model` picker no longer filters to active provider
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs`
+- Modify: `crates/otto/src/main.rs`
 
 Two small TUI changes that match the host's new contract.
 
 - [ ] **Step 1: `/use` keeps `app.entries`**
 
-Edit `crates/savvagent/src/main.rs`. Locate `handle_use_command` (around line 1329). The success branch currently clears the TUI's entries:
+Edit `crates/otto/src/main.rs`. Locate `handle_use_command` (around line 1329). The success branch currently clears the TUI's entries:
 
 ```rust
         Ok(()) => {
@@ -1781,7 +1781,7 @@ Replace with:
 
 The localized message at `notes.use-switched` (used at the end of the success branch) currently reads like a fresh-conversation announcement. Locate where the message body for `notes.use-switched` lives. Run:
 
-Run: `grep -rn 'use-switched' crates/savvagent/locales/ crates/savvagent/src/`
+Run: `grep -rn 'use-switched' crates/otto/locales/ crates/otto/src/`
 Expected: a `.toml` file with `[notes] use-switched = "..."`. Update the message to something like:
 
 ```toml
@@ -1792,9 +1792,9 @@ use-switched = "Switched active provider to %{name}. History preserved; new turn
 
 - [ ] **Step 3: `/model` picker shows every connected provider's models**
 
-Locate `handle_model_command` / `refresh_cached_models` in `crates/savvagent/src/main.rs` (lines 862-1067 area). Currently it filters the model catalog to the active provider's capabilities by calling `host.active_provider()` and then `host.active_capabilities()`. Phase 3 wants the picker to show every connected provider's models — both because the user can now route to any of them, and because `/model anthropic/claude-opus-4-7` should set both the default model AND the default provider in one step.
+Locate `handle_model_command` / `refresh_cached_models` in `crates/otto/src/main.rs` (lines 862-1067 area). Currently it filters the model catalog to the active provider's capabilities by calling `host.active_provider()` and then `host.active_capabilities()`. Phase 3 wants the picker to show every connected provider's models — both because the user can now route to any of them, and because `/model anthropic/claude-opus-4-7` should set both the default model AND the default provider in one step.
 
-**Sub-step 3a — add `Host::pool_snapshot`.** Edit `crates/savvagent-host/src/session.rs`, alongside `Host::active_capabilities` (around line 1198):
+**Sub-step 3a — add `Host::pool_snapshot`.** Edit `crates/otto-host/src/session.rs`, alongside `Host::active_capabilities` (around line 1198):
 
 ```rust
     /// Snapshot every connected provider's `(id, capabilities)`. Used by
@@ -1810,11 +1810,11 @@ Locate `handle_model_command` / `refresh_cached_models` in `crates/savvagent/src
 
 The return type is already public — no `lib.rs` re-export needed.
 
-**Sub-step 3b — change `refresh_cached_models` to call `pool_snapshot`.** In `crates/savvagent/src/main.rs`, replace every site that pulls the model catalog from `host.active_capabilities()` (specifically inside `refresh_cached_models`) with a flat enumeration:
+**Sub-step 3b — change `refresh_cached_models` to call `pool_snapshot`.** In `crates/otto/src/main.rs`, replace every site that pulls the model catalog from `host.active_capabilities()` (specifically inside `refresh_cached_models`) with a flat enumeration:
 
 ```rust
 let snapshot = host.pool_snapshot().await;
-let mut rows: Vec<(savvagent_protocol::ProviderId, String, String)> = Vec::new();
+let mut rows: Vec<(otto_protocol::ProviderId, String, String)> = Vec::new();
 for (pid, caps) in snapshot {
     for model in caps.models() {
         rows.push((pid.clone(), model.id.clone(), model.display_name.clone()));
@@ -1838,7 +1838,7 @@ if let Err(e) = host.set_active_provider(&pid).await {
 
 **Sub-step 3d — picker label format.** The picker shows each row as `provider/model — display_name`. Existing user-facing localization keys for the model picker (search `locales/` for `model-picker-row` or similar) need a one-time update to accept the provider qualifier; if no such key exists, build the row label inline. The leading "provider/" qualifier is what tells the user which destination they're picking.
 
-If `Host::pool_snapshot` doesn't exist yet, add it next to `Host::active_capabilities` (around line 1198) in `crates/savvagent-host/src/session.rs`:
+If `Host::pool_snapshot` doesn't exist yet, add it next to `Host::active_capabilities` (around line 1198) in `crates/otto-host/src/session.rs`:
 
 ```rust
     /// Snapshot every connected provider's `(id, capabilities)`. Used by
@@ -1856,14 +1856,14 @@ Re-export it through `lib.rs` if needed (it returns already-public types, so not
 
 - [ ] **Step 4: Verify the changes compile and tests still pass**
 
-Run: `cargo test -p savvagent --no-fail-fast`
+Run: `cargo test -p otto --no-fail-fast`
 Expected: passes. Update any test that asserted "active-provider-only models" — flip its assertion to "every connected provider's models."
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/main.rs crates/savvagent-host/src/session.rs \
-        crates/savvagent/locales/
+git add crates/otto/src/main.rs crates/otto-host/src/session.rs \
+        crates/otto/locales/
 git commit -m "feat(tui): /use preserves history; /model lists every connected provider's models"
 ```
 
@@ -1872,15 +1872,15 @@ git commit -m "feat(tui): /use preserves history; /model lists every connected p
 ## Task 10: Populate `ModelAlias` for built-in providers
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/provider_openai/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_gemini/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_openai/mod.rs`
 
 `ProviderRegistration` already carries a `Vec<ModelAlias>` field, currently empty for every built-in. This task adds the well-known short names so users can type `@opus`, `@haiku`, `@flash`, etc.
 
 - [ ] **Step 1: Add aliases for Anthropic**
 
-Edit `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs`. Locate `try_build_registration` (around line 143). Find the `ProviderRegistration::new(...)` call and follow it with `.with_aliases(...)`. Concrete aliases:
+Edit `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`. Locate `try_build_registration` (around line 143). Find the `ProviderRegistration::new(...)` call and follow it with `.with_aliases(...)`. Concrete aliases:
 
 ```rust
         Ok(Some(
@@ -1913,17 +1913,17 @@ Edit `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs`. Locate `tr
 Ensure `ModelAlias` and `ProviderId` are imported at the top of the file:
 
 ```rust
-use savvagent_host::{
+use otto_host::{
     CostTier, ModelAlias, ModelCapabilities, ProviderCapabilities, ProviderRegistration,
 };
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 ```
 
-The exact model ids must match what `provider_anthropic`'s `capabilities()` block declares. Run `grep -n 'claude-' crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs` to confirm the model ids before pasting.
+The exact model ids must match what `provider_anthropic`'s `capabilities()` block declares. Run `grep -n 'claude-' crates/otto/src/plugin/builtin/provider_anthropic/mod.rs` to confirm the model ids before pasting.
 
 - [ ] **Step 2: Add aliases for Gemini**
 
-Edit `crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs` the same way. Aliases:
+Edit `crates/otto/src/plugin/builtin/provider_gemini/mod.rs` the same way. Aliases:
 
 ```rust
 .with_aliases(vec![
@@ -1942,7 +1942,7 @@ Edit `crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs` the same way. 
 
 - [ ] **Step 3: Add aliases for OpenAI**
 
-Edit `crates/savvagent/src/plugin/builtin/provider_openai/mod.rs` the same way. Aliases:
+Edit `crates/otto/src/plugin/builtin/provider_openai/mod.rs` the same way. Aliases:
 
 ```rust
 .with_aliases(vec![
@@ -1963,22 +1963,22 @@ Local provider gets no aliases — model names are user-defined and unpredictabl
 
 - [ ] **Step 4: Verify the builds**
 
-Run: `cargo check -p savvagent`
+Run: `cargo check -p otto`
 Expected: clean.
 
 - [ ] **Step 5: Verify alias lookup works through the parser**
 
-Add (or extend) a test in `crates/savvagent-host/src/router/prefix.rs` that uses a `ModelAlias` whose model is in `ProviderCapabilities`. Already covered by `alias_form_resolves_when_unique` from Task 2 — re-run it to confirm:
+Add (or extend) a test in `crates/otto-host/src/router/prefix.rs` that uses a `ModelAlias` whose model is in `ProviderCapabilities`. Already covered by `alias_form_resolves_when_unique` from Task 2 — re-run it to confirm:
 
-Run: `cargo test -p savvagent-host router::prefix::tests::alias_form_resolves_when_unique`
+Run: `cargo test -p otto-host router::prefix::tests::alias_form_resolves_when_unique`
 Expected: passes.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs \
-        crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs \
-        crates/savvagent/src/plugin/builtin/provider_openai/mod.rs
+git add crates/otto/src/plugin/builtin/provider_anthropic/mod.rs \
+        crates/otto/src/plugin/builtin/provider_gemini/mod.rs \
+        crates/otto/src/plugin/builtin/provider_openai/mod.rs
 git commit -m "feat(tui): populate ModelAlias for builtin providers (opus/haiku/flash/...)"
 ```
 
@@ -1987,7 +1987,7 @@ git commit -m "feat(tui): populate ModelAlias for builtin providers (opus/haiku/
 ## Task 11: Cross-provider history integration test
 
 **Files:**
-- Create: `crates/savvagent-host/tests/cross_provider_history.rs`
+- Create: `crates/otto-host/tests/cross_provider_history.rs`
 
 The Phase 2 gate validated translators accept foreign-prefixed ids. This test validates the integration: a two-turn conversation where turn 1 routes to one provider and emits a `tool_use`, and turn 2 routes to a different provider. Assert that the second provider receives history containing the first provider's namespaced id.
 
@@ -1995,12 +1995,12 @@ This is an end-to-end host test that uses the Phase 2 plan's `tests/support/mod.
 
 - [ ] **Step 1: Read what the Phase 2 support module exposes**
 
-Run: `cat crates/savvagent-host/tests/support/mod.rs | head -100`
+Run: `cat crates/otto-host/tests/support/mod.rs | head -100`
 Expected: confirm the `FakeState`, `spawn_fake_*`, `*_success_response`, `*_body_has_foreign_id`, and inspector helpers are still present (they shipped in v0.16.0).
 
 - [ ] **Step 2: Write the failing test**
 
-Create `crates/savvagent-host/tests/cross_provider_history.rs`:
+Create `crates/otto-host/tests/cross_provider_history.rs`:
 
 ```rust
 //! End-to-end test for Phase 3 cross-provider history.
@@ -2020,7 +2020,7 @@ Create `crates/savvagent-host/tests/cross_provider_history.rs`:
 
 mod support;
 
-use savvagent_host::{
+use otto_host::{
     Host, HostConfig, ProviderEndpoint, ProviderRegistration, ProviderId,
     capabilities::{CostTier, ModelCapabilities, ProviderCapabilities},
 };
@@ -2069,7 +2069,7 @@ async fn cross_provider_history_namespaces_tool_use_id() {
     let history = host.messages().await;
     let found = history.iter().any(|m| {
         m.content.iter().any(|b| match b {
-            savvagent_protocol::ContentBlock::ToolUse { id, .. } => id == "gemini:toolu_abc_123",
+            otto_protocol::ContentBlock::ToolUse { id, .. } => id == "gemini:toolu_abc_123",
             _ => false,
         })
     });
@@ -2159,9 +2159,9 @@ async fn build_two_provider_host(anth_base: String, gemini_base: String) -> Host
     )
     .expect("valid gem caps");
 
-    let anth_client: Arc<dyn savvagent_mcp::ProviderClient + Send + Sync> =
+    let anth_client: Arc<dyn otto_mcp::ProviderClient + Send + Sync> =
         Arc::new(provider_anthropic::provider_for_tests(anth_base));
-    let gem_client: Arc<dyn savvagent_mcp::ProviderClient + Send + Sync> =
+    let gem_client: Arc<dyn otto_mcp::ProviderClient + Send + Sync> =
         Arc::new(provider_gemini::provider_for_tests(gemini_base));
 
     let mut cfg = HostConfig::default();
@@ -2169,7 +2169,7 @@ async fn build_two_provider_host(anth_base: String, gemini_base: String) -> Host
         ProviderRegistration::new(anth_id, "Anthropic".into(), anth_client, anth_caps),
         ProviderRegistration::new(gem_id, "Gemini".into(), gem_client, gem_caps),
     ];
-    cfg.startup_connect = savvagent_host::StartupConnectPolicy::All;
+    cfg.startup_connect = otto_host::StartupConnectPolicy::All;
     cfg.provider = ProviderEndpoint::StreamableHttp {
         url: "http://unused".into(),
     };
@@ -2182,12 +2182,12 @@ async fn register_allow_for_list_dir(host: &Host) {
     host.add_session_rule(
         "list_dir",
         &serde_json::json!({ "path": "." }),
-        savvagent_host::PermissionDecision::Allow,
+        otto_host::PermissionDecision::Allow,
     )
     .await;
 }
 
-async fn drain_events(rx: &mut tokio::sync::mpsc::Receiver<savvagent_host::TurnEvent>) {
+async fn drain_events(rx: &mut tokio::sync::mpsc::Receiver<otto_host::TurnEvent>) {
     while let Ok(_) = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await {
         // Drop the event; tests assert against history + captured body.
     }
@@ -2198,8 +2198,8 @@ async fn drain_events(rx: &mut tokio::sync::mpsc::Receiver<savvagent_host::TurnE
 
 `provider-anthropic` and `provider-gemini` are already dev-deps after Phase 2's Cargo work. `provider-openai` is too, though this test doesn't need it. Run:
 
-Run: `cargo check -p savvagent-host --tests`
-Expected: clean. If a dep is missing, add it to `crates/savvagent-host/Cargo.toml`'s `[dev-dependencies]`.
+Run: `cargo check -p otto-host --tests`
+Expected: clean. If a dep is missing, add it to `crates/otto-host/Cargo.toml`'s `[dev-dependencies]`.
 
 - [ ] **Step 4: Decide on tool execution**
 
@@ -2215,14 +2215,14 @@ Document whichever choice the implementer makes inline in the test header.
 
 - [ ] **Step 5: Run the test**
 
-Run: `cargo test -p savvagent-host --test cross_provider_history -- --nocapture`
+Run: `cargo test -p otto-host --test cross_provider_history -- --nocapture`
 Expected: passes. If the body assertion fails, dump `body` and trace which transformation dropped the prefix.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/cross_provider_history.rs \
-        crates/savvagent-host/tests/support/mod.rs  # only if you added the stub-tool helper
+git add crates/otto-host/tests/cross_provider_history.rs \
+        crates/otto-host/tests/support/mod.rs  # only if you added the stub-tool helper
 git commit -m "test(host): cross-provider history namespacing E2E test"
 ```
 
@@ -2289,7 +2289,7 @@ Edit `CHANGELOG.md`. Insert at the top (after any header, before the `## 0.16.0`
 
 - Phase 3 of the multi-provider-pool roadmap (see
   `docs/superpowers/specs/2026-05-15-multi-provider-pool-and-auto-routing-design.md`).
-  New `crates/savvagent-host/src/router/{prefix,router,namespace}.rs`
+  New `crates/otto-host/src/router/{prefix,router,namespace}.rs`
   modules; `Host::run_turn_inner` now parses the `@`-prefix, invokes
   `Router::pick`, emits `TurnEvent::RouteSelected`, and namespaces ids
   on append / strips on egress.
@@ -2353,7 +2353,7 @@ Run: `rustup run stable cargo fmt --all -- --check`
 Expected: no output.
 
 Run: `rustup run stable cargo clippy --workspace --all-targets -- -D warnings`
-Expected: no output. Watch especially for `dead_code` on the new `Entry::RouteBadge` variant — per `[[feedback_dead_code_in_binary_crate]]`, items in the `savvagent` binary crate must be consumed by non-test code; this variant IS consumed in `ui.rs` (Task 8), so it should pass.
+Expected: no output. Watch especially for `dead_code` on the new `Entry::RouteBadge` variant — per `[[feedback_dead_code_in_binary_crate]]`, items in the `otto` binary crate must be consumed by non-test code; this variant IS consumed in `ui.rs` (Task 8), so it should pass.
 
 - [ ] **Step 2: Re-run the full workspace tests as a final integrity check**
 

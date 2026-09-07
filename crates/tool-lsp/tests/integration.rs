@@ -11,7 +11,7 @@
 //! binaries owned by `path` dev-dependencies (only for binaries owned
 //! by the crate-under-test), so we explicitly build the fixture from
 //! the test itself. Same approach as
-//! `crates/savvagent-host/tests/resources_integration.rs`.
+//! `crates/otto-host/tests/resources_integration.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};

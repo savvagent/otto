@@ -3,7 +3,7 @@
 Date: 2026-05-21 (Phase 1 + 2 design); Phase 2 amendment 2026-05-23
 Status: Phase 1 shipped (PR #97); Phase 2 amendment approved 2026-05-23
 Supersedes: nothing
-Related: v0.9.0 plugin system (`2026-05-12-v0.9.0-plugin-system-design.md`); SPP wire format (`crates/savvagent-protocol/SPEC.md`)
+Related: v0.9.0 plugin system (`2026-05-12-v0.9.0-plugin-system-design.md`); SPP wire format (`crates/otto-protocol/SPEC.md`)
 Inspiration: ["How I AI: HTML is the new markdown"](https://www.lennysnewsletter.com/p/how-i-ai-html-is-the-new-markdown)
 
 ## Phase 2 amendment (2026-05-23)
@@ -52,7 +52,7 @@ amendment closes the spec for Phase 2 implementation by:
 5. **Documenting** two design refinements surfaced during Phase 2
    scoping:
    - The default-action interceptor lives **inside
-     `savvagent-canvas::HtmlCanvas::dispatch`**, returning
+     `otto-canvas::HtmlCanvas::dispatch`**, returning
      `Effect::OpenUrl` via `InputOutcome::effects` so the host still
      mediates the actual shell-out (see § *Architecture overview*).
    - **Built-in canvas keys take precedence over plugin keybindings
@@ -85,10 +85,10 @@ ignored. Specs with collapsible sections, side-by-side diffs, callouts
 with semantic emphasis. The model still does the cognition; HTML carries
 the result in a shape humans actually engage with.
 
-Savvagent today renders model output as plain text into a ratatui
+Otto today renders model output as plain text into a ratatui
 `Paragraph`. There is no path for the model to express structure beyond
 ASCII art. This spec adds one: the model emits HTML in a recognized
-content block, savvagent renders it **inline in the conversation
+content block, otto renders it **inline in the conversation
 transcript** with full mouse and keyboard interaction, without becoming
 a GUI app and without executing model-authored Rust or JavaScript.
 
@@ -117,7 +117,7 @@ a GUI app and without executing model-authored Rust or JavaScript.
    still the only chrome.
 7. **No WASM, no runtime rustc.** The model emits HTML, not Rust or
    JS. The renderer is an in-process Rust library compiled into the
-   savvagent binary.
+   otto binary.
 
 ## Non-goals
 
@@ -147,7 +147,7 @@ a GUI app and without executing model-authored Rust or JavaScript.
 
 A new content block type `Html { source }` in SPP. Providers extract it
 from a sentinel-fenced code block in the model's text response. A new
-in-process crate `savvagent-canvas` wraps [Blitz] (Servo-derived layout
+in-process crate `otto-canvas` wraps [Blitz] (Servo-derived layout
 + Stylo + Markup5ever) and exposes a WIT-portable interface for
 "render HTML to pixel buffer + dispatch events + report focus state."
 The conversation log gains a new item variant for HTML blocks; rendered
@@ -174,7 +174,7 @@ Approach risks called out up front:
   synthetic click on `<summary>` does not toggle the parent
   `<details>`'s `open` attribute, neither immediately nor after a
   subsequent `resolve()`). Phase 2 will therefore ship with a
-  *host-side event router* inside `savvagent-canvas::HtmlCanvas::dispatch`
+  *host-side event router* inside `otto-canvas::HtmlCanvas::dispatch`
   that maps clicks-on-`<summary>` to manual `open`-attribute flipping,
   clicks-on-`<a href>` to `Effect::OpenUrl`, and form submission to a
   synthesized `Effect::OpenUrl`. The `ContentRenderer` trait surface
@@ -215,14 +215,14 @@ Approach risks called out up front:
                              │ SPP CompleteResponse / StreamEvent
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ savvagent-host                                                       │
+│ otto-host                                                       │
 │   - Forwards content blocks to TUI without inspecting Html source    │
 │   - Persists `Html { source }` blocks in transcript JSON unchanged   │
 └────────────────────────────┬────────────────────────────────────────┘
                              │ StreamEvent / TurnComplete
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ savvagent (TUI)                                                      │
+│ otto (TUI)                                                      │
 │  ┌──────────────────────────────────────────────────────────────┐    │
 │  │ Conversation log                                             │    │
 │  │   Vec<LogItem { Text | ToolCall | Canvas(BlockId) }>          │    │
@@ -237,7 +237,7 @@ Approach risks called out up front:
 │  │   enum AppFocus { ChatInput | ScreenStack | Canvas(BlockId) }│    │
 │  └──────────────────────────────────────────────────────────────┘    │
 │  ┌──────────────────────────────────────────────────────────────┐    │
-│  │ savvagent-canvas crate (ContentRenderer impl)                │    │
+│  │ otto-canvas crate (ContentRenderer impl)                │    │
 │  │   - Owns Blitz instance per BlockId                          │    │
 │  │   - render() → Frame { width, height, format, bytes }        │    │
 │  │   - dispatch(InputEvent) → InputOutcome { effects, dirty }   │    │
@@ -306,7 +306,7 @@ with code samples about HTML, and survives intact through providers
 that emit code blocks natively. The same provider parses other
 existing fence languages (`rust`, `python`, etc.) without ambiguity.
 
-The extraction logic lives in a shared crate (`savvagent-fence`,
+The extraction logic lives in a shared crate (`otto-fence`,
 created in this work) so all four providers reuse the same parser
 state machine. Providers that gain "native" HTML blocks (multi-modal
 output) in the future can bypass the parser and emit `Html` blocks
@@ -360,7 +360,7 @@ content blocks:
 }
 ```
 
-`ToolRegistry::call` (in `savvagent-host`) walks the returned
+`ToolRegistry::call` (in `otto-host`) walks the returned
 content array. Today it concatenates `text` items into a single
 `ContentBlock::Text`. Phase 2 extends this:
 
@@ -413,15 +413,15 @@ of the source.
 
 ## Plugin trait extension
 
-The v0.9.0 plugin trait surface (`savvagent-plugin`) is extended with a
+The v0.9.0 plugin trait surface (`otto-plugin`) is extended with a
 new contribution kind: **content renderers**. This is the *only* shape
 plugins can use to render non-text content into the conversation log.
 The HTML canvas is the first built-in plugin against this kind.
 
-### New types in `savvagent-plugin`
+### New types in `otto-plugin`
 
 ```rust
-// crates/savvagent-plugin/src/content.rs (new)
+// crates/otto-plugin/src/content.rs (new)
 
 /// A WIT-portable image frame produced by a ContentRenderer.
 pub struct Frame {
@@ -482,7 +482,7 @@ pub enum UrlTarget {
     /// Hand off to the user's system browser via `open` / `xdg-open`.
     SystemBrowser,
     /// Send the URL to the model as a new prompt (e.g., "open this
-    /// file in savvagent: <url>").
+    /// file in otto: <url>").
     ContinueConversation,
 }
 ```
@@ -490,7 +490,7 @@ pub enum UrlTarget {
 ### New trait
 
 ```rust
-// crates/savvagent-plugin/src/content.rs (continued)
+// crates/otto-plugin/src/content.rs (continued)
 
 #[async_trait::async_trait]
 pub trait ContentRenderer: Send {
@@ -573,7 +573,7 @@ pub trait ContentRenderer: Send {
 #### New `PluginError` variant
 
 ```rust
-// crates/savvagent-plugin/src/error.rs
+// crates/otto-plugin/src/error.rs
 pub enum PluginError {
     // ... existing variants ...
 
@@ -593,7 +593,7 @@ in the warning log to aid debugging.
 ### Plugin manifest extension
 
 ```rust
-// crates/savvagent-plugin/src/manifest.rs
+// crates/otto-plugin/src/manifest.rs
 
 pub struct Contributions {
     pub slash_commands: Vec<SlashSpec>,
@@ -640,7 +640,7 @@ pub struct SlashSpec {
 ### Plugin trait additions
 
 ```rust
-// crates/savvagent-plugin/src/plugin.rs
+// crates/otto-plugin/src/plugin.rs
 
 #[async_trait::async_trait]
 pub trait Plugin: Send + Sync {
@@ -669,13 +669,13 @@ buffer is `Vec<u8>` which is WIT-portable as `list<u8>` (the v1.0 WIT
 port will accept the copy cost; for the in-process path in v0.X.0
 there's no copy).
 
-`savvagent-plugin/Cargo.toml` continues to omit ratatui/crossterm/
+`otto-plugin/Cargo.toml` continues to omit ratatui/crossterm/
 tokio-runtime/anyhow.
 
-## savvagent-canvas crate
+## otto-canvas crate
 
 ```
-crates/savvagent-canvas/
+crates/otto-canvas/
     Cargo.toml          # blitz; ratatui-image NOT here (TUI owns that)
     src/
         lib.rs
@@ -689,7 +689,7 @@ Dependencies:
 
 ```toml
 [dependencies]
-savvagent-plugin = { workspace = true }
+otto-plugin = { workspace = true }
 blitz = { workspace = true }                # version pin TBD by spike
 async-trait = { workspace = true }
 tracing = { workspace = true }
@@ -752,7 +752,7 @@ impl Plugin for HtmlCanvasPlugin {
 ### Conversation log items
 
 ```rust
-// crates/savvagent/src/app.rs (modified)
+// crates/otto/src/app.rs (modified)
 
 pub enum LogItem {
     Text(StyledText),
@@ -974,7 +974,7 @@ requiring JavaScript execution.
 
 ### Subset validator (advisory)
 
-`savvagent-canvas::subset` walks the parsed DOM and emits warnings
+`otto-canvas::subset` walks the parsed DOM and emits warnings
 (via `tracing::warn!`) for out-of-subset elements/attributes/properties.
 Not a render error — the canvas still draws. Warnings surface in the
 log for developers debugging model output.
@@ -1129,7 +1129,7 @@ browser or for sharing:
 By default, every rendered HTML block is also written to disk at:
 
 ```
-~/.savvagent/canvases/<unix-ts>-<turn_id>-<block_id>.html
+~/.otto/canvases/<unix-ts>-<turn_id>-<block_id>.html
 ```
 
 The file is self-contained: it includes the HTML source verbatim with
@@ -1152,7 +1152,7 @@ the transcript; re-opening the transcript via `/resume` re-creates
 the files (if the plugin is enabled).
 
 The directory is created with `0o700`, files `0o600`, matching the
-existing `~/.savvagent/` permission discipline.
+existing `~/.otto/` permission discipline.
 
 ### `/save-canvas <path>` (Phase 1)
 
@@ -1172,7 +1172,7 @@ Emits `Effect::PushNote` confirming the path, plus an `Effect::OpenUrl
 ### Open-in-browser keybinding (Phase 2)
 
 When focus is on a canvas, **Ctrl-O** writes the canvas to a temp
-file (`/tmp/savvagent-canvas-<id>.html`) and shells out to
+file (`/tmp/otto-canvas-<id>.html`) and shells out to
 `xdg-open` / `open` / Windows `start`. The user's actual browser
 renders it with full fidelity — useful for sharing, printing, or for
 canvases that hit the edges of Blitz's subset support.
@@ -1183,7 +1183,7 @@ extension).
 
 ## Prompt contention and suppression
 
-Different parts of savvagent will reasonably want different output
+Different parts of otto will reasonably want different output
 formats. The HTML-canvas system prompt is opt-in by plugin enable
 state and *scoped* by per-slash suppression.
 
@@ -1191,8 +1191,8 @@ state and *scoped* by per-slash suppression.
 
 When constructing the system prompt for a turn, the host:
 
-1. Starts with the default savvagent system prompt.
-2. Appends project context (`SAVVAGENT.md` if present).
+1. Starts with the default otto system prompt.
+2. Appends project context (`OTTO.md` if present).
 3. Iterates enabled plugins in registration order. For each, appends
    any contributed `SystemPromptSegment.text`.
 4. If the turn is the dispatch of a `SlashSpec` and the spec lists
@@ -1232,7 +1232,7 @@ the suppression in the same PR that introduces this feature.
 > sub-agent code must honor. No sub-agent code ships in Phase 2; this
 > section is the design.*
 
-When savvagent grows a sub-agent concept, each sub-agent's
+When otto grows a sub-agent concept, each sub-agent's
 `CompleteRequest::system` **fully replaces** the host's composed
 prompt for the duration of the sub-agent's turn. Plugin-contributed
 `SystemPromptSegment`s do NOT leak into sub-agent prompts by default.
@@ -1274,7 +1274,7 @@ asymmetric:
 
 | Surface | Order |
 |---|---|
-| Normal chat / slash | host default → project context (`SAVVAGENT.md`) → plugin segments (in registration order) → suppression filter |
+| Normal chat / slash | host default → project context (`OTTO.md`) → plugin segments (in registration order) → suppression filter |
 | Sub-agent | sub-agent's own system field → inherited plugin segments (in `inherit_segments` order) |
 
 Both surfaces put the "root" prompt first and append segments. The
@@ -1431,7 +1431,7 @@ must say "load error."
 The Phase 2 plan will:
 
 1. Add `#[serde(other)] Unknown` (or similar — pick the cleanest
-   serde idiom for tagged enums) to `Entry` in `savvagent-protocol`.
+   serde idiom for tagged enums) to `Entry` in `otto-protocol`.
 2. Cut a Phase-1 dot release that includes only that backport
    (matches the v0.16.x line) so existing v0.16.x users get
    graceful loading before Phase 2's v0.17.0 hits.
@@ -1440,7 +1440,7 @@ The Phase 2 plan will:
 
 ### Unit tests
 
-In `crates/savvagent-canvas/src/`:
+In `crates/otto-canvas/src/`:
 
 - `subset` validator: known good docs produce zero warnings; known bad
   docs produce expected warnings.
@@ -1451,14 +1451,14 @@ In `crates/savvagent-canvas/src/`:
   `focused_index`; mouse-press at a known pixel coord lands on the
   expected element.
 
-In `crates/savvagent-plugin/src/`:
+In `crates/otto-plugin/src/`:
 
 - New types compile under WIT portability rules (no ratatui/crossterm
   imports added).
 - `Plugin::create_renderer` default impl returns the expected error
   variant.
 
-In `crates/savvagent/src/`:
+In `crates/otto/src/`:
 
 - `CanvasRegistry`: create → freeze → thaw → drop lifecycle.
 - `AppFocus` transitions: mouse click in canvas region focuses;
@@ -1501,19 +1501,19 @@ Documented in `docs/canvas-terminal-compat.md`.
 
 1. SPP v0.2.0: `Html { source }` content block defined; `html_source_delta` stream delta defined.
 2. All four provider crates (`provider-anthropic`, `provider-openai`, `provider-gemini`, `provider-local`) recognize and extract `html-canvas` fenced blocks during streaming.
-3. `savvagent-host` forwards `Html` blocks through `run_turn_streaming` unchanged.
+3. `otto-host` forwards `Html` blocks through `run_turn_streaming` unchanged.
 4. Transcripts JSON round-trips `Html` blocks losslessly.
 
 **Renderer.**
 
-5. `savvagent-canvas` crate builds in the workspace; depends on `savvagent-plugin` + Blitz.
-5b. `savvagent-canvas`'s Blitz dependency bumps the workspace `rust-version` from 1.85 to
+5. `otto-canvas` crate builds in the workspace; depends on `otto-plugin` + Blitz.
+5b. `otto-canvas`'s Blitz dependency bumps the workspace `rust-version` from 1.85 to
     1.89; CHANGELOG calls this out explicitly.
 6. `HtmlCanvas` implements `ContentRenderer`: renders the spec's HTML+CSS subset to a pixel buffer; dispatches mouse and keyboard events; soft-freezes losslessly.
 
 **Plugin integration.**
 
-7. `savvagent-plugin` gains `ContentRenderer` trait, `ContentRendererSpec`, `Frame`, `InputEvent`, `MouseEventPortable`, `UrlTarget`, `Effect::OpenUrl`, `SystemPromptSegment`, `SlashSpec::suppress_prompt_segments`. All new types pass the existing CI WIT-portability grep.
+7. `otto-plugin` gains `ContentRenderer` trait, `ContentRendererSpec`, `Frame`, `InputEvent`, `MouseEventPortable`, `UrlTarget`, `Effect::OpenUrl`, `SystemPromptSegment`, `SlashSpec::suppress_prompt_segments`. All new types pass the existing CI WIT-portability grep.
 8. `internal:html-canvas` plugin is registered in `register_builtins()` as Optional (toggleable via `plugins.toml`).
 9. Disabling the plugin: HTML blocks render as source code; no system prompt segment composed; no Blitz instance created; no auto-export.
 10. Enabled plugin's `SystemPromptSegment` (`internal:html-canvas:default`) is composed into the system prompt by the host's prompt composition step.
@@ -1522,7 +1522,7 @@ Documented in `docs/canvas-terminal-compat.md`.
 **Persistence & export.**
 
 12. Transcript JSON round-trips `Html { source }` blocks losslessly.
-13. Auto-export on by default: each rendered HTML block writes to `~/.savvagent/canvases/<unix-ts>-<turn>-<block>.html` with `0o600`. The directory is created with `0o700` if missing.
+13. Auto-export on by default: each rendered HTML block writes to `~/.otto/canvases/<unix-ts>-<turn>-<block>.html` with `0o600`. The directory is created with `0o700` if missing.
 14. Disabling the plugin (`enabled = false` in `plugins.toml`) suppresses both rendering and auto-export; v0.17.0 has no separate `auto_export` toggle.
 15. `/save-canvas` writes the chosen canvas to a user-specified path; `--open` opens it in the system browser.
 16. Phase 2: Ctrl-O while focused on a canvas opens it in the system browser via `xdg-open` / `open`.
@@ -1548,20 +1548,20 @@ Two shippable releases.
 ### Phase 1 — Static rendering + export (one release)
 
 - SPP v0.2.0 wire changes.
-- Provider-side fence extraction (`savvagent-fence` crate).
-- `savvagent-plugin` trait extensions: `ContentRenderer` trait, `Frame`, `ContentRendererSpec`, `SystemPromptSegment`, `SlashSpec::suppress_prompt_segments`, `Effect::OpenUrl`.
+- Provider-side fence extraction (`otto-fence` crate).
+- `otto-plugin` trait extensions: `ContentRenderer` trait, `Frame`, `ContentRendererSpec`, `SystemPromptSegment`, `SlashSpec::suppress_prompt_segments`, `Effect::OpenUrl`.
 - Host prompt composition step that gathers `SystemPromptSegment`s from enabled plugins and honors per-slash suppression.
-- `savvagent-canvas` crate with Blitz integration; `HtmlCanvas` renders to pixel buffer (no event dispatch yet).
+- `otto-canvas` crate with Blitz integration; `HtmlCanvas` renders to pixel buffer (no event dispatch yet).
 - `internal:html-canvas` plugin registered with its default prompt segment.
 - TUI: `LogItem::Canvas`, conversation log inline rendering via `ratatui-image`, source-code fallback for unsupported terminals.
 - Streaming source preview → swap on stream complete.
-- Auto-export to `~/.savvagent/canvases/`, configurable via `plugins.toml`.
+- Auto-export to `~/.otto/canvases/`, configurable via `plugins.toml`.
 - `/save-canvas` slash command.
 - Cross-terminal test matrix run.
 
 After Phase 1 the user gets: rich rendered HTML inline in the
 transcript, with every canvas also available as a standalone `.html`
-file in `~/.savvagent/canvases/` for opening in a real browser or
+file in `~/.otto/canvases/` for opening in a real browser or
 sharing. No interaction inside the TUI yet. This alone solves a big
 chunk of the "I don't read markdown plans" problem.
 
@@ -1620,7 +1620,7 @@ chunk of the "I don't read markdown plans" problem.
 
 #### Windows CI carries forward Phase 1's exclusion
 
-Phase 1 excluded `savvagent-canvas` and `savvagent` from the
+Phase 1 excluded `otto-canvas` and `otto` from the
 `test (windows-latest)` CI job because Blitz's static init hangs
 on the GitHub-hosted windows-latest runner image (root cause is
 font enumeration via DirectWrite; the runner image lacks fonts

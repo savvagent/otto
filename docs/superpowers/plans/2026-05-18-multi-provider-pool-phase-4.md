@@ -22,15 +22,15 @@
 ## File structure (Phase 4)
 
 **New files:**
-- `crates/savvagent-host/src/router/modality.rs` — pure `RequiredModalities` detection + `pick_vision_capable` helper.
-- `crates/savvagent-host/tests/modality_routing.rs` — end-to-end test that runs a turn with an attached image through a host whose active provider's default model lacks vision, asserting the router redirects to a vision-capable provider/model.
+- `crates/otto-host/src/router/modality.rs` — pure `RequiredModalities` detection + `pick_vision_capable` helper.
+- `crates/otto-host/tests/modality_routing.rs` — end-to-end test that runs a turn with an attached image through a host whose active provider's default model lacks vision, asserting the router redirects to a vision-capable provider/model.
 
 **Modified files:**
-- `crates/savvagent-host/src/router/mod.rs` — declare and re-export the new `modality` submodule.
-- `crates/savvagent-host/src/router/router.rs` — add `RoutingReason::Modality { kind: RequiredModalityKind }` variant; extend `Router::pick` signature with a new `required: RequiredModalities` parameter so Layer 2 can evaluate. Update Display impl. Add a `caps_with_vision(model, vision)` test helper alongside the existing `caps(model)` helper.
-- `crates/savvagent-host/src/lib.rs` — re-export `RequiredModalities`, `RequiredModalityKind`, `pick_vision_capable`.
-- `crates/savvagent-host/src/session.rs` — `TurnEvent::ModalityWarning { message }` variant; `run_turn_inner` is refactored to take `Vec<ContentBlock>` instead of `String`; `@`-prefix parsing now operates on a leading `Text` block when present; both existing entrypoints (`run_turn`, `run_turn_streaming`) wrap their string input; new public `run_turn_streaming_with_blocks(content, events)`. `run_turn_inner` computes `required_modalities` from the messages built for this turn and threads it into `Router::pick`; emits the warning event when the layer can't redirect a vision-required turn. Currently 2927 lines; the changes are localized.
-- `crates/savvagent/src/app.rs` — handle `TurnEvent::ModalityWarning` by pushing a muted `Entry::Note(...)`. No new entry variant needed; `Note` already renders muted.
+- `crates/otto-host/src/router/mod.rs` — declare and re-export the new `modality` submodule.
+- `crates/otto-host/src/router/router.rs` — add `RoutingReason::Modality { kind: RequiredModalityKind }` variant; extend `Router::pick` signature with a new `required: RequiredModalities` parameter so Layer 2 can evaluate. Update Display impl. Add a `caps_with_vision(model, vision)` test helper alongside the existing `caps(model)` helper.
+- `crates/otto-host/src/lib.rs` — re-export `RequiredModalities`, `RequiredModalityKind`, `pick_vision_capable`.
+- `crates/otto-host/src/session.rs` — `TurnEvent::ModalityWarning { message }` variant; `run_turn_inner` is refactored to take `Vec<ContentBlock>` instead of `String`; `@`-prefix parsing now operates on a leading `Text` block when present; both existing entrypoints (`run_turn`, `run_turn_streaming`) wrap their string input; new public `run_turn_streaming_with_blocks(content, events)`. `run_turn_inner` computes `required_modalities` from the messages built for this turn and threads it into `Router::pick`; emits the warning event when the layer can't redirect a vision-required turn. Currently 2927 lines; the changes are localized.
+- `crates/otto/src/app.rs` — handle `TurnEvent::ModalityWarning` by pushing a muted `Entry::Note(...)`. No new entry variant needed; `Note` already renders muted.
 - `Cargo.toml` (workspace) — bump `[workspace.package].version` to `0.18.0` and every `version = "0.17.0"` literal in `[workspace.dependencies]` to `0.18.0`.
 - `CHANGELOG.md` — add `## 0.18.0 - 2026-05-18` entry.
 - `README.md` — short note in the user-facing routing section explaining "an image attached to a turn auto-routes to a vision-capable model if your active one doesn't support vision".
@@ -40,9 +40,9 @@
 ## Task 1: Add `RequiredModalities` types + detection in `modality.rs` + lib.rs re-export
 
 **Files:**
-- Create: `crates/savvagent-host/src/router/modality.rs`
-- Modify: `crates/savvagent-host/src/router/mod.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Create: `crates/otto-host/src/router/modality.rs`
+- Modify: `crates/otto-host/src/router/mod.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 Pure data + detection. No async, no I/O. The detection function reads only the latest user message's content blocks because image attachments live on the inbound user turn — historical images are already in the conversation and don't change which model handles *this* turn.
 
@@ -52,7 +52,7 @@ Pure data + detection. No async, no I/O. The detection function reads only the l
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `crates/savvagent-host/src/router/modality.rs`:
+Create `crates/otto-host/src/router/modality.rs`:
 
 ```rust
 //! Detect which modalities the latest user message requires, and pick a
@@ -73,7 +73,7 @@ Create `crates/savvagent-host/src/router/modality.rs`:
 //! image-bearing turn likely won't succeed. Cross-provider routing is
 //! the explicit opt-in via Phase 5's user rules.
 
-use savvagent_protocol::{ContentBlock, Message, ProviderId, Role};
+use otto_protocol::{ContentBlock, Message, ProviderId, Role};
 
 use crate::capabilities::ModelCapabilities;
 use crate::router::ProviderView;
@@ -245,8 +245,8 @@ mod tests {
                     text: "what is this?".into(),
                 },
                 ContentBlock::Image {
-                    source: savvagent_protocol::ImageSource::Base64 {
-                        media_type: savvagent_protocol::MediaType::Png,
+                    source: otto_protocol::ImageSource::Base64 {
+                        media_type: otto_protocol::MediaType::Png,
                         data: "AAAA".into(),
                     },
                 },
@@ -267,8 +267,8 @@ mod tests {
             Message {
                 role: Role::User,
                 content: vec![ContentBlock::Image {
-                    source: savvagent_protocol::ImageSource::Base64 {
-                        media_type: savvagent_protocol::MediaType::Png,
+                    source: otto_protocol::ImageSource::Base64 {
+                        media_type: otto_protocol::MediaType::Png,
                         data: "AAAA".into(),
                     },
                 }],
@@ -408,7 +408,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the new module into `router/mod.rs`**
 
-Edit `crates/savvagent-host/src/router/mod.rs`. Add `pub mod modality;` next to the other submodule declarations, and append to the `pub use` block:
+Edit `crates/otto-host/src/router/mod.rs`. Add `pub mod modality;` next to the other submodule declarations, and append to the `pub use` block:
 
 ```rust
 pub use modality::{
@@ -418,7 +418,7 @@ pub use modality::{
 
 - [ ] **Step 3: Re-export from `lib.rs`**
 
-Edit `crates/savvagent-host/src/lib.rs`. Find the existing `pub use router::{...};` block and replace with:
+Edit `crates/otto-host/src/lib.rs`. Find the existing `pub use router::{...};` block and replace with:
 
 ```rust
 pub use router::{
@@ -430,19 +430,19 @@ pub use router::{
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cargo test -p savvagent-host router::modality::tests`
+Run: `cargo test -p otto-host router::modality::tests`
 Expected: 7 tests pass (3 detection + 4 pick).
 
 If any fail, the most likely issues are:
 - `ProviderId::as_str()` doesn't exist (it does — used in `router/legacy_model.rs`; double-check the exact method name).
-- `ProviderCapabilities::model(id)` returns `Option<&ModelCapabilities>` — confirm via `crates/savvagent-host/src/capabilities.rs:132`.
+- `ProviderCapabilities::model(id)` returns `Option<&ModelCapabilities>` — confirm via `crates/otto-host/src/capabilities.rs:132`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/modality.rs \
-        crates/savvagent-host/src/router/mod.rs \
-        crates/savvagent-host/src/lib.rs
+git add crates/otto-host/src/router/modality.rs \
+        crates/otto-host/src/router/mod.rs \
+        crates/otto-host/src/lib.rs
 git commit -m "feat(host): RequiredModalities detection + same-provider vision picker (Phase 4)"
 ```
 
@@ -451,13 +451,13 @@ git commit -m "feat(host): RequiredModalities detection + same-provider vision p
 ## Task 2: Add `RoutingReason::Modality` variant + Display
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/router.rs`
+- Modify: `crates/otto-host/src/router/router.rs`
 
 The `RoutingReason` enum is `#[non_exhaustive]`, so adding a variant is additive. Display needs to render `Modality(image)` per the spec's transcript-badge format.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the `tests` module at the bottom of `crates/savvagent-host/src/router/router.rs`:
+Append to the `tests` module at the bottom of `crates/otto-host/src/router/router.rs`:
 
 ```rust
 #[test]
@@ -472,12 +472,12 @@ fn routing_reason_modality_displays() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent-host router::router::tests::routing_reason_modality_displays`
+Run: `cargo test -p otto-host router::router::tests::routing_reason_modality_displays`
 Expected: FAIL — `RoutingReason::Modality` doesn't exist.
 
 - [ ] **Step 3: Add the variant**
 
-Edit `crates/savvagent-host/src/router/router.rs`. Replace the `RoutingReason` enum and its Display impl:
+Edit `crates/otto-host/src/router/router.rs`. Replace the `RoutingReason` enum and its Display impl:
 
 ```rust
 /// Why the router picked the provider/model it did. Surfaced in the
@@ -511,18 +511,18 @@ impl std::fmt::Display for RoutingReason {
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p savvagent-host router::router::tests::routing_reason_modality_displays`
+Run: `cargo test -p otto-host router::router::tests::routing_reason_modality_displays`
 Expected: PASS.
 
 Also rerun the existing reason tests to confirm no regressions:
 
-Run: `cargo test -p savvagent-host router::router::tests::routing_reason_displays`
+Run: `cargo test -p otto-host router::router::tests::routing_reason_displays`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/router.rs
+git add crates/otto-host/src/router/router.rs
 git commit -m "feat(host): RoutingReason::Modality variant + Display"
 ```
 
@@ -531,7 +531,7 @@ git commit -m "feat(host): RoutingReason::Modality variant + Display"
 ## Task 3: Extend `Router::pick` to evaluate the Modality layer
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/router.rs`
+- Modify: `crates/otto-host/src/router/router.rs`
 
 Layer order is fixed by the spec: Override (Layer 1) wins absolutely. If the user pinned `@o3` and attached an image, the router does NOT redirect — the user opted in to that provider's limits. Modality (Layer 2) runs only when no override applied. Default (Layer 5) is the fallthrough.
 
@@ -539,7 +539,7 @@ The signature change is additive (new parameter), but every existing caller will
 
 - [ ] **Step 1: Add a `caps_with_vision` helper to the existing tests module**
 
-Edit `crates/savvagent-host/src/router/router.rs`. The existing `tests` module has a `caps(model: &str) -> ProviderCapabilities` helper that hard-codes `supports_vision: false`. Add a sibling helper next to it that takes a vision flag:
+Edit `crates/otto-host/src/router/router.rs`. The existing `tests` module has a `caps(model: &str) -> ProviderCapabilities` helper that hard-codes `supports_vision: false`. Add a sibling helper next to it that takes a vision flag:
 
 ```rust
 fn caps_with_vision(model: &str, vision: bool) -> ProviderCapabilities {
@@ -562,7 +562,7 @@ This avoids the `let g_caps = ...; let g_caps = ...;` shadowing pattern in the n
 
 - [ ] **Step 2: Write the failing tests**
 
-Append to the `tests` module at the bottom of `crates/savvagent-host/src/router/router.rs` (under the existing pick tests):
+Append to the `tests` module at the bottom of `crates/otto-host/src/router/router.rs` (under the existing pick tests):
 
 ```rust
 #[test]
@@ -723,12 +723,12 @@ fn pick_modality_does_not_silently_cross_provider() {
 
 - [ ] **Step 3: Run the tests to verify they fail**
 
-Run: `cargo test -p savvagent-host router::router::tests::pick_modality`
+Run: `cargo test -p otto-host router::router::tests::pick_modality`
 Expected: FAIL — `Router::pick` doesn't accept a `RequiredModalities` arg yet.
 
 - [ ] **Step 4: Update `Router::pick` to take and apply the modality layer**
 
-Edit `crates/savvagent-host/src/router/router.rs`. Replace the `Router::pick` impl:
+Edit `crates/otto-host/src/router/router.rs`. Replace the `Router::pick` impl:
 
 ```rust
 impl Router {
@@ -806,7 +806,7 @@ impl Router {
 
 Every existing call to `Router::pick` in `router.rs`'s tests module needs `RequiredModalities::default()` appended. Run:
 
-Run: `grep -n 'Router::pick(' crates/savvagent-host/src/router/router.rs`
+Run: `grep -n 'Router::pick(' crates/otto-host/src/router/router.rs`
 Expected: 5+ hits (4 pre-existing test calls + the impl + the new test calls).
 
 For each of the 4 pre-existing test calls (`pick_default_when_no_override`, `pick_override_with_model`, `pick_override_without_model_uses_provider_default`, `pick_override_for_disconnected_provider_falls_through`), append `, RequiredModalities::default()` as the fifth argument. Use the Edit tool individually per call; `replace_all` won't work because each call has different earlier args.
@@ -819,13 +819,13 @@ use crate::router::modality::RequiredModalities;
 
 - [ ] **Step 6: Run all router tests**
 
-Run: `cargo test -p savvagent-host router::router::tests`
+Run: `cargo test -p otto-host router::router::tests`
 Expected: all tests pass (existing 4 + 4 new = 8 pick tests, plus the two display tests).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/router.rs
+git add crates/otto-host/src/router/router.rs
 git commit -m "feat(host): Router::pick modality layer (Phase 4 Layer 2)"
 ```
 
@@ -834,7 +834,7 @@ git commit -m "feat(host): Router::pick modality layer (Phase 4 Layer 2)"
 ## Task 4: Refactor `run_turn_inner` to accept `Vec<ContentBlock>`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 `run_turn_inner` currently takes a `String` and wraps it in a single `ContentBlock::Text` before pushing to messages. Phase 4 needs the inner method to accept arbitrary content blocks so the modality layer can detect image inputs. Existing string-based entrypoints (`run_turn`, `run_turn_streaming`) keep their public signatures but wrap their input in a one-block `Vec<ContentBlock>` before calling the inner method.
 
@@ -842,14 +842,14 @@ The `@`-prefix parser currently runs on the user-input string. After this refact
 
 - [ ] **Step 1: Locate the inner method and its callers**
 
-Run: `grep -n 'fn run_turn_inner\|run_turn_inner(' crates/savvagent-host/src/session.rs`
+Run: `grep -n 'fn run_turn_inner\|run_turn_inner(' crates/otto-host/src/session.rs`
 Expected: 3 hits — definition + 2 callers (`run_turn`, `run_turn_streaming`).
 
 Read the current definition (around line 559) and both call sites (around lines 519 and 530).
 
 - [ ] **Step 2: Change `run_turn_inner` to take blocks**
 
-Edit `crates/savvagent-host/src/session.rs`. Replace the signature:
+Edit `crates/otto-host/src/session.rs`. Replace the signature:
 
 ```rust
 async fn run_turn_inner(
@@ -864,7 +864,7 @@ with:
 ```rust
 async fn run_turn_inner(
     &self,
-    user_content: Vec<savvagent_protocol::ContentBlock>,
+    user_content: Vec<otto_protocol::ContentBlock>,
     events: Option<mpsc::Sender<TurnEvent>>,
 ) -> Result<TurnOutcome, HostError> {
 ```
@@ -937,7 +937,7 @@ Then in the existing `Router::pick` call site, replace `parsed.override_` with `
 
 - [ ] **Step 3: Update the two string-form entrypoints**
 
-Edit `crates/savvagent-host/src/session.rs` around lines 519 and 530. Replace:
+Edit `crates/otto-host/src/session.rs` around lines 519 and 530. Replace:
 
 ```rust
 pub async fn run_turn(&self, user_input: impl Into<String>) -> Result<TurnOutcome, HostError> {
@@ -951,7 +951,7 @@ with:
 pub async fn run_turn(&self, user_input: impl Into<String>) -> Result<TurnOutcome, HostError> {
     let text = user_input.into();
     self.run_turn_inner(
-        vec![savvagent_protocol::ContentBlock::Text { text }],
+        vec![otto_protocol::ContentBlock::Text { text }],
         None,
     )
     .await
@@ -968,7 +968,7 @@ pub async fn run_turn_streaming(
 ) -> Result<TurnOutcome, HostError> {
     let text = user_input.into();
     self.run_turn_inner(
-        vec![savvagent_protocol::ContentBlock::Text { text }],
+        vec![otto_protocol::ContentBlock::Text { text }],
         Some(events),
     )
     .await
@@ -977,20 +977,20 @@ pub async fn run_turn_streaming(
 
 - [ ] **Step 4: Confirm host crate compiles**
 
-Run: `cargo check -p savvagent-host`
+Run: `cargo check -p otto-host`
 Expected: clean.
 
 If `Router::pick` complains about the missing `required` arg, that's expected — Task 5 wires it. For now, temporarily pass `crate::router::RequiredModalities::default()` so the crate compiles between tasks; Task 5 replaces that with the real value.
 
 - [ ] **Step 5: Run all host-crate tests**
 
-Run: `cargo test -p savvagent-host --lib`
+Run: `cargo test -p otto-host --lib`
 Expected: clean. Phase 1/2/3 tests still cover the same behavior; the new block path is exercised in Task 8.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "refactor(host): run_turn_inner takes Vec<ContentBlock>; string entrypoints wrap"
 ```
 
@@ -999,13 +999,13 @@ git commit -m "refactor(host): run_turn_inner takes Vec<ContentBlock>; string en
 ## Task 5: Wire `required_modalities` into `run_turn_inner` + emit `ModalityWarning`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 The host computes `required_modalities` from the just-built `messages` Vec (which now contains a user message that may include image blocks), then threads it into `Router::pick`. Also adds the `TurnEvent::ModalityWarning { message }` variant and emits it when a vision-required input lands on a non-vision-capable provider+model.
 
 - [ ] **Step 1: Add the `TurnEvent::ModalityWarning` variant**
 
-Find the `TurnEvent` enum in `crates/savvagent-host/src/session.rs` (around line 155-250; search for `pub enum TurnEvent`). Add a variant just below `RouteSelected`:
+Find the `TurnEvent` enum in `crates/otto-host/src/session.rs` (around line 155-250; search for `pub enum TurnEvent`). Add a variant just below `RouteSelected`:
 
 ```rust
 /// The router could not redirect to a vision-capable model for an
@@ -1076,7 +1076,7 @@ The lock guard does not span an `.await` (the `tx.send` is outside the inner blo
 
 Within the same crate, exhaustive matches on the `#[non_exhaustive]` enum must still cover every variant. Find them:
 
-Run: `grep -rn 'match .*TurnEvent\b\|TurnEvent::' crates/savvagent-host --include='*.rs' | grep -v "^.*//"`
+Run: `grep -rn 'match .*TurnEvent\b\|TurnEvent::' crates/otto-host --include='*.rs' | grep -v "^.*//"`
 
 For any exhaustive match without a wildcard arm, add:
 
@@ -1084,17 +1084,17 @@ For any exhaustive match without a wildcard arm, add:
 TurnEvent::ModalityWarning { .. } => {}
 ```
 
-The TUI's `apply_turn_event` in `crates/savvagent/src/app.rs` is the consumer that needs a meaningful arm; that's Task 6.
+The TUI's `apply_turn_event` in `crates/otto/src/app.rs` is the consumer that needs a meaningful arm; that's Task 6.
 
 - [ ] **Step 5: Run all host tests**
 
-Run: `cargo test -p savvagent-host`
+Run: `cargo test -p otto-host`
 Expected: clean. The router unit tests already pass (Task 3); the new wiring is integration-only — full E2E coverage lands in Task 8.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "feat(host): wire modality layer + emit ModalityWarning event"
 ```
 
@@ -1103,18 +1103,18 @@ git commit -m "feat(host): wire modality layer + emit ModalityWarning event"
 ## Task 6: TUI renders the modality warning as a muted note
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
+- Modify: `crates/otto/src/app.rs`
 
 The existing `Entry::Note(String)` variant already renders as a muted line in `ui.rs`. No new entry type needed — just route `TurnEvent::ModalityWarning { message }` into a `Note`.
 
 - [ ] **Step 1: Find the `apply_turn_event` site**
 
-Run: `grep -n 'apply_turn_event\|TurnEvent::RouteSelected' crates/savvagent/src/app.rs`
+Run: `grep -n 'apply_turn_event\|TurnEvent::RouteSelected' crates/otto/src/app.rs`
 Expected: definition + RouteSelected arm.
 
 - [ ] **Step 2: Handle the new variant**
 
-Edit `crates/savvagent/src/app.rs`. Inside `apply_turn_event`, add an arm right after the `RouteSelected` arm:
+Edit `crates/otto/src/app.rs`. Inside `apply_turn_event`, add an arm right after the `RouteSelected` arm:
 
 ```rust
 TurnEvent::ModalityWarning { message } => {
@@ -1127,13 +1127,13 @@ If you added the temporary `_ => {}` arm in Task 5, remove it here and rely on t
 
 - [ ] **Step 3: Run the TUI crate's tests**
 
-Run: `cargo test -p savvagent`
+Run: `cargo test -p otto`
 Expected: clean (no test exercises ModalityWarning yet; Task 8 adds the E2E tests).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs
+git add crates/otto/src/app.rs
 git commit -m "feat(tui): render modality warning as muted note"
 ```
 
@@ -1142,13 +1142,13 @@ git commit -m "feat(tui): render modality warning as muted note"
 ## Task 7: Add public `Host::run_turn_streaming_with_blocks` entrypoint
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 The string-form entrypoints `run_turn` and `run_turn_streaming` already wrap their input in a single `Text` block (Task 4). Phase 4 needs a public entrypoint that accepts arbitrary blocks so callers (today: the integration test; future: an image-upload TUI) can submit image-bearing turns.
 
 - [ ] **Step 1: Write the new public method**
 
-Edit `crates/savvagent-host/src/session.rs`. Immediately after `run_turn_streaming` (around line 532), add:
+Edit `crates/otto-host/src/session.rs`. Immediately after `run_turn_streaming` (around line 532), add:
 
 ```rust
 /// Submit a user turn composed of arbitrary [`ContentBlock`]s — text,
@@ -1165,7 +1165,7 @@ Edit `crates/savvagent-host/src/session.rs`. Immediately after `run_turn_streami
 /// upload feature in the TUI.
 pub async fn run_turn_streaming_with_blocks(
     &self,
-    content: Vec<savvagent_protocol::ContentBlock>,
+    content: Vec<otto_protocol::ContentBlock>,
     events: mpsc::Sender<TurnEvent>,
 ) -> Result<TurnOutcome, HostError> {
     self.run_turn_inner(content, Some(events)).await
@@ -1174,7 +1174,7 @@ pub async fn run_turn_streaming_with_blocks(
 
 - [ ] **Step 2: Verify the host crate still builds**
 
-Run: `cargo check -p savvagent-host`
+Run: `cargo check -p otto-host`
 Expected: clean.
 
 - [ ] **Step 3: Add a quick smoke unit test**
@@ -1184,7 +1184,7 @@ Add inside the existing `#[cfg(test)] mod tests` at the bottom of `session.rs`, 
 ```rust
 #[tokio::test]
 async fn run_turn_streaming_with_blocks_pushes_user_message_verbatim() {
-    use savvagent_protocol::{ContentBlock, ImageSource, MediaType, Role};
+    use otto_protocol::{ContentBlock, ImageSource, MediaType, Role};
     // The existing `make_test_host`-style helper in this module (search
     // for `async fn make_test_host` or similar) returns a Host wired up
     // with one mock provider that returns an EndTurn. If no such helper
@@ -1224,13 +1224,13 @@ async fn run_turn_streaming_with_blocks_pushes_user_message_verbatim() {
 
 - [ ] **Step 4: Run the new test**
 
-Run: `cargo test -p savvagent-host run_turn_streaming_with_blocks_pushes_user_message_verbatim`
+Run: `cargo test -p otto-host run_turn_streaming_with_blocks_pushes_user_message_verbatim`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "feat(host): public run_turn_streaming_with_blocks entrypoint for image-bearing turns"
 ```
 
@@ -1239,13 +1239,13 @@ git commit -m "feat(host): public run_turn_streaming_with_blocks entrypoint for 
 ## Task 8: End-to-end modality routing tests
 
 **Files:**
-- Create: `crates/savvagent-host/tests/modality_routing.rs`
+- Create: `crates/otto-host/tests/modality_routing.rs`
 
-Four `#[tokio::test]`s exercise the Phase 4 behavior end-to-end. The mock provider pattern mirrors `crates/savvagent-host/tests/pool_lifecycle.rs` exactly so this test inherits the (already-proven) host startup wiring.
+Four `#[tokio::test]`s exercise the Phase 4 behavior end-to-end. The mock provider pattern mirrors `crates/otto-host/tests/pool_lifecycle.rs` exactly so this test inherits the (already-proven) host startup wiring.
 
 - [ ] **Step 1: Re-read the test scaffold pattern**
 
-Run: `cat crates/savvagent-host/tests/pool_lifecycle.rs`
+Run: `cat crates/otto-host/tests/pool_lifecycle.rs`
 
 Things to note:
 - `HostConfig::new(ProviderEndpoint::StreamableHttp { url: "http://unused".into() }, "m")` is the constructor. There is no `HostConfig::default()`.
@@ -1257,7 +1257,7 @@ Things to note:
 
 - [ ] **Step 2: Write the test file**
 
-Create `crates/savvagent-host/tests/modality_routing.rs`:
+Create `crates/otto-host/tests/modality_routing.rs`:
 
 ```rust
 //! Phase 4 end-to-end:
@@ -1280,13 +1280,13 @@ Create `crates/savvagent-host/tests/modality_routing.rs`:
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use savvagent_host::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
-use savvagent_host::{
+use otto_host::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
+use otto_host::{
     Host, HostConfig, ProviderEndpoint, ProviderRegistration, RoutingReason, StartupConnectPolicy,
     TurnEvent,
 };
-use savvagent_mcp::ProviderClient;
-use savvagent_protocol::{
+use otto_mcp::ProviderClient;
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ContentBlock, ImageSource, ListModelsResponse, MediaType,
     ProviderError, ProviderId, StopReason, StreamEvent,
 };
@@ -1660,7 +1660,7 @@ async fn override_wins_over_modality_and_still_warns() {
 
 - [ ] **Step 3: Run all four tests**
 
-Run: `cargo test -p savvagent-host --test modality_routing -- --nocapture`
+Run: `cargo test -p otto-host --test modality_routing -- --nocapture`
 Expected: all four PASS.
 
 Common gotchas:
@@ -1671,7 +1671,7 @@ Common gotchas:
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/modality_routing.rs
+git add crates/otto-host/tests/modality_routing.rs
 git commit -m "test(host): end-to-end modality routing (4 cases: same-provider, no-vision, no-silent-hop, override+warning)"
 ```
 
@@ -1699,7 +1699,7 @@ Edit `README.md`. Add immediately after the `@provider:model` section:
 ```markdown
 ### Automatic modality routing
 
-When you attach an image to your message, savvagent inspects the active
+When you attach an image to your message, otto inspects the active
 provider's chosen model. If it doesn't support vision (for example
 `claude-haiku-4-5` or `o3`), the router automatically switches to a
 sibling model on the **same provider** that does (e.g. haiku → opus on
@@ -1750,7 +1750,7 @@ Edit `CHANGELOG.md`. Insert at the top, above the `## 0.17.0` entry:
 
 - Phase 4 of the multi-provider-pool roadmap (see
   `docs/superpowers/specs/2026-05-15-multi-provider-pool-and-auto-routing-design.md`).
-  New `crates/savvagent-host/src/router/modality.rs` module with field
+  New `crates/otto-host/src/router/modality.rs` module with field
   names (`has_image`, `has_pdf`, `has_audio`) aligned to Phase 5's
   `routing.toml` predicates so the user-rules layer can bind to the
   same struct without rename. `Router::pick` takes a new
@@ -1887,10 +1887,10 @@ Per `[[feedback_keep_issue_updated.md]]`: post a comment on the multi-provider t
 - [x] `RoutingReason::Modality { kind }` — Task 2 declares struct-form variant; Task 3 constructs it the same way; Task 5 matches against `Modality { .. }`; Task 6 routes via `Display`/match in the TUI.
 - [x] `TurnEvent::ModalityWarning { message }` — Task 5 declares + emits; Task 6 matches in the TUI; Task 8 asserts in the E2E test.
 - [x] `run_turn_inner` signature change: from `(String, Option<...>)` to `(Vec<ContentBlock>, Option<...>)` — Task 4 lands the refactor; Task 5 extends the body; Task 7 adds the new public entrypoint; existing entrypoints unchanged at the public boundary.
-- [x] `HostConfig::new(ProviderEndpoint::StreamableHttp { url }, model)` + `StartupConnectPolicy::All` — used in Task 8 tests; mirrors `pool_lifecycle.rs` exactly; verified against `crates/savvagent-host/src/config.rs:199`.
-- [x] `ProviderRegistration::new(id, display_name, client, capabilities)` — used in Task 8 tests; verified against `crates/savvagent-host/src/config.rs:60`.
-- [x] `CompleteResponse { id, model, content, stop_reason, stop_sequence, usage }` — all six fields populated; verified against `crates/savvagent-protocol/src/response.rs:10`.
-- [x] `ListModelsResponse { models, default_model_id }` — both fields populated; verified against `crates/savvagent-protocol/src/models.rs:14`.
+- [x] `HostConfig::new(ProviderEndpoint::StreamableHttp { url }, model)` + `StartupConnectPolicy::All` — used in Task 8 tests; mirrors `pool_lifecycle.rs` exactly; verified against `crates/otto-host/src/config.rs:199`.
+- [x] `ProviderRegistration::new(id, display_name, client, capabilities)` — used in Task 8 tests; verified against `crates/otto-host/src/config.rs:60`.
+- [x] `CompleteResponse { id, model, content, stop_reason, stop_sequence, usage }` — all six fields populated; verified against `crates/otto-protocol/src/response.rs:10`.
+- [x] `ListModelsResponse { models, default_model_id }` — both fields populated; verified against `crates/otto-protocol/src/models.rs:14`.
 - [x] `host.messages()` — used in Task 7 unit test; verified at `session.rs:974`. Not `host.history()`.
 
 If you find any drift while implementing, fix it in the file you're editing and update later tasks before they're reached.

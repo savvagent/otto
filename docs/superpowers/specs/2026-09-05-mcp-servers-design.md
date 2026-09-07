@@ -2,25 +2,25 @@
 
 Date: 2026-09-05
 Status: pending review
-Source: savvagent/savvagent-cli#36
+Source: savvagent/otto#36
 Related: `PRD.md:117` ("3rd-party MCP servers" architecture diagram entry this closes the gap on)
 
 ## Problem
 
 `PRD.md:117` lists "3rd-party MCP servers" as a tool source, but there is no way for a user to add
-one. `ToolEndpoint` (`crates/savvagent-host/src/config.rs:27`) has exactly one variant,
+one. `ToolEndpoint` (`crates/otto-host/src/config.rs:27`) has exactly one variant,
 `Stdio { command, args }` — a remote server can't be expressed in the type system at all. The server
-set is hardcoded as `ToolBins { fs, bash, grep, lsp, web }` (`crates/savvagent/src/main.rs:118`),
+set is hardcoded as `ToolBins { fs, bash, grep, lsp, web }` (`crates/otto/src/main.rs:118`),
 each resolved by `locate_bundled_bin` and appended via `HostConfig::with_tool` — adding a server means
-adding a struct field and rebuilding. `~/.savvagent/config.toml` (`crates/savvagent/src/config_file.rs`)
+adding a struct field and rebuilding. `~/.otto/config.toml` (`crates/otto/src/config_file.rs`)
 has no server list. There is no `/mcp` slash command. The only remote-MCP path today is the
-*provider* side (`SAVVAGENT_PROVIDER_URL`, rmcp Streamable HTTP) — that transport can't host tools.
+*provider* side (`OTTO_PROVIDER_URL`, rmcp Streamable HTTP) — that transport can't host tools.
 
 ## Premise corrections
 
 The issue's "Work involved" section states the registry's "spawn/reap path currently assumes a child
 process and will need a per-endpoint connection abstraction." This is only half true: `ToolServer`
-(`crates/savvagent-host/src/tools.rs:301-304`) stores `service: RunningService<RoleClient,
+(`crates/otto-host/src/tools.rs:301-304`) stores `service: RunningService<RoleClient,
 ResourceCapturingHandler>` — the transport is erased once `.serve(transport)` returns. `connect()`
 can build that same `RunningService` from either a `TokioChildProcess` or a
 `StreamableHttpClientTransport` and push the result into the existing `eager_servers: Vec<ToolServer>`
@@ -29,7 +29,7 @@ can build that same `RunningService` from either a `TokioChildProcess` or a
 `ToolRegistry` side of this change.
 
 `rmcp`'s `transport-streamable-http-client`/`-reqwest` features are already enabled
-(`Cargo.toml:93-105`, confirmed in use by `savvagent-host/src/provider.rs` and every provider crate's
+(`Cargo.toml:93-105`, confirmed in use by `otto-host/src/provider.rs` and every provider crate's
 integration tests) — no new base dependency, only the `auth` feature (deferred, see Scope) would be
 new.
 
@@ -41,10 +41,10 @@ new.
   from the OS keyring, never inline in config).
 - `ToolRegistry::connect` gains an `Http` construction arm building a `StreamableHttpClientTransport`
   and pushing the resulting `ToolServer` into the same `eager_servers` vec used today.
-- `[[mcp_servers]]` TOML array in `~/.savvagent/config.toml` (`ConfigFile`), covering both `stdio` and
+- `[[mcp_servers]]` TOML array in `~/.otto/config.toml` (`ConfigFile`), covering both `stdio` and
   `http` transports, `env` values markable `"keyring"` for stdio, `auth = "bearer"` for http.
 - Startup wiring: configured servers are registered **in addition to** `ToolBins`'s bundled set.
-- Keyring: `mcp:<server name>` account namespace under service `savvagent`; add `creds::delete`;
+- Keyring: `mcp:<server name>` account namespace under service `otto`; add `creds::delete`;
   reuse `creds::save`/`load` shape.
 - A `/mcp` slash command + screen (mirroring `/connect`'s plugin shape) listing configured servers
   with connected/failed status, and add/remove flows that write `config.toml` + the keyring.
@@ -67,7 +67,7 @@ new.
 - **SSE transport.** Only Streamable HTTP, per the issue's own "is Streamable HTTP alone sufficient"
   question — SSE is not implemented; a server with an unrecognized `transport` value is rejected the
   same way as unsupported `auth`.
-- **Per-project config** (`.savvagent/config.toml` in the project root). v1 is home-config-only,
+- **Per-project config** (`.otto/config.toml` in the project root). v1 is home-config-only,
   matching every other section of `ConfigFile` today. Per-project merge is a natural follow-up but
   changes `ConfigFile`'s loading contract and is out of scope here.
 - **Live add/remove/reconnect without restart.** `Host`'s provider pool
@@ -76,7 +76,7 @@ new.
   Building one is a real architecture addition (mirroring the provider pool's `RwLock<HashMap<...>>`
   shape) that deserves its own review, not a rider on this change. v1's `/mcp` screen lists status,
   and add/remove edit `config.toml` + the keyring but require an app restart to take effect — the
-  screen says so explicitly ("Restart savvagent to apply changes"). `Host` gaining a tool-pool API
+  screen says so explicitly ("Restart otto to apply changes"). `Host` gaining a tool-pool API
   analogous to the provider pool is the natural v2.
 - **Multi-secret servers.** Per the issue's own note ("pick one before the `/mcp` screen is
   written; the flat-account form matches the existing code better"), v1 uses one flat `mcp:<server>`
@@ -88,7 +88,7 @@ new.
 
 ## Approach
 
-### 1. `ToolEndpoint::Http` (`crates/savvagent-host/src/config.rs`)
+### 1. `ToolEndpoint::Http` (`crates/otto-host/src/config.rs`)
 
 ```rust
 #[non_exhaustive]
@@ -123,19 +123,19 @@ pub enum HttpAuth {
 ```
 
 `token`/`env` values are always resolved secrets by the time they reach `HostConfig` —
-`savvagent-host` never reads a keyring or a config file; the embedder (TUI) resolves secrets before
+`otto-host` never reads a keyring or a config file; the embedder (TUI) resolves secrets before
 constructing `ToolEndpoint` values, exactly as it already does for provider API keys. This keeps
-`savvagent-host` free of a `keyring`/`toml` dependency, preserving the crate-boundary invariant
-(`savvagent-host` is a library with no OS-credential-store awareness).
+`otto-host` free of a `keyring`/`toml` dependency, preserving the crate-boundary invariant
+(`otto-host` is a library with no OS-credential-store awareness).
 
-`ToolRegistry`'s stdio spawn path (`crates/savvagent-host/src/tools.rs`, the `tokio::process::Command`
+`ToolRegistry`'s stdio spawn path (`crates/otto-host/src/tools.rs`, the `tokio::process::Command`
 construction shared by both the eager and lazy-bash arms) is extended to call `.envs(&env)` on the
 built command before wrapping it in `TokioChildProcess::new`, merging over (not replacing) whatever
 environment the process already inherits — the existing sandbox environment handling is untouched,
 `env` is applied in addition to it. `ToolServer.label` (`tools.rs:301-304`) is populated from
 `name`, not derived from `command`, closing the identity-ambiguity gap flagged in spec review.
 
-### 2. `ToolRegistry::connect` (`crates/savvagent-host/src/tools.rs`)
+### 2. `ToolRegistry::connect` (`crates/otto-host/src/tools.rs`)
 
 **Per-endpoint failure isolation.** `connect()` today propagates the first endpoint failure via `?`,
 which aborts `Host::start` entirely — acceptable when every endpoint is a trusted bundled binary, but
@@ -241,7 +241,7 @@ per-tool note, not folded into the endpoint's own status reason. `ConnectState::
 for "the endpoint itself never came up" (timeout, transport/handshake error, `list_all_tools` error),
 not "some of its tools lost a name collision."
 
-### 3. `McpServersSection` (`crates/savvagent/src/config_file.rs`)
+### 3. `McpServersSection` (`crates/otto/src/config_file.rs`)
 
 ```toml
 [[mcp_servers]]
@@ -368,7 +368,7 @@ This replaces step 3's `toml::Value`-based raw-table representation for the *wri
 — step 3's *read*-side tolerant decode (`toml::Value` → per-element `McpServerEntry::deserialize`)
 is unaffected and continues to use `toml::Value`/`toml::from_str`, since round-tripping fidelity is
 only required on write, not on read. `Cargo.toml` gains `toml_edit` as a new workspace dependency
-(`crates/savvagent`-only; `savvagent-host` does not gain a `toml_edit` dependency, consistent with
+(`crates/otto`-only; `otto-host` does not gain a `toml_edit` dependency, consistent with
 the crate-boundary invariant in §1). The plan's implementation task for this includes a regression
 test: a `config.toml` with one valid `[[mcp_servers]]` row, one intentionally-malformed row (e.g. a
 row with an unrecognized `transport` value, plus a hand-written comment immediately above it), add a
@@ -387,7 +387,7 @@ earlier, during the tolerant per-entry deserialize in step 3 above — an unknow
 "transport")]` value is a deserialize error for that element, producing a diagnostic there; it never
 reaches `McpServerEntry::validate` as a typed value at all.)
 
-### 4. Bootstrap wiring (`crates/savvagent/src/main.rs`)
+### 4. Bootstrap wiring (`crates/otto/src/main.rs`)
 
 Near `bootstrap_app_and_host` / `ToolBins::apply` (main.rs:137-154): `ConfigFile::load_or_default`
 now returns `LoadedConfig { config, mcp_server_diagnostics }` (§3) — bootstrap first pushes a note for
@@ -403,7 +403,7 @@ later, at `Host::start`, via `Host::tool_server_statuses()` (§2/§6) — bootst
 startup-time statuses are deliberately two different signals for two different failure phases (config
 malformed vs. config valid but the server itself unreachable).
 
-### 5. Keyring (`crates/savvagent/src/creds.rs`)
+### 5. Keyring (`crates/otto/src/creds.rs`)
 
 ```rust
 /// Reserved account prefix for MCP-server secrets, namespaced against
@@ -441,7 +441,7 @@ pub fn mcp_delete(server_name: &str) -> Result<(), keyring::Error> {
 `CLAUDE.md`'s "`/connect` is the only writer" line is updated to name both `/connect` and `/mcp` as
 the two writers, and to note the `mcp:` account-prefix reservation.
 
-### 6. `/mcp` slash command + screen (`crates/savvagent/src/plugin/builtin/mcp/`)
+### 6. `/mcp` slash command + screen (`crates/otto/src/plugin/builtin/mcp/`)
 
 New built-in plugin, structured like `connect/` (`mod.rs` + `screen.rs`):
 
@@ -455,7 +455,7 @@ New built-in plugin, structured like `connect/` (`mod.rs` + `screen.rs`):
   appends the new entry via §3's `toml_edit`-based write path; `d`/`Delete` removes a server —
   **config-then-credential ordering (non-blocking fix from round-3 review):** it first removes the
   server's raw table via that write path (preserving every other row — including any that failed to
-  parse — untouched) and pushes a note "Restart savvagent to apply changes," and only *then* calls
+  parse — untouched) and pushes a note "Restart otto to apply changes," and only *then* calls
   `creds::mcp_delete`. Removing the config row first means that if the config write itself fails
   (e.g. a permissions error on `config.toml`), the server is untouched end-to-end — nothing is left
   half-removed with a missing secret. If the config write succeeds but the subsequent
@@ -482,7 +482,7 @@ and out of scope).
 
 - **Breaking (per Non-Negotiable Rule 6 — requires a MINOR version bump under this repo's pre-1.0
   convention, not a PATCH):** `ToolEndpoint` is not `#[non_exhaustive]` today
-  (`crates/savvagent-host/src/config.rs`), so this change both (a) adds a new `Http` variant and (b)
+  (`crates/otto-host/src/config.rs`), so this change both (a) adds a new `Http` variant and (b)
   adds a new `env` field to the existing `Stdio` variant — either alone breaks any exhaustive
   `match`/struct-literal construction outside this workspace. This spec marks `ToolEndpoint` (and,
   for consistency, `HttpAuth`) `#[non_exhaustive]` **as part of this same breaking release**, so this
@@ -501,7 +501,7 @@ and out of scope).
 - **Additive:** `[[mcp_servers]]` TOML section — an unrecognized/absent section deserializes to the
   default empty vec (`#[serde(default)]`), so existing `config.toml` files keep working unchanged.
   `ConfigFile::load_or_default`'s return type changing to `LoadedConfig` (§3) is an internal-only
-  signature change (this function has no callers outside `crates/savvagent`, which is the TUI binary
+  signature change (this function has no callers outside `crates/otto`, which is the TUI binary
   crate, not a published/embeddable library per `CLAUDE.md`'s workspace map) — not governed by Rule 6,
   which concerns the SPP wire format, tool MCP schemas, the plugin ABI, slash commands, env vars, and
   on-disk formats specifically. The on-disk `config.toml` format itself is unchanged for existing
@@ -511,14 +511,14 @@ and out of scope).
 - **Internal-only (not a plugin-ABI change, per the plan's implementation-detail decision):**
   `/mcp`'s screen needs a way to learn tool-server connect status without `Screen`/`Plugin` trait
   methods gaining direct `&Host` access. Since v1 has no live reconnect (§Scope), this is a one-shot
-  need resolved entirely within `crates/savvagent` — the `McpPlugin` is constructed with an initial
+  need resolved entirely within `crates/otto` — the `McpPlugin` is constructed with an initial
   status/config snapshot (mirroring how `UserSlashCommandsPlugin::new(trust_levels)` is already
-  seeded at construction time), not via a new `HostEvent`/plugin-ABI surface. `savvagent-plugin`'s
+  seeded at construction time), not via a new `HostEvent`/plugin-ABI surface. `otto-plugin`'s
   `HostEvent` enum is unchanged by this feature.
 - **New dependency (round-3 review):** `toml_edit` is added to root `Cargo.toml` as a new workspace
-  dependency, used only by `crates/savvagent` (§3's `/mcp` write path). The existing `toml` crate is
+  dependency, used only by `crates/otto` (§3's `/mcp` write path). The existing `toml` crate is
   retained unchanged for read-side parsing/serialization everywhere else; `toml_edit` is not a
-  replacement for it. `savvagent-host` gains no new dependency.
+  replacement for it. `otto-host` gains no new dependency.
 - **Documented behavior change, not a breaking wire/ABI change:** `CLAUDE.md`'s "`/connect` is the
   only writer" invariant becomes "two writers, namespaced" — this is a documentation update, not a
   format change; existing provider keyring entries (bare `<provider id>` accounts) are untouched.

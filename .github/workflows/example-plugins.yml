@@ -13,7 +13,7 @@ on:
   push:
     paths:
       - "examples/plugin-hello-*/**"
-      - "crates/savvagent-plugin-wit/**"
+      - "crates/otto-plugin-wit/**"
   pull_request:
     paths:
       - "examples/plugin-hello-*/**"
@@ -30,7 +30,7 @@ jobs:
           # `wasm32-wasip2` because the host's wasmtime config does not
           # link a WASI preview-2 implementation. Keep this in sync with
           # the in-tree fixtures under
-          # `crates/savvagent-plugin-wasm/tests/fixtures-src/`.
+          # `crates/otto-plugin-wasm/tests/fixtures-src/`.
           rustup target add wasm32-unknown-unknown
           cargo install cargo-component --locked
       - name: Build each example

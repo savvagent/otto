@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land Layer 3 of the router stack — user-edited routing rules in `~/.savvagent/routing.toml`. A turn whose latest user message matches a rule's predicates is redirected to that rule's `provider/model`. `/route reload` re-reads the file at runtime; `/route show` prints the active rules and the most-recent decision. `@`-overrides and modality redirects still win when they apply.
+**Goal:** Land Layer 3 of the router stack — user-edited routing rules in `~/.otto/routing.toml`. A turn whose latest user message matches a rule's predicates is redirected to that rule's `provider/model`. `/route reload` re-reads the file at runtime; `/route show` prints the active rules and the most-recent decision. `@`-overrides and modality redirects still win when they apply.
 
 **Architecture:**
-- New host-side module `crates/savvagent-host/src/router/rules.rs` owns `RoutingRules` (parser + evaluator) and `RoutingRulesError`. `Router::pick` gains two parameters (`rules: &RoutingRules`, `user_text: &str`) and a new Layer-3 step between Modality and Default. `RoutingReason::Rule { name }` is the new variant on the existing `#[non_exhaustive]` enum.
+- New host-side module `crates/otto-host/src/router/rules.rs` owns `RoutingRules` (parser + evaluator) and `RoutingRulesError`. `Router::pick` gains two parameters (`rules: &RoutingRules`, `user_text: &str`) and a new Layer-3 step between Modality and Default. `RoutingReason::Rule { name }` is the new variant on the existing `#[non_exhaustive]` enum.
 - `Host` gains `routing_rules: Arc<RwLock<RoutingRules>>`, `Host::reload_routing_rules()`, and `Host::routing_rules_snapshot()`. The most-recent decision is *not* stashed on the host — `/route show` sources it from the TUI's transcript via `App::log`.
-- New TUI plugin `internal:route` at `crates/savvagent/src/plugin/builtin/route/` registers `/route` with `reload` / `show` subcommands. Two new `Effect` variants (`ReloadRoutingRules`, `ShowRoutingRules`) are handled in `apply_effects` (which has host access). Plugin `handle_slash` has no `&Host`, so the effect indirection is required.
-- `legacy_model.rs` is unchanged. The new precedence step (`routing.toml#default`) is added in the **callers** — the two model-resolution sites in `crates/savvagent/src/main.rs` (`resolve_initial_model_for` and the multi-provider startup chain around line 432). New order: `SAVVAGENT_MODEL` env → `models.toml` → `routing.toml#default` → `provider.default_model`.
+- New TUI plugin `internal:route` at `crates/otto/src/plugin/builtin/route/` registers `/route` with `reload` / `show` subcommands. Two new `Effect` variants (`ReloadRoutingRules`, `ShowRoutingRules`) are handled in `apply_effects` (which has host access). Plugin `handle_slash` has no `&Host`, so the effect indirection is required.
+- `legacy_model.rs` is unchanged. The new precedence step (`routing.toml#default`) is added in the **callers** — the two model-resolution sites in `crates/otto/src/main.rs` (`resolve_initial_model_for` and the multi-provider startup chain around line 432). New order: `OTTO_MODEL` env → `models.toml` → `routing.toml#default` → `provider.default_model`.
 - Workspace version bumps to `0.19.0` (per-phase scaffolding; the actual tag rolls up all phases later per [[project_multi_provider_release.md]] in user memory).
 
 **Tech Stack:** Rust 2024, Tokio, `async-trait`, `toml` (already in workspace). No new dependencies.
@@ -20,23 +20,23 @@
 ## File structure (Phase 5)
 
 **New files:**
-- `crates/savvagent-host/src/router/rules.rs` — `RoutingRules`, `RoutingRule`, `RuleMatch`, `DefaultPick`, `RoutingRulesError`, `RuleSignals`, parser + evaluator.
-- `crates/savvagent-host/tests/route_rules_e2e.rs` — end-to-end integration tests (rule fires; rule with disconnected provider falls through; reload-mid-turn race).
-- `crates/savvagent/src/plugin/builtin/route/mod.rs` — `RoutePlugin`, manifest, slash dispatch, plugin-internal unit tests.
-- `crates/savvagent/src/routing_pref.rs` — TUI-side helper that resolves the `~/.savvagent/routing.toml` path and loads a `Option<DefaultPick>` for the model-resolution chain. (Loader for the *full* `RoutingRules` is host-side; this helper exists so `main.rs` can read just `#default` without depending on the full rules type during startup.)
+- `crates/otto-host/src/router/rules.rs` — `RoutingRules`, `RoutingRule`, `RuleMatch`, `DefaultPick`, `RoutingRulesError`, `RuleSignals`, parser + evaluator.
+- `crates/otto-host/tests/route_rules_e2e.rs` — end-to-end integration tests (rule fires; rule with disconnected provider falls through; reload-mid-turn race).
+- `crates/otto/src/plugin/builtin/route/mod.rs` — `RoutePlugin`, manifest, slash dispatch, plugin-internal unit tests.
+- `crates/otto/src/routing_pref.rs` — TUI-side helper that resolves the `~/.otto/routing.toml` path and loads a `Option<DefaultPick>` for the model-resolution chain. (Loader for the *full* `RoutingRules` is host-side; this helper exists so `main.rs` can read just `#default` without depending on the full rules type during startup.)
 
 **Modified files:**
-- `crates/savvagent-host/src/router/mod.rs` — declare and re-export the `rules` submodule.
-- `crates/savvagent-host/src/router/router.rs` — add `RoutingReason::Rule { name: String }` variant; extend `Router::pick` signature with `rules: &RoutingRules, user_text: &str`; update Display impl.
-- `crates/savvagent-host/src/lib.rs` — re-export `RoutingRules`, `RoutingRule`, `RuleMatch`, `DefaultPick`, `RoutingRulesError`.
-- `crates/savvagent-host/src/config.rs` — add `HostConfig::routing_rules_path: Option<PathBuf>`; default to `None`.
-- `crates/savvagent-host/src/session.rs` — `Host` gains the new fields and methods; `run_turn_inner` builds `user_text`, takes a `routing_rules` snapshot, threads both into `Router::pick`.
-- `crates/savvagent/src/main.rs` — register the `RoutePlugin` in the built-in plugin set; populate `HostConfig::routing_rules_path`; insert `routing.toml#default` into the two model-resolution chains (`resolve_initial_model_for` + multi-provider startup wiring near `legacy_model` block); add `apply_effects` branches for the two new effects.
-- `crates/savvagent/src/plugin/effects.rs` — implement `ReloadRoutingRules` and `ShowRoutingRules` effect handlers (snapshot rules, scan `App::log` for last badge, push styled lines).
-- `crates/savvagent-plugin/src/effect.rs` — add `Effect::ReloadRoutingRules` and `Effect::ShowRoutingRules` variants on the `#[non_exhaustive]` enum.
-- `crates/savvagent/src/plugin/builtin/mod.rs` — export `RoutePlugin`; include it in the built-in plugin enumerator.
-- `crates/savvagent/locales/en.toml` — add `slash.route-summary`, `plugin.route-description`, and a `[routing]` section.
-- `crates/savvagent/locales/es.toml`, `pt.toml`, `hi.toml` — TODO placeholders mirroring en.toml keys.
+- `crates/otto-host/src/router/mod.rs` — declare and re-export the `rules` submodule.
+- `crates/otto-host/src/router/router.rs` — add `RoutingReason::Rule { name: String }` variant; extend `Router::pick` signature with `rules: &RoutingRules, user_text: &str`; update Display impl.
+- `crates/otto-host/src/lib.rs` — re-export `RoutingRules`, `RoutingRule`, `RuleMatch`, `DefaultPick`, `RoutingRulesError`.
+- `crates/otto-host/src/config.rs` — add `HostConfig::routing_rules_path: Option<PathBuf>`; default to `None`.
+- `crates/otto-host/src/session.rs` — `Host` gains the new fields and methods; `run_turn_inner` builds `user_text`, takes a `routing_rules` snapshot, threads both into `Router::pick`.
+- `crates/otto/src/main.rs` — register the `RoutePlugin` in the built-in plugin set; populate `HostConfig::routing_rules_path`; insert `routing.toml#default` into the two model-resolution chains (`resolve_initial_model_for` + multi-provider startup wiring near `legacy_model` block); add `apply_effects` branches for the two new effects.
+- `crates/otto/src/plugin/effects.rs` — implement `ReloadRoutingRules` and `ShowRoutingRules` effect handlers (snapshot rules, scan `App::log` for last badge, push styled lines).
+- `crates/otto-plugin/src/effect.rs` — add `Effect::ReloadRoutingRules` and `Effect::ShowRoutingRules` variants on the `#[non_exhaustive]` enum.
+- `crates/otto/src/plugin/builtin/mod.rs` — export `RoutePlugin`; include it in the built-in plugin enumerator.
+- `crates/otto/locales/en.toml` — add `slash.route-summary`, `plugin.route-description`, and a `[routing]` section.
+- `crates/otto/locales/es.toml`, `pt.toml`, `hi.toml` — TODO placeholders mirroring en.toml keys.
 - `Cargo.toml` (workspace root) — bump `[workspace.package].version` to `0.19.0` and every `version = "0.18.0"` literal in `[workspace.dependencies]` to `0.19.0`.
 - `CHANGELOG.md` — add `## 0.19.0 - 2026-05-18` entry.
 - `README.md` — add a short user-facing routing-rules section with the sample TOML.
@@ -46,18 +46,18 @@
 ## Task 1: `RoutingRules` types + parser (host crate, no router yet)
 
 **Files:**
-- Create: `crates/savvagent-host/src/router/rules.rs`
-- Modify: `crates/savvagent-host/src/router/mod.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Create: `crates/otto-host/src/router/rules.rs`
+- Modify: `crates/otto-host/src/router/mod.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 Pure data + parsing. No async, no `Router` change yet — the goal is to make `RoutingRules::load_from_path` and `RoutingRules::evaluate` self-contained and well-tested before wiring anything to a turn.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `crates/savvagent-host/src/router/rules.rs` (file does not exist yet):
+Append to `crates/otto-host/src/router/rules.rs` (file does not exist yet):
 
 ```rust
-//! User-edited routing rules from `~/.savvagent/routing.toml`.
+//! User-edited routing rules from `~/.otto/routing.toml`.
 //!
 //! Phase 5 ships Layer 3 of the parent spec's router stack. The rules
 //! are parsed once at `Host::start` and re-parsed on `/route reload`;
@@ -76,7 +76,7 @@ Append to `crates/savvagent-host/src/router/rules.rs` (file does not exist yet):
 
 use std::path::{Path, PathBuf};
 
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 use serde::Deserialize;
 
 use crate::router::modality::RequiredModalities;
@@ -85,7 +85,7 @@ use crate::router::modality::RequiredModalities;
 /// higher version + a styled warning + empty fallback.
 pub const ROUTING_RULES_SCHEMA_VERSION: u32 = 1;
 
-/// In-memory representation of `~/.savvagent/routing.toml`.
+/// In-memory representation of `~/.otto/routing.toml`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RoutingRules {
     /// Optional default `provider/model` from the file's `default = "..."`.
@@ -638,7 +638,7 @@ use = "gemini/gemini-2.0-flash-vision"
 }
 ```
 
-Then modify `crates/savvagent-host/src/router/mod.rs`:
+Then modify `crates/otto-host/src/router/mod.rs`:
 
 ```rust
 //! Routing layers. Phase 5 ships Layer 3 (user rules) plus the existing
@@ -663,7 +663,7 @@ pub use rules::{
 };
 ```
 
-And `crates/savvagent-host/src/lib.rs` `pub use router::{...}` line (around line 26-30):
+And `crates/otto-host/src/lib.rs` `pub use router::{...}` line (around line 26-30):
 
 ```rust
 pub use router::{
@@ -674,7 +674,7 @@ pub use router::{
 };
 ```
 
-Also add `tempfile` to `[dev-dependencies]` in `crates/savvagent-host/Cargo.toml` if not already present:
+Also add `tempfile` to `[dev-dependencies]` in `crates/otto-host/Cargo.toml` if not already present:
 
 ```toml
 [dev-dependencies]
@@ -685,26 +685,26 @@ tempfile = { workspace = true }
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent-host --lib router::rules`
+Run: `cargo test -p otto-host --lib router::rules`
 Expected: FAIL — module doesn't compile yet, or the new tests fail because `rules.rs` isn't wired into `router/mod.rs` until you save it.
 
 - [ ] **Step 3: Make tests pass**
 
 Already done by Step 1's code blocks — re-run to confirm:
 
-Run: `cargo test -p savvagent-host --lib router::rules`
+Run: `cargo test -p otto-host --lib router::rules`
 Expected: all 10 `router::rules::tests::*` PASS.
 
 - [ ] **Step 4: Lint and format**
 
 Run: `rustup run stable cargo fmt --all`
-Run: `rustup run stable cargo clippy -p savvagent-host --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto-host --all-targets -- -D warnings`
 Expected: no diff from fmt; no clippy errors.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/rules.rs crates/savvagent-host/src/router/mod.rs crates/savvagent-host/src/lib.rs crates/savvagent-host/Cargo.toml
+git add crates/otto-host/src/router/rules.rs crates/otto-host/src/router/mod.rs crates/otto-host/src/lib.rs crates/otto-host/Cargo.toml
 git commit -m "feat(host): RoutingRules parser + evaluator (Phase 5 skeleton)"
 ```
 
@@ -713,13 +713,13 @@ git commit -m "feat(host): RoutingRules parser + evaluator (Phase 5 skeleton)"
 ## Task 2: `RoutingReason::Rule` variant + Display update
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/router.rs`
+- Modify: `crates/otto-host/src/router/router.rs`
 
 Smallest possible change to the `RoutingReason` enum so subsequent router tasks can name the new variant. Display matches Phase 4's `Modality(image)` style: `Rule(<name>)` bare, no quotes.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/savvagent-host/src/router/router.rs`'s `#[cfg(test)] mod tests`:
+Append to `crates/otto-host/src/router/router.rs`'s `#[cfg(test)] mod tests`:
 
 ```rust
     #[test]
@@ -733,12 +733,12 @@ Append to `crates/savvagent-host/src/router/router.rs`'s `#[cfg(test)] mod tests
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-host --lib router::router::tests::routing_reason_rule_displays`
+Run: `cargo test -p otto-host --lib router::router::tests::routing_reason_rule_displays`
 Expected: compile error — `RoutingReason::Rule` variant doesn't exist.
 
 - [ ] **Step 3: Add the variant + Display arm**
 
-In `crates/savvagent-host/src/router/router.rs`, extend `RoutingReason`:
+In `crates/otto-host/src/router/router.rs`, extend `RoutingReason`:
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -774,13 +774,13 @@ impl std::fmt::Display for RoutingReason {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p savvagent-host --lib router::router::tests`
+Run: `cargo test -p otto-host --lib router::router::tests`
 Expected: all router tests PASS, including the new `routing_reason_rule_displays`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/router.rs
+git add crates/otto-host/src/router/router.rs
 git commit -m "feat(host): RoutingReason::Rule variant + Display"
 ```
 
@@ -789,13 +789,13 @@ git commit -m "feat(host): RoutingReason::Rule variant + Display"
 ## Task 3: `Router::pick` Layer 3 — rules evaluation
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/router.rs`
+- Modify: `crates/otto-host/src/router/router.rs`
 
 `Router::pick` gains two new parameters (`rules: &RoutingRules, user_text: &str`). The new layer runs **between Modality and Default**. Phase 6 will later insert Heuristic between Rules and Default.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `crates/savvagent-host/src/router/router.rs`'s `#[cfg(test)] mod tests`:
+Append to `crates/otto-host/src/router/router.rs`'s `#[cfg(test)] mod tests`:
 
 ```rust
     use crate::router::rules::{DefaultPick, RoutingRule, RoutingRules, RuleMatch};
@@ -961,16 +961,16 @@ Append to `crates/savvagent-host/src/router/router.rs`'s `#[cfg(test)] mod tests
     }
 ```
 
-You also need to update every existing test in this file that calls `Router::pick(...)` with the OLD 5-arg signature — they all need two trailing args added: `&RoutingRules::empty(), ""`. Run `cargo test -p savvagent-host --lib router::router` to enumerate the failures and edit each one. (They're short and mechanical; expected count is 6 existing `pick_*` tests.)
+You also need to update every existing test in this file that calls `Router::pick(...)` with the OLD 5-arg signature — they all need two trailing args added: `&RoutingRules::empty(), ""`. Run `cargo test -p otto-host --lib router::router` to enumerate the failures and edit each one. (They're short and mechanical; expected count is 6 existing `pick_*` tests.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent-host --lib router::router`
+Run: `cargo test -p otto-host --lib router::router`
 Expected: compile errors — `Router::pick` doesn't take the new params yet.
 
 - [ ] **Step 3: Update `Router::pick` signature + body**
 
-In `crates/savvagent-host/src/router/router.rs`, replace the entire `impl Router { ... }` block with:
+In `crates/otto-host/src/router/router.rs`, replace the entire `impl Router { ... }` block with:
 
 ```rust
 impl Router {
@@ -980,7 +980,7 @@ impl Router {
     /// 1. **Override** — `@`-prefix from the user input.
     /// 2. **Modality** — same-provider redirect when the active model
     ///    lacks a required modality.
-    /// 3. **Rules** — first matching rule from `~/.savvagent/routing.toml`.
+    /// 3. **Rules** — first matching rule from `~/.otto/routing.toml`.
     /// 4. (Phase 6 will insert Heuristic here.)
     /// 5. **Default** — active provider + active model.
     pub fn pick(
@@ -1064,19 +1064,19 @@ let r = Router::pick(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent-host --lib router::router`
+Run: `cargo test -p otto-host --lib router::router`
 Expected: all router tests PASS, including the new 5 Phase-5 tests.
 
 - [ ] **Step 5: Lint and format**
 
 Run: `rustup run stable cargo fmt --all`
-Run: `rustup run stable cargo clippy -p savvagent-host --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto-host --all-targets -- -D warnings`
 Expected: clean.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/router.rs
+git add crates/otto-host/src/router/router.rs
 git commit -m "feat(host): Router::pick Layer 3 — user routing rules (Phase 5)"
 ```
 
@@ -1085,19 +1085,19 @@ git commit -m "feat(host): Router::pick Layer 3 — user routing rules (Phase 5)
 ## Task 4: `Host` integration — fields, methods, `run_turn_inner` wire-up
 
 **Files:**
-- Modify: `crates/savvagent-host/src/config.rs`
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/config.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 Adds the host plumbing: config field for the file path, host field for the live rules, two new methods, and the actual `Router::pick` call site update in `run_turn_inner`.
 
 - [ ] **Step 1: Add `HostConfig::routing_rules_path`**
 
-In `crates/savvagent-host/src/config.rs`, add a field to `HostConfig` (right after `force_disconnect_grace_ms`):
+In `crates/otto-host/src/config.rs`, add a field to `HostConfig` (right after `force_disconnect_grace_ms`):
 
 ```rust
     /// Filesystem path to the user's `routing.toml`. `None` means
     /// "don't load any rules; treat as `RoutingRules::empty()`." The
-    /// TUI sets this to `~/.savvagent/routing.toml`; tests and the
+    /// TUI sets this to `~/.otto/routing.toml`; tests and the
     /// headless example pass `None`.
     pub routing_rules_path: Option<PathBuf>,
 ```
@@ -1116,10 +1116,10 @@ Add a field-level entry to `impl Debug for HostConfig`:
 
 - [ ] **Step 2: Add the host field and constructor wiring**
 
-In `crates/savvagent-host/src/session.rs`, locate the `pub struct Host { ... }` definition. Add a field alongside the existing `Arc<RwLock<...>>` fields:
+In `crates/otto-host/src/session.rs`, locate the `pub struct Host { ... }` definition. Add a field alongside the existing `Arc<RwLock<...>>` fields:
 
 ```rust
-    /// User-edited routing rules (`~/.savvagent/routing.toml`). Loaded
+    /// User-edited routing rules (`~/.otto/routing.toml`). Loaded
     /// once at `Host::start` and swapped atomically by
     /// `reload_routing_rules`. Snapshotted (cloned) before any `.await`
     /// in `run_turn_inner`, same discipline as `active_provider` etc.
@@ -1132,7 +1132,7 @@ Find the existing constructor — look for a line like `let host = Host { ... };
 
 - [ ] **Step 3: Add the two new methods on `Host`**
 
-In `crates/savvagent-host/src/session.rs`, inside `impl Host { ... }`, add:
+In `crates/otto-host/src/session.rs`, inside `impl Host { ... }`, add:
 
 ```rust
     /// Re-read `routing_rules_path` and atomically swap the in-memory
@@ -1165,7 +1165,7 @@ In `crates/savvagent-host/src/session.rs`, inside `impl Host { ... }`, add:
 
 - [ ] **Step 4: Update `run_turn_inner` to thread the rules into `Router::pick`**
 
-In `crates/savvagent-host/src/session.rs`, find the `Router::pick(...)` call (currently around line 672) and the modality-detection step preceding it. Replace the surrounding block with:
+In `crates/otto-host/src/session.rs`, find the `Router::pick(...)` call (currently around line 672) and the modality-detection step preceding it. Replace the surrounding block with:
 
 ```rust
         // Phase 4: detect modality requirements on the just-built `messages`.
@@ -1219,23 +1219,23 @@ In `crates/savvagent-host/src/session.rs`, find the `Router::pick(...)` call (cu
         };
 ```
 
-(Make sure the `use` block at the top of `session.rs` already imports `ContentBlock`, `Role`. If not, add them — they're in `savvagent_protocol`.)
+(Make sure the `use` block at the top of `session.rs` already imports `ContentBlock`, `Role`. If not, add them — they're in `otto_protocol`.)
 
 - [ ] **Step 5: Run tests to verify nothing regressed**
 
-Run: `cargo test -p savvagent-host`
+Run: `cargo test -p otto-host`
 Expected: all tests PASS (rules path is None in tests; behavior identical to Phase 4).
 
 - [ ] **Step 6: Lint and format**
 
 Run: `rustup run stable cargo fmt --all`
-Run: `rustup run stable cargo clippy -p savvagent-host --all-targets -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto-host --all-targets -- -D warnings`
 Expected: clean.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent-host/src/config.rs crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/config.rs crates/otto-host/src/session.rs
 git commit -m "feat(host): wire routing_rules into Host + Router::pick"
 ```
 
@@ -1244,19 +1244,19 @@ git commit -m "feat(host): wire routing_rules into Host + Router::pick"
 ## Task 5: `Effect` variants + pending-flag drain (host-touching surface)
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/effect.rs`
-- Modify: `crates/savvagent/src/app.rs` (add pending flags + helpers)
-- Modify: `crates/savvagent/src/plugin/effects.rs` (set pending flags)
-- Modify: `crates/savvagent/src/main.rs` (add drain functions; wire into `run_app`)
+- Modify: `crates/otto-plugin/src/effect.rs`
+- Modify: `crates/otto/src/app.rs` (add pending flags + helpers)
+- Modify: `crates/otto/src/plugin/effects.rs` (set pending flags)
+- Modify: `crates/otto/src/main.rs` (add drain functions; wire into `run_app`)
 
-**Important:** `pub async fn apply_effects(app: &mut App, effects: Vec<Effect>)` has no `host_slot` parameter — verified at `crates/savvagent/src/plugin/effects.rs:32`, and the file's own comment at lines 91-93 documents this for `Effect::SetActiveModel`: "`apply_effects` doesn't receive `host_slot`, `project_root`, or `tool_bins`." The canonical pattern is therefore to queue a flag on `App` and have `main.rs::run_app` drain it (see `app.pending_model_change` + `main.rs::apply_pending_model_change` at `main.rs:1138`). Phase 5 mirrors that pattern for routing.
+**Important:** `pub async fn apply_effects(app: &mut App, effects: Vec<Effect>)` has no `host_slot` parameter — verified at `crates/otto/src/plugin/effects.rs:32`, and the file's own comment at lines 91-93 documents this for `Effect::SetActiveModel`: "`apply_effects` doesn't receive `host_slot`, `project_root`, or `tool_bins`." The canonical pattern is therefore to queue a flag on `App` and have `main.rs::run_app` drain it (see `app.pending_model_change` + `main.rs::apply_pending_model_change` at `main.rs:1138`). Phase 5 mirrors that pattern for routing.
 
 - [ ] **Step 1: Add `Effect` variants**
 
-In `crates/savvagent-plugin/src/effect.rs`, inside `pub enum Effect { ... }`, add:
+In `crates/otto-plugin/src/effect.rs`, inside `pub enum Effect { ... }`, add:
 
 ```rust
-    /// Re-read `~/.savvagent/routing.toml` and swap the host's stored
+    /// Re-read `~/.otto/routing.toml` and swap the host's stored
     /// rules. Sets `App::pending_routing_reload` so `main.rs::run_app`
     /// can drain it with host access (see `Effect::SetActiveModel` for
     /// the canonical pattern this mirrors).
@@ -1281,12 +1281,12 @@ Add unit tests at the bottom of the same file's `mod tests`:
     }
 ```
 
-Run: `cargo test -p savvagent-plugin --lib effect::tests`
+Run: `cargo test -p otto-plugin --lib effect::tests`
 Expected: PASS.
 
 - [ ] **Step 2: Add the pending flags + helpers on `App`**
 
-In `crates/savvagent/src/app.rs`, find the `PendingModelChange` definition (line 137) and add a unit-struct sibling immediately below it:
+In `crates/otto/src/app.rs`, find the `PendingModelChange` definition (line 137) and add a unit-struct sibling immediately below it:
 
 ```rust
 /// Queued routing-rules action emitted by `Effect::ReloadRoutingRules`
@@ -1360,7 +1360,7 @@ Add a tiny unit test in the same file's `#[cfg(test)] mod tests` near other `Ent
 
 - [ ] **Step 3: Implement the effect handlers in `apply_effects` (flag-set only)**
 
-In `crates/savvagent/src/plugin/effects.rs`, locate the `match eff { ... }` block in `apply_one` (around line 48). Add two arms — both simply set the pending flag, matching the `Effect::SetActiveModel` pattern at lines 88-94:
+In `crates/otto/src/plugin/effects.rs`, locate the `match eff { ... }` block in `apply_one` (around line 48). Add two arms — both simply set the pending flag, matching the `Effect::SetActiveModel` pattern at lines 88-94:
 
 ```rust
         Effect::ReloadRoutingRules => {
@@ -1375,11 +1375,11 @@ Verify `PendingRoutingAction` is reachable via `crate::app::PendingRoutingAction
 
 - [ ] **Step 4: Add the drain functions in `main.rs`**
 
-In `crates/savvagent/src/main.rs`, immediately after `apply_pending_model_change` (around line 1138), add the two drain functions:
+In `crates/otto/src/main.rs`, immediately after `apply_pending_model_change` (around line 1138), add the two drain functions:
 
 ```rust
 /// Drain `app.pending_routing_reload` (set by `Effect::ReloadRoutingRules`)
-/// and reload `~/.savvagent/routing.toml` via the host. No-op when nothing
+/// and reload `~/.otto/routing.toml` via the host. No-op when nothing
 /// is queued. Mirrors `apply_pending_model_change`'s drain pattern.
 async fn apply_pending_routing_reload(app: &mut App, host_slot: &HostSlot) {
     if app.pending_routing_reload.take().is_none() {
@@ -1419,12 +1419,12 @@ async fn apply_pending_routing_show(app: &mut App, host_slot: &HostSlot) {
 
 /// Render `/route show` output as plain styled notes onto `App`. Pure
 /// function over the snapshot — no further host access required.
-fn render_routing_show(app: &mut App, rules: &savvagent_host::RoutingRules) {
+fn render_routing_show(app: &mut App, rules: &otto_host::RoutingRules) {
     if rules.rules.is_empty() {
         app.push_note(rust_i18n::t!("routing.show-no-rules").to_string());
     } else {
         app.push_note(rust_i18n::t!("routing.show-header").to_string());
-        let connected: Vec<savvagent_protocol::ProviderId> =
+        let connected: Vec<otto_protocol::ProviderId> =
             app.connected_provider_ids().cloned().collect();
         for (i, rule) in rules.rules.iter().enumerate() {
             let idx = i + 1;
@@ -1474,7 +1474,7 @@ fn render_routing_show(app: &mut App, rules: &savvagent_host::RoutingRules) {
     }
 }
 
-fn format_rule_match(m: &savvagent_host::RuleMatch) -> String {
+fn format_rule_match(m: &otto_host::RuleMatch) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(b) = m.has_image {
         parts.push(format!("has_image={b}"));
@@ -1502,7 +1502,7 @@ fn format_rule_match(m: &savvagent_host::RuleMatch) -> String {
 }
 ```
 
-Also add an `App::connected_provider_ids` helper. In `crates/savvagent/src/app.rs`, near `most_recent_routing_decision` (added in Step 2), add:
+Also add an `App::connected_provider_ids` helper. In `crates/otto/src/app.rs`, near `most_recent_routing_decision` (added in Step 2), add:
 
 ```rust
     /// Owning vec of provider ids currently in the host pool. Owning
@@ -1512,10 +1512,10 @@ Also add an `App::connected_provider_ids` helper. In `crates/savvagent/src/app.r
     /// (effects.rs:95-149). The real field name in this codebase is
     /// `registered_providers: HashMap<String, Box<dyn ProviderClient>>`
     /// (`app.rs:421`); the keys are the stable provider-id strings.
-    pub fn connected_provider_ids(&self) -> Vec<savvagent_protocol::ProviderId> {
+    pub fn connected_provider_ids(&self) -> Vec<otto_protocol::ProviderId> {
         self.registered_providers
             .keys()
-            .filter_map(|s| savvagent_protocol::ProviderId::new(s).ok())
+            .filter_map(|s| otto_protocol::ProviderId::new(s).ok())
             .collect()
     }
 ```
@@ -1523,12 +1523,12 @@ Also add an `App::connected_provider_ids` helper. In `crates/savvagent/src/app.r
 Update the call site in `render_routing_show` to consume the vec directly (instead of `.cloned().collect()`):
 
 ```rust
-        let connected: Vec<savvagent_protocol::ProviderId> = app.connected_provider_ids();
+        let connected: Vec<otto_protocol::ProviderId> = app.connected_provider_ids();
 ```
 
 - [ ] **Step 5: Wire the drains into `run_app`**
 
-In `crates/savvagent/src/main.rs`, locate every site that calls `apply_pending_model_change(app, &host_slot, ...)` (three call sites confirmed: ~line 687, ~line 2287, ~line 2432). Immediately after each call, add the two new drain calls:
+In `crates/otto/src/main.rs`, locate every site that calls `apply_pending_model_change(app, &host_slot, ...)` (three call sites confirmed: ~line 687, ~line 2287, ~line 2432). Immediately after each call, add the two new drain calls:
 
 ```rust
                 apply_pending_routing_reload(app, &host_slot).await;
@@ -1539,8 +1539,8 @@ Adapt the variable name (`host_slot` vs `&host_slot`) to whatever the surroundin
 
 - [ ] **Step 6: Run tests**
 
-Run: `cargo test -p savvagent-plugin --lib effect`
-Run: `cargo test -p savvagent --lib`
+Run: `cargo test -p otto-plugin --lib effect`
+Run: `cargo test -p otto --lib`
 Expected: PASS. The integration test in Task 8 exercises the host machinery directly; the App/plugin pieces here are validated by unit tests + the manual smoke test in the final verification block.
 
 - [ ] **Step 7: Lint and format**
@@ -1552,7 +1552,7 @@ Expected: clean.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/effect.rs crates/savvagent/src/app.rs crates/savvagent/src/plugin/effects.rs crates/savvagent/src/main.rs
+git add crates/otto-plugin/src/effect.rs crates/otto/src/app.rs crates/otto/src/plugin/effects.rs crates/otto/src/main.rs
 git commit -m "feat(tui): pending-flag drain for routing reload/show effects"
 ```
 
@@ -1561,18 +1561,18 @@ git commit -m "feat(tui): pending-flag drain for routing reload/show effects"
 ## Task 6: `/route` plugin
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/route/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`
-- Modify: `crates/savvagent/src/main.rs` (register the plugin in the built-in set)
+- Create: `crates/otto/src/plugin/builtin/route/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs`
+- Modify: `crates/otto/src/main.rs` (register the plugin in the built-in set)
 
 The plugin owns the `/route` slash registration and routes `reload` / `show` subcommands to the two new effects.
 
 - [ ] **Step 1: Write the plugin module + tests**
 
-Create `crates/savvagent/src/plugin/builtin/route/mod.rs`:
+Create `crates/otto/src/plugin/builtin/route/mod.rs`:
 
 ```rust
-//! `internal:route` — manage user routing rules from `~/.savvagent/routing.toml`.
+//! `internal:route` — manage user routing rules from `~/.otto/routing.toml`.
 //!
 //! Two subcommands:
 //! - `/route reload` → `Effect::ReloadRoutingRules`
@@ -1580,7 +1580,7 @@ Create `crates/savvagent/src/plugin/builtin/route/mod.rs`:
 //! - `/route` (bare) → same as `show` (parity with `/sandbox` no-args = status).
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Contributions, Effect, Manifest, Plugin, PluginError, PluginId, PluginKind, SlashSpec,
     StyledLine,
 };
@@ -1636,7 +1636,7 @@ impl Plugin for RoutePlugin {
             other => {
                 let msg = rust_i18n::t!("routing.route-usage").to_string();
                 // `StyledLine::plain` is the only public constructor in
-                // savvagent-plugin/src/styled.rs; the muted styling for
+                // otto-plugin/src/styled.rs; the muted styling for
                 // notes is applied by App::push_styled_note's renderer.
                 Ok(vec![Effect::PushNote {
                     line: StyledLine::plain(format!("{msg} (got `{other}`)")),
@@ -1681,11 +1681,11 @@ mod tests {
 }
 ```
 
-Verified: `StyledLine::plain` is the only public constructor in `crates/savvagent-plugin/src/styled.rs`. Muted styling for notes is applied by `App::push_styled_note`'s renderer, not by a separate constructor.
+Verified: `StyledLine::plain` is the only public constructor in `crates/otto-plugin/src/styled.rs`. Muted styling for notes is applied by `App::push_styled_note`'s renderer, not by a separate constructor.
 
 - [ ] **Step 2: Register the module in the builtin index**
 
-In `crates/savvagent/src/plugin/builtin/mod.rs`, find the `mod connect;` / `mod save;` / etc. block and add:
+In `crates/otto/src/plugin/builtin/mod.rs`, find the `mod connect;` / `mod save;` / etc. block and add:
 
 ```rust
 pub mod route;
@@ -1700,7 +1700,7 @@ plugins.push(Box::new(crate::plugin::builtin::RoutePlugin::new()));
 
 - [ ] **Step 3: Run tests**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::route`
+Run: `cargo test -p otto --lib plugin::builtin::route`
 Expected: 4 tests PASS.
 
 - [ ] **Step 4: Lint and format**
@@ -1712,7 +1712,7 @@ Expected: clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/route crates/savvagent/src/plugin/builtin/mod.rs
+git add crates/otto/src/plugin/builtin/route crates/otto/src/plugin/builtin/mod.rs
 git commit -m "feat(tui): /route reload + /route show plugin (Phase 5)"
 ```
 
@@ -1721,36 +1721,36 @@ git commit -m "feat(tui): /route reload + /route show plugin (Phase 5)"
 ## Task 7: TUI startup wiring — config path + model precedence + i18n
 
 **Files:**
-- Create: `crates/savvagent/src/routing_pref.rs`
-- Modify: `crates/savvagent/src/main.rs`
-- Modify: `crates/savvagent/locales/en.toml`
-- Modify: `crates/savvagent/locales/es.toml`
-- Modify: `crates/savvagent/locales/pt.toml`
-- Modify: `crates/savvagent/locales/hi.toml`
+- Create: `crates/otto/src/routing_pref.rs`
+- Modify: `crates/otto/src/main.rs`
+- Modify: `crates/otto/locales/en.toml`
+- Modify: `crates/otto/locales/es.toml`
+- Modify: `crates/otto/locales/pt.toml`
+- Modify: `crates/otto/locales/hi.toml`
 
-Wires `HostConfig::routing_rules_path` to `~/.savvagent/routing.toml`, inserts `routing.toml#default` into the two model-resolution sites at the bottom of the precedence chain, and ships the i18n strings.
+Wires `HostConfig::routing_rules_path` to `~/.otto/routing.toml`, inserts `routing.toml#default` into the two model-resolution sites at the bottom of the precedence chain, and ships the i18n strings.
 
 - [ ] **Step 1: Write the `routing_pref` helper + tests**
 
-Create `crates/savvagent/src/routing_pref.rs`:
+Create `crates/otto/src/routing_pref.rs`:
 
 ```rust
-//! TUI-side helper that resolves `~/.savvagent/routing.toml` and reads
+//! TUI-side helper that resolves `~/.otto/routing.toml` and reads
 //! just the `default = "..."` field for the model-resolution chain.
 //!
-//! The full `RoutingRules` parser lives in `savvagent-host` and runs at
+//! The full `RoutingRules` parser lives in `otto-host` and runs at
 //! `Host::start`; this helper exists so `main.rs` can consult the
 //! file's `default` during startup without depending on the full type.
 
 use std::path::PathBuf;
 
-use savvagent_host::{DefaultPick, RoutingRules};
+use otto_host::{DefaultPick, RoutingRules};
 
 /// Where the user's `routing.toml` lives, or `None` when no `$HOME`.
 pub fn routing_toml_path() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     let home = PathBuf::from(home);
-    Some(home.join(".savvagent").join("routing.toml"))
+    Some(home.join(".otto").join("routing.toml"))
 }
 
 /// Load `routing.toml`'s `default` field. Missing file → `None`. Parse
@@ -1779,9 +1779,9 @@ mod tests {
         // covered by RoutingRules::load_from_path's own tests.
         let original_home = std::env::var_os("HOME");
         // SAFETY: single-threaded test
-        unsafe { std::env::set_var("HOME", "/tmp/savvagent-test-home"); }
+        unsafe { std::env::set_var("HOME", "/tmp/otto-test-home"); }
         let p = routing_toml_path().expect("HOME set");
-        assert!(p.ends_with(".savvagent/routing.toml"));
+        assert!(p.ends_with(".otto/routing.toml"));
         // Restore.
         match original_home {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
@@ -1791,27 +1791,27 @@ mod tests {
 }
 ```
 
-Add a `mod routing_pref;` declaration in `crates/savvagent/src/main.rs` (near the existing `mod models_pref;`).
+Add a `mod routing_pref;` declaration in `crates/otto/src/main.rs` (near the existing `mod models_pref;`).
 
 - [ ] **Step 2: Populate `HostConfig::routing_rules_path` at startup**
 
-In `crates/savvagent/src/main.rs`, find where `HostConfig::new(...)` is built (look for `.with_project_root(...)` chains). Add:
+In `crates/otto/src/main.rs`, find where `HostConfig::new(...)` is built (look for `.with_project_root(...)` chains). Add:
 
 ```rust
         host_config.routing_rules_path = crate::routing_pref::routing_toml_path();
 ```
 
-right after the `HostConfig` has been constructed. Use the field directly (no `with_*` builder needed because this is internal startup wiring; if you prefer a builder, add `HostConfig::with_routing_rules_path` in `crates/savvagent-host/src/config.rs` mirroring the existing `with_*` helpers).
+right after the `HostConfig` has been constructed. Use the field directly (no `with_*` builder needed because this is internal startup wiring; if you prefer a builder, add `HostConfig::with_routing_rules_path` in `crates/otto-host/src/config.rs` mirroring the existing `with_*` helpers).
 
 - [ ] **Step 3: Insert `routing.toml#default` into `resolve_initial_model_for`**
 
-In `crates/savvagent/src/main.rs`, replace `resolve_initial_model_for` (around line 1258) with:
+In `crates/otto/src/main.rs`, replace `resolve_initial_model_for` (around line 1258) with:
 
 ```rust
 /// Resolve the effective model id for `provider_id`. Precedence (highest first):
-///   SAVVAGENT_MODEL env > ~/.savvagent/models.toml > routing.toml#default > spec.default_model.
+///   OTTO_MODEL env > ~/.otto/models.toml > routing.toml#default > spec.default_model.
 fn resolve_initial_model_for(spec: &ProviderSpec) -> String {
-    if let Ok(env_model) = std::env::var("SAVVAGENT_MODEL")
+    if let Ok(env_model) = std::env::var("OTTO_MODEL")
         && !env_model.is_empty()
     {
         return env_model;
@@ -1831,7 +1831,7 @@ fn resolve_initial_model_for(spec: &ProviderSpec) -> String {
 
 - [ ] **Step 4: Insert `routing.toml#default` into the multi-provider startup chain**
 
-In `crates/savvagent/src/main.rs`, locate the block around line 432-447 (`let model = if let Some(m) = resolved_model { ... } else { ... }`). Update the `else` branch to consult `routing_pref` between `models.toml` and `default_model_id`:
+In `crates/otto/src/main.rs`, locate the block around line 432-447 (`let model = if let Some(m) = resolved_model { ... } else { ... }`). Update the `else` branch to consult `routing_pref` between `models.toml` and `default_model_id`:
 
 ```rust
             let model = if let Some(m) = resolved_model {
@@ -1855,7 +1855,7 @@ In `crates/savvagent/src/main.rs`, locate the block around line 432-447 (`let mo
 
 - [ ] **Step 5: Add i18n strings to `en.toml`**
 
-In `crates/savvagent/locales/en.toml`, locate the existing `slash.*` block (around line 17). Add `route-summary` there:
+In `crates/otto/locales/en.toml`, locate the existing `slash.*` block (around line 17). Add `route-summary` there:
 
 ```toml
 route-summary                 = "Manage routing rules (reload | show)"
@@ -1864,7 +1864,7 @@ route-summary                 = "Manage routing rules (reload | show)"
 Locate the `plugin.*` block and add:
 
 ```toml
-route-description             = "User routing rules from ~/.savvagent/routing.toml"
+route-description             = "User routing rules from ~/.otto/routing.toml"
 ```
 
 Add a brand-new top-level section near the end of the file:
@@ -1876,7 +1876,7 @@ reload-failed           = "Couldn't reload routing.toml: %{err}"
 show-header             = "Active routing rules (in order):"
 show-rule-line          = "[%{index}] %{name} — match: %{match} → %{provider}/%{model}"
 show-rule-skipped       = "[%{index}] %{name} — match: %{match} → %{provider}/%{model}  (skipped: provider not connected)"
-show-no-rules           = "No routing rules. Edit ~/.savvagent/routing.toml and run /route reload."
+show-no-rules           = "No routing rules. Edit ~/.otto/routing.toml and run /route reload."
 show-default            = "Default: %{provider}/%{model}"
 show-no-default         = "Default: (using /model selection)"
 show-heuristics-pending = "heuristics: enabled — classifier ships in a future release"
@@ -1900,8 +1900,8 @@ Mirror the new `slash.route-summary` and `plugin.route-description` entries in t
 
 - [ ] **Step 7: Run tests**
 
-Run: `cargo test -p savvagent --lib routing_pref`
-Run: `cargo test -p savvagent --lib`
+Run: `cargo test -p otto --lib routing_pref`
+Run: `cargo test -p otto --lib`
 Expected: PASS.
 
 - [ ] **Step 8: Lint and format**
@@ -1913,7 +1913,7 @@ Expected: clean.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/savvagent/src/routing_pref.rs crates/savvagent/src/main.rs crates/savvagent/locales/
+git add crates/otto/src/routing_pref.rs crates/otto/src/main.rs crates/otto/locales/
 git commit -m "feat(tui): routing.toml#default precedence + /route i18n strings"
 ```
 
@@ -1922,7 +1922,7 @@ git commit -m "feat(tui): routing.toml#default precedence + /route i18n strings"
 ## Task 8: Integration test — end-to-end Phase 5 scenarios
 
 **Files:**
-- Create: `crates/savvagent-host/tests/route_rules_e2e.rs`
+- Create: `crates/otto-host/tests/route_rules_e2e.rs`
 
 Three scenarios, each in its own `#[tokio::test]`:
 
@@ -1932,7 +1932,7 @@ Three scenarios, each in its own `#[tokio::test]`:
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `crates/savvagent-host/tests/route_rules_e2e.rs`:
+Create `crates/otto-host/tests/route_rules_e2e.rs`:
 
 ```rust
 //! End-to-end Phase 5 routing-rules integration tests.
@@ -1941,13 +1941,13 @@ use std::io::Write;
 use std::sync::Arc;
 use std::time::Duration;
 
-use savvagent_host::{
+use otto_host::{
     DefaultPick, Host, HostConfig, ProviderEndpoint, ProviderRegistration, RoutingRule, RoutingRules,
     RoutingReason, RuleMatch, RuleSignals, StartupConnectPolicy, TurnEvent,
     capabilities::{CostTier, ModelCapabilities, ProviderCapabilities},
 };
-use savvagent_mcp::ProviderClient;
-use savvagent_protocol::{
+use otto_mcp::ProviderClient;
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ContentBlock, ListModelsResponse, Message, ProviderError,
     ProviderId, Role, StreamEvent,
 };
@@ -2174,14 +2174,14 @@ Per [[feedback_test_locale_isolation]] in user memory: these tests don't touch `
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent-host --test route_rules_e2e`
+Run: `cargo test -p otto-host --test route_rules_e2e`
 Expected: compile error or runtime failure — the tests reference the new `routing_rules_path` field + `reload_routing_rules` method added in Task 4.
 
 - [ ] **Step 3: Make tests pass**
 
-Most failures should resolve once Task 4 has landed. If `Host::run_turn_streaming` is the wrong entrypoint (e.g. the streaming version is named differently), search `crates/savvagent-host/src/session.rs` for `pub async fn run_turn_streaming` and adjust. If a stub provider needs additional trait methods, add them as `unreachable!()`.
+Most failures should resolve once Task 4 has landed. If `Host::run_turn_streaming` is the wrong entrypoint (e.g. the streaming version is named differently), search `crates/otto-host/src/session.rs` for `pub async fn run_turn_streaming` and adjust. If a stub provider needs additional trait methods, add them as `unreachable!()`.
 
-Re-run: `cargo test -p savvagent-host --test route_rules_e2e`
+Re-run: `cargo test -p otto-host --test route_rules_e2e`
 Expected: 3 tests PASS.
 
 - [ ] **Step 4: Lint and format**
@@ -2193,7 +2193,7 @@ Expected: clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/route_rules_e2e.rs
+git add crates/otto-host/tests/route_rules_e2e.rs
 git commit -m "test(host): end-to-end Phase 5 routing rules (3 scenarios)"
 ```
 
@@ -2224,10 +2224,10 @@ In `CHANGELOG.md`, add at the top (under `# Changelog` / before `## 0.18.0`). Us
 
 ### Added
 
-- **User-edited routing rules** (`~/.savvagent/routing.toml`). Routes a turn to a specific `provider/model` based on per-turn predicates (`has_image`, `keywords`, `max_input_chars`, `min_input_chars`). Layer 3 of the multi-provider router, between modality redirects and the default model.
+- **User-edited routing rules** (`~/.otto/routing.toml`). Routes a turn to a specific `provider/model` based on per-turn predicates (`has_image`, `keywords`, `max_input_chars`, `min_input_chars`). Layer 3 of the multi-provider router, between modality redirects and the default model.
 - **`/route show`** prints the active rules, the default, the heuristics-enabled state (Phase 6 stub), and the most recent routing decision.
 - **`/route reload`** re-reads `routing.toml` without restarting the TUI. Parse errors keep the prior rules in place and surface a styled note.
-- **`routing.toml#default`** is consulted between `~/.savvagent/models.toml` and the provider's hard-coded default during model resolution. Env (`SAVVAGENT_MODEL`) and `models.toml` still take precedence; routing.toml's default replaces the provider's built-in fallback when neither higher layer applies.
+- **`routing.toml#default`** is consulted between `~/.otto/models.toml` and the provider's hard-coded default during model resolution. Env (`OTTO_MODEL`) and `models.toml` still take precedence; routing.toml's default replaces the provider's built-in fallback when neither higher layer applies.
 
 ### Changed
 
@@ -2242,7 +2242,7 @@ In `README.md`, find the existing routing / modality section. Append:
 ```markdown
 ### Routing rules
 
-Edit `~/.savvagent/routing.toml` to route turns to specific provider/model combinations based on the message. Example:
+Edit `~/.otto/routing.toml` to route turns to specific provider/model combinations based on the message. Example:
 
 ```toml
 version = 1
@@ -2294,12 +2294,12 @@ Run: `rustup run stable cargo clippy --workspace --all-targets -- -D warnings`
 - [ ] **Smoke-test the slash commands manually**
 
 ```bash
-cargo run -p savvagent
+cargo run -p otto
 ```
 
 In the TUI:
-1. `/route show` with no `~/.savvagent/routing.toml` → "No routing rules…" + default line.
-2. Create a `~/.savvagent/routing.toml` with a keyword rule.
+1. `/route show` with no `~/.otto/routing.toml` → "No routing rules…" + default line.
+2. Create a `~/.otto/routing.toml` with a keyword rule.
 3. `/route reload` → "Reloaded routing.toml — 1 rule(s) active."
 4. `/route show` → rule listed; "No turns this session yet."
 5. Send a turn that matches the keyword → assistant entry's badge shows `Rule(<name>)`.

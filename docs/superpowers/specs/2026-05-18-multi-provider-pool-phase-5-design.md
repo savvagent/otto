@@ -23,15 +23,15 @@ The parent spec's "Routing config" section defines the user-facing TOML shape; t
 
 Every choice made without asking lives here. The developer's review of this spec is the review of these assumptions.
 
-The following are **verbatim from the parent spec** and are listed only so reviewers can spot drift quickly; they're not open questions: config file is `~/.savvagent/routing.toml`; predicates are `has_image` / `has_pdf` / `has_audio` / `keywords` / `max_input_chars` / `min_input_chars` composing with AND; rules evaluate top-to-bottom with first-match-wins; `use = "provider/model"` is the only `use` form; `[[rule]]` is the only array-of-tables; per-conversation overrides remain out of scope; `~/.savvagent/state.toml` is untouched. Phase 5 does not adjust any of these.
+The following are **verbatim from the parent spec** and are listed only so reviewers can spot drift quickly; they're not open questions: config file is `~/.otto/routing.toml`; predicates are `has_image` / `has_pdf` / `has_audio` / `keywords` / `max_input_chars` / `min_input_chars` composing with AND; rules evaluate top-to-bottom with first-match-wins; `use = "provider/model"` is the only `use` form; `[[rule]]` is the only array-of-tables; per-conversation overrides remain out of scope; `~/.otto/state.toml` is untouched. Phase 5 does not adjust any of these.
 
 The substantive choices the developer is being asked to confirm:
 
-1. **Loader and module live in `savvagent-host`.** Same crate as `Router::pick`. `RoutingRules` is loaded once by `Host::start` from `HostConfig::routing_rules_path`, then stored on `Host` behind a single `Arc<RwLock<RoutingRules>>` field (parallels how `Host` owns `pool`, `active_provider`, `current_model` today). `/route reload` mutates the same handle. *Why not the TUI:* the router itself, which consumes the rules, is host-local; putting the loader there avoids a parameter-passing dance and matches where `PermissionPolicy` and `SandboxConfig` live.
+1. **Loader and module live in `otto-host`.** Same crate as `Router::pick`. `RoutingRules` is loaded once by `Host::start` from `HostConfig::routing_rules_path`, then stored on `Host` behind a single `Arc<RwLock<RoutingRules>>` field (parallels how `Host` owns `pool`, `active_provider`, `current_model` today). `/route reload` mutates the same handle. *Why not the TUI:* the router itself, which consumes the rules, is host-local; putting the loader there avoids a parameter-passing dance and matches where `PermissionPolicy` and `SandboxConfig` live.
 2. **`HostConfig::routing_rules_path: Option<PathBuf>`.** `None` means "don't load any rules; treat as empty." Mirrors `HostConfig::policy` and `HostConfig::sandbox`'s "None = build a sensible default" convention.
 3. **Schema version field, like sandbox.toml.** `version = 1` at the top of the file; loader rejects unknown future versions with a styled warning + empty fallback, identical to `SandboxConfig`'s pattern. Going schema-first now is cheaper than retro-fitting predicates in Phase 6+.
-4. **`default` field precedence — slotted at the bottom of the chain.** Phase 5 inserts `routing.toml#default` between `~/.savvagent/models.toml` and the provider's hard-coded `default_model`. New full order:
-   `SAVVAGENT_MODEL` env → `~/.savvagent/models.toml` → `routing.toml#default` → `provider.default_model`.
+4. **`default` field precedence — slotted at the bottom of the chain.** Phase 5 inserts `routing.toml#default` between `~/.otto/models.toml` and the provider's hard-coded `default_model`. New full order:
+   `OTTO_MODEL` env → `~/.otto/models.toml` → `routing.toml#default` → `provider.default_model`.
    *Rationale:* `models.toml` is what the user just clicked through in `/model` — the most-recent explicit interactive pick should win. `routing.toml#default` is a hand-edited global preference that replaces the provider's hard-coded fallback. Env still wins to keep CLI overrides and tests cheap. This is the **conservative** choice the reviewer asked for; if the developer prefers routing.toml to outrank models.toml, swap the middle two terms — code change is one line in `legacy_model.rs`.
 5. **`heuristics = true` is parsed and stored but not consumed yet.** Phase 6 owns the classifier. Phase 5 records the field on `RoutingRules` so a typo'd flag doesn't silently disappear. Phase 5's `/route show` prints "heuristics: enabled — classifier ships in a future release" so users who toggle it now aren't surprised.
 6. **A rule whose `use` provider is not currently connected is silently skipped** (next rule tried, then Default). Mirrors `Router::pick`'s existing "stale override falls through" behavior. Logged at `info!` level. Alternative (failing the turn or per-turn warning) felt too punitive for a routinely-transient state.
@@ -42,7 +42,7 @@ The substantive choices the developer is being asked to confirm:
 11. **`/route show` sources "last decision" from the TUI's existing transcript entries, NOT from a new `Host` field.** The transcript already carries the routing badge per Phase 3; the plugin's handler in `apply_effects` (which has access to `App::log`) scans backwards for the most recent badge entry. *Why this matters:* avoids adding `Host::last_routing_decision()` + `Arc<RwLock<Option<RoutingDecision>>>` + a `set_last_routing_decision` call in `run_turn_inner`. This is the YAGNI win the reviewer flagged.
 12. **`RoutingReason::Rule { name: String }`** is the new variant. The transcript badge renders **`Rule(<name>)`** (parens-and-bare, no quotes — matches Phase 4's `Modality(image)` Display impl).
 13. **Parse-error recovery on `/route reload` keeps the prior rules (deliberate refinement vs parent spec).** The parent spec says "parse errors fall back to no user rules + styled note," which is the right behavior at *startup* (no prior rules to keep). For `/route reload`, dropping rules on a typo would mean a single bad keystroke disables a 30-rule config until the user fixes the file — punitive. Phase 5 keeps the in-memory rules and emits a styled error note so the user can re-edit. Startup behavior is unchanged: file-absent or parse-error → `RoutingRules::empty()`.
-14. **Effect surface is two new variants** (`Effect::ReloadRoutingRules`, `Effect::ShowRoutingRules`) because the plugin's `handle_slash` returns `Vec<Effect>` and has no `&Host` access (verified against `crates/savvagent-plugin/src/plugin.rs`). Both effects are handled in `apply_effects` (which does have host access) the same way `Effect::SaveTranscript` is handled today. *Why not one Effect with a SubCommand enum:* matches existing `Effect::ClearLog`, `Effect::Quit`, `Effect::SaveTranscript` granularity — one effect = one named operation. Adding a subcommand enum here would be the only place in the system using that pattern.
+14. **Effect surface is two new variants** (`Effect::ReloadRoutingRules`, `Effect::ShowRoutingRules`) because the plugin's `handle_slash` returns `Vec<Effect>` and has no `&Host` access (verified against `crates/otto-plugin/src/plugin.rs`). Both effects are handled in `apply_effects` (which does have host access) the same way `Effect::SaveTranscript` is handled today. *Why not one Effect with a SubCommand enum:* matches existing `Effect::ClearLog`, `Effect::Quit`, `Effect::SaveTranscript` granularity — one effect = one named operation. Adding a subcommand enum here would be the only place in the system using that pattern.
 15. **Loader is straight sync I/O** (`std::fs::read_to_string`) at startup AND inside `/route reload`'s async handler. No `tokio::task::spawn_blocking`. Routing.toml is small (<8 KB) and the loader runs at most once per `/route reload` invocation.
 16. **i18n strings** (`slash.route-summary`, the per-line labels, error messages) are added to en.toml as canonical; es/pt/hi get TODO placeholders if Phase 5 ships before translation. Past phases have done this; rust_i18n falls back to en automatically.
 17. **Release version: `release(0.19.0)`** in-tree (per-phase scaffolding pattern); the actual tagged release rolls up Phases 1-N once the initiative is done — per [[feedback_phase_release_rollup.md]] and [[project_multi_provider_release.md]].
@@ -51,34 +51,34 @@ The substantive choices the developer is being asked to confirm:
 
 ## Goal & Success Criteria
 
-Ship Layer 3 of the parent spec's router stack: user-edited rules in `~/.savvagent/routing.toml` that map per-turn predicates (`has_image`, `keywords`, `max_input_chars` / `min_input_chars`, etc.) to specific `provider/model` picks, with a `/route reload` slash command to re-read the file at runtime and `/route show` to inspect the active rule set. Layer 3 sits between Modality (Phase 4) and Default; `@`-override and Modality still win when they apply.
+Ship Layer 3 of the parent spec's router stack: user-edited rules in `~/.otto/routing.toml` that map per-turn predicates (`has_image`, `keywords`, `max_input_chars` / `min_input_chars`, etc.) to specific `provider/model` picks, with a `/route reload` slash command to re-read the file at runtime and `/route show` to inspect the active rule set. Layer 3 sits between Modality (Phase 4) and Default; `@`-override and Modality still win when they apply.
 
 Measurable success criteria:
 
 1. With a routing.toml whose first rule matches `keywords = ["refactor"]` and `use = "anthropic/claude-opus-4-7"`, a turn whose user message contains "refactor this function" routes to `anthropic/claude-opus-4-7` with the transcript badge rendering `Rule(deep-reasoning)` (or whatever the rule's name field is), even when the active provider is Gemini and modality/override don't apply.
 2. `/route show` lists every parsed rule, marks rules whose target provider isn't connected as `[skipped: provider not connected]`, and prints the active `default` plus the last `RoutingDecision` (if any). Output is locale-aware and themed (Muted for skipped, Default for active).
-3. `/route reload` re-reads `~/.savvagent/routing.toml`, swaps the host's stored `RoutingRules`, and prints a one-line styled note with the rule count. Parse errors fall back to "no user rules" + a styled warning naming the line and column (TOML parser's native error), and the prior rule set is *not* discarded — same recovery pattern as `models.toml`'s `model-pref-save-failed`.
+3. `/route reload` re-reads `~/.otto/routing.toml`, swaps the host's stored `RoutingRules`, and prints a one-line styled note with the rule count. Parse errors fall back to "no user rules" + a styled warning naming the line and column (TOML parser's native error), and the prior rule set is *not* discarded — same recovery pattern as `models.toml`'s `model-pref-save-failed`.
 4. A turn while `/route reload` is running cannot observe a partial rule set: the rule list swap is atomic at the `Arc<RwLock<RoutingRules>>` boundary. (Verified by a tokio test that runs `Router::pick` in a tight loop against an in-memory `Host` while another task calls `Host::reload_routing_rules` repeatedly; both succeed without panics.)
-5. Workspace + per-crate `cargo test --workspace` is green, including the new `crates/savvagent-host/src/router/rules.rs` unit tests, a new `crates/savvagent-host/tests/route_rules_e2e.rs` integration test, and the `/route` plugin's test module.
+5. Workspace + per-crate `cargo test --workspace` is green, including the new `crates/otto-host/src/router/rules.rs` unit tests, a new `crates/otto-host/tests/route_rules_e2e.rs` integration test, and the `/route` plugin's test module.
 6. README and CHANGELOG updated in the version-bump commit; `release(0.19.0)` commit message follows the project's existing `release(0.X.0): <one-line>` convention.
 
 ## Scope
 
 ### In
 
-- New `crates/savvagent-host/src/router/rules.rs` module: `RoutingRules` parser + evaluator, `RuleMatch` predicate type, `RoutingRulesError`.
+- New `crates/otto-host/src/router/rules.rs` module: `RoutingRules` parser + evaluator, `RuleMatch` predicate type, `RoutingRulesError`.
 - Loader: `RoutingRules::load_from_path(&Path)` and `RoutingRules::empty()`; both sync.
 - New `HostConfig::routing_rules_path: Option<PathBuf>` field.
 - `Host` gains `routing_rules: Arc<RwLock<RoutingRules>>` and a `Host::reload_routing_rules() -> Result<usize, RoutingRulesError>` method (return value: rule count after reload).
 - `Router::pick` gains a `rules: &RoutingRules` parameter; new layer evaluates rules between Modality and Default. Rule that points at a disconnected provider is silently skipped (next rule tried, then Default).
 - `RoutingReason::Rule { name: String }` variant + Display impl.
 - Wiring in `session.rs` (`run_turn_inner`) to pass the rules snapshot into `Router::pick`.
-- New `crates/savvagent/src/plugin/builtin/route/` plugin: `RoutePlugin`, `handle_slash` with subcommands `reload` and `show`. Registered in the built-in plugin set alongside `SavePlugin`, `ConnectPlugin`, etc.
+- New `crates/otto/src/plugin/builtin/route/` plugin: `RoutePlugin`, `handle_slash` with subcommands `reload` and `show`. Registered in the built-in plugin set alongside `SavePlugin`, `ConnectPlugin`, etc.
 - Two new `Effect` variants — `Effect::ReloadRoutingRules`, `Effect::ShowRoutingRules` — handled by `apply_effects`. (Verified: `Plugin::handle_slash` returns `Vec<Effect>` with no `&Host` access, so the plugin cannot read host state itself and effect granularity matches existing patterns like `Effect::SaveTranscript`.)
 - `legacy_model.rs` resolver gets one new step in its precedence chain to consult `routing.toml`'s `default` field. Existing tests + behavior preserved.
 - i18n catalog updates across en/es/pt/hi (placeholder text for non-English locales if not translated in time).
-- New integration test `crates/savvagent-host/tests/route_rules_e2e.rs`.
-- README user-facing section: a one-paragraph note on `~/.savvagent/routing.toml` with a sample config.
+- New integration test `crates/otto-host/tests/route_rules_e2e.rs`.
+- README user-facing section: a one-paragraph note on `~/.otto/routing.toml` with a sample config.
 - CHANGELOG `## 0.19.0 - 2026-05-18` entry.
 - Workspace version bump to `0.19.0` (mirrored in `[workspace.dependencies]` literals per [[feedback_semver]]).
 
@@ -96,12 +96,12 @@ Measurable success criteria:
 
 ### Data types
 
-`crates/savvagent-host/src/router/rules.rs` — new module. Public types:
+`crates/otto-host/src/router/rules.rs` — new module. Public types:
 
 ```rust
 pub const ROUTING_RULES_SCHEMA_VERSION: u32 = 1;
 
-/// In-memory representation of `~/.savvagent/routing.toml`.
+/// In-memory representation of `~/.otto/routing.toml`.
 #[derive(Debug, Clone, Default)]
 pub struct RoutingRules {
     /// Default `provider/model` from the file's `default = "..."` entry,
@@ -180,7 +180,7 @@ pub struct RuleSignals<'a> {
 }
 ```
 
-### Wire shape (`~/.savvagent/routing.toml`)
+### Wire shape (`~/.otto/routing.toml`)
 
 Matches the parent spec verbatim, plus a `version` field for schema gating:
 
@@ -254,7 +254,7 @@ The snapshot pattern matches the existing `active_provider` / `current_model` re
 
 ### TUI plugin (`internal:route`)
 
-New `crates/savvagent/src/plugin/builtin/route/`:
+New `crates/otto/src/plugin/builtin/route/`:
 
 ```
 route/
@@ -269,16 +269,16 @@ route/
 - `args == ["show"]` → emit `Effect::ShowRoutingRules`.
 - Anything else → `Effect::PushNote` with a usage hint.
 
-Two new effects in `crates/savvagent-plugin/src/effect.rs`:
+Two new effects in `crates/otto-plugin/src/effect.rs`:
 
 ```rust
-/// Re-read ~/.savvagent/routing.toml and swap the host's stored rules.
+/// Re-read ~/.otto/routing.toml and swap the host's stored rules.
 ReloadRoutingRules,
 /// Print the active routing rules and the most recent decision as styled notes.
 ShowRoutingRules,
 ```
 
-Both handled in `crates/savvagent/src/plugin/effects.rs::apply_effects`:
+Both handled in `crates/otto/src/plugin/effects.rs::apply_effects`:
 
 - `ReloadRoutingRules` → `host.reload_routing_rules().await`; append a `PushNote` with the rule count or the parse error (rules left untouched on parse error — assumption #13).
 - `ShowRoutingRules` → read `host.routing_rules_snapshot().await`, scan `App::log` backwards for the most recent assistant entry's routing badge, format as styled lines, push them.
@@ -311,11 +311,11 @@ The decision is *not* stashed on the host. The TUI persists it via the existing 
 
 ### Legacy-model resolver chain (the only change to `legacy_model.rs`)
 
-Today (after Phase 4): `SAVVAGENT_MODEL` env → `~/.savvagent/models.toml` → `provider.default_model`.
+Today (after Phase 4): `OTTO_MODEL` env → `~/.otto/models.toml` → `provider.default_model`.
 
 Phase 5 inserts `routing.toml#default` at the **bottom** of the chain, between `models.toml` and the provider's hard-coded default:
 
-`SAVVAGENT_MODEL` env → `~/.savvagent/models.toml` → `routing.toml#default` → `provider.default_model`.
+`OTTO_MODEL` env → `~/.otto/models.toml` → `routing.toml#default` → `provider.default_model`.
 
 Rationale: `models.toml` reflects the user's last explicit interactive `/model` pick and is the closest thing to a "current per-provider preference." `routing.toml#default` is a hand-edited global preference that replaces the provider's built-in fallback. Env still wins so CLI tests and one-off overrides keep working.
 
@@ -333,7 +333,7 @@ reload-failed    = "Couldn't reload routing.toml: %{err}"
 show-header      = "Active routing rules (in order):"
 show-rule-line   = "[%{index}] %{name} — %{match} → %{provider}/%{model}"
 show-rule-skipped = "[%{index}] %{name} — %{match} → %{provider}/%{model}  (skipped: provider not connected)"
-show-no-rules    = "No routing rules. Edit ~/.savvagent/routing.toml and run /route reload."
+show-no-rules    = "No routing rules. Edit ~/.otto/routing.toml and run /route reload."
 show-default     = "Default: %{provider}/%{model}"
 show-no-default  = "Default: (using /model selection)"
 show-last        = "Last decision: %{provider}/%{model} — %{reason}"
@@ -343,7 +343,7 @@ route-usage      = "Usage: /route [show | reload]"
 
 ## Error handling & edge cases
 
-- **File absent** → `Ok(RoutingRules::empty())`. Treated as the steady state for users who haven't created the file. No log, no warning. The user sees `/route show` print "No routing rules. Edit ~/.savvagent/routing.toml…".
+- **File absent** → `Ok(RoutingRules::empty())`. Treated as the steady state for users who haven't created the file. No log, no warning. The user sees `/route show` print "No routing rules. Edit ~/.otto/routing.toml…".
 - **File parse error** (bad TOML, schema mismatch, bad `use` syntax) → loader returns `Err(RoutingRulesError::*)`. At startup, `Host::start` logs `tracing::warn!` and continues with `RoutingRules::empty()`. At `/route reload`, the plugin renders the parse error as a styled note via `routing.reload-failed`; existing in-memory rules are preserved.
 - **Rule's `use` provider not connected** → rule is skipped during evaluation; `/route show` marks the row with the "skipped" label so the user sees why their rule never fires. No per-turn warning (would be noisy for users with rules that target multi-provider setups they don't always connect).
 - **Rule's `use` model not in provider's `ProviderCapabilities`** → fall back to that provider's `default_model_id()` and log a one-shot warning at load time (re-logged on every `/route reload`). Same fallback shape as `legacy_model.rs` provider-known-model-unknown branch.
@@ -359,7 +359,7 @@ route-usage      = "Usage: /route [show | reload]"
 
 Per [[feedback_streaming_test_permissions]] and [[feedback_test_locale_isolation]], the streaming tests pre-register `Allow` rules and reset locale to "en" inside `HOME_LOCK`.
 
-### Pure unit tests (in `crates/savvagent-host/src/router/rules.rs`)
+### Pure unit tests (in `crates/otto-host/src/router/rules.rs`)
 
 - Empty file → `RoutingRules::empty()`.
 - Schema version 1 parses; version 2 (future) returns `UnsupportedVersion`.
@@ -372,7 +372,7 @@ Per [[feedback_streaming_test_permissions]] and [[feedback_test_locale_isolation
 - Evaluator: empty `match` table matches any turn.
 - `legacy_model.rs`: `routing.toml#default` beats `models.toml` but loses to env.
 
-### Router unit tests (in `crates/savvagent-host/src/router/router.rs`)
+### Router unit tests (in `crates/otto-host/src/router/router.rs`)
 
 - `Router::pick` with `rules.empty()` and no override/modality → Default (regression).
 - `Router::pick` with a rule that matches → `RoutingReason::Rule { name }`.
@@ -381,14 +381,14 @@ Per [[feedback_streaming_test_permissions]] and [[feedback_test_locale_isolation
 - A rule whose provider isn't in `providers` is silently skipped; falls through to Default.
 - A rule whose `use.model` isn't in the provider's caps → router still returns the provider's default model id (assumes loader-side fallback already applied).
 
-### Plugin unit tests (in `crates/savvagent/src/plugin/builtin/route/mod.rs`)
+### Plugin unit tests (in `crates/otto/src/plugin/builtin/route/mod.rs`)
 
 - `handle_slash("route", [])` → emits `ShowRoutingRules`.
 - `handle_slash("route", ["show"])` → emits `ShowRoutingRules`.
 - `handle_slash("route", ["reload"])` → emits `ReloadRoutingRules`.
 - `handle_slash("route", ["wat"])` → emits `PushNote { route-usage }`.
 
-### Effects-handler tests (in `crates/savvagent/src/plugin/effects.rs`)
+### Effects-handler tests (in `crates/otto/src/plugin/effects.rs`)
 
 - `ReloadRoutingRules` happy path: host gets the new rules; PushNote shows count.
 - `ReloadRoutingRules` parse error: existing rules preserved; PushNote shows the error.
@@ -397,7 +397,7 @@ Per [[feedback_streaming_test_permissions]] and [[feedback_test_locale_isolation
 
 ### Integration tests
 
-- `crates/savvagent-host/tests/route_rules_e2e.rs` — host with two stub providers (anthropic, gemini), routing.toml writes a `keywords = ["refactor"]` → `gemini/...` rule, run a streaming turn whose user text matches, assert `TurnEvent::RouteSelected { reason: Rule(...) }` and that the provider invoked was Gemini. Uses the existing `HOME_LOCK` per [[feedback_test_locale_isolation]] and pre-registered tool allows per [[feedback_streaming_test_permissions]] (none needed for a tool-free turn, but include the helper so the pattern is consistent for future authors).
+- `crates/otto-host/tests/route_rules_e2e.rs` — host with two stub providers (anthropic, gemini), routing.toml writes a `keywords = ["refactor"]` → `gemini/...` rule, run a streaming turn whose user text matches, assert `TurnEvent::RouteSelected { reason: Rule(...) }` and that the provider invoked was Gemini. Uses the existing `HOME_LOCK` per [[feedback_test_locale_isolation]] and pre-registered tool allows per [[feedback_streaming_test_permissions]] (none needed for a tool-free turn, but include the helper so the pattern is consistent for future authors).
 - A second case: two rules, both could match; first wins.
 - A third case: a rule whose provider was just disconnected — turn falls through to Default and emits no warning event.
 - Reload-mid-turn race: tokio test with two tasks (one running `Router::pick` in a loop, the other calling `reload_routing_rules` in a loop). Asserts no deadlock / no panic / final rule count is what the last reload wrote.

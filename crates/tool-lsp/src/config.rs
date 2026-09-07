@@ -1,4 +1,4 @@
-//! Parsing for `~/.savvagent/lsp.toml` (global) and `<repo>/.savvagent/lsp.toml`
+//! Parsing for `~/.otto/lsp.toml` (global) and `<repo>/.otto/lsp.toml`
 //! (per-repo override).
 //!
 //! Schema (one entry per supported language):

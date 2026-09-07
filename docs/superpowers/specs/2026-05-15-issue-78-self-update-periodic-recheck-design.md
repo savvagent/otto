@@ -85,7 +85,7 @@ transition rules:
 
 ## Cache interaction
 
-The 24h on-disk cache (`~/.savvagent/update-check.json`) is a
+The 24h on-disk cache (`~/.otto/update-check.json`) is a
 **startup-skip** mechanism — it answers "should this process even hit
 the network at launch?" It is **not** an in-process throttle.
 
@@ -101,7 +101,7 @@ The loop differentiates between the **first tick** (effectively
   not in-process throttling.
 - **All ticks that successfully fetch write the cache.** The cache
   file therefore always reflects the latest tag the most recent
-  run-of-savvagent confirmed with GitHub, regardless of which tick
+  run-of-otto confirmed with GitHub, regardless of which tick
   produced it.
 
 Implementation note: the first-vs-subsequent distinction is a
@@ -116,7 +116,7 @@ const PERIODIC_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 ```
 
 Fixed at 2 hours. Not configurable via env var — YAGNI; can be added
-later if users ask. The existing `SAVVAGENT_NO_UPDATE_CHECK` env var
+later if users ask. The existing `OTTO_NO_UPDATE_CHECK` env var
 and `--no-update-check` CLI flag continue to short-circuit the plugin
 at construction, so the loop never starts when the user has opted out.
 
@@ -138,7 +138,7 @@ something small (e.g. `Duration::from_millis(50)`) so `tokio::time::pause()`
 
 ## Module changes
 
-All edits land in `crates/savvagent/src/plugin/builtin/self_update/mod.rs`:
+All edits land in `crates/otto/src/plugin/builtin/self_update/mod.rs`:
 
 1. Add `PERIODIC_INTERVAL` const.
 2. Add `periodic_interval: Duration` field on `SelfUpdatePlugin`,

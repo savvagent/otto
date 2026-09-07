@@ -9,7 +9,7 @@
 //! omitted and any tool-result messages are rendered as user text so the
 //! conversation stays valid.
 
-use savvagent_protocol::{self as spp};
+use otto_protocol::{self as spp};
 
 use crate::api;
 
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn tool_def_becomes_function_tool() {
-        use savvagent_protocol::ToolDef;
+        use otto_protocol::ToolDef;
         let req = spp::CompleteRequest {
             model: "llama3.1".into(),
             messages: vec![spp::Message {
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn tool_result_with_tool_support_uses_tool_role() {
-        use savvagent_protocol::ToolDef;
+        use otto_protocol::ToolDef;
         let req = spp::CompleteRequest {
             model: "llama3.1".into(),
             messages: vec![
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn user_message_with_interleaved_text_and_tool_results_preserves_order() {
-        use savvagent_protocol::ToolDef;
+        use otto_protocol::ToolDef;
         // SPP user message:
         //   [text "before"][tool_result A][text "between"][tool_result B][text "after"]
         // The Ollama messages must arrive in that exact order so the model

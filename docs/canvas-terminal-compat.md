@@ -17,7 +17,7 @@ with a one-line banner.
 | Any sixel-capable terminal | sixel | Works. Full-frame updates; colour depth varies by terminal. |
 
 Sixel support is implemented through the `crossterm` backend's built-in
-sixel encoder — savvagent does **not** depend on the `chafa` command-line
+sixel encoder — otto does **not** depend on the `chafa` command-line
 tool. Any terminal that advertises sixel capability in its `XTSMGRAPHICS`
 response (including Alacritty with sixel patches, mlterm, foot, and
 xterm compiled with `--enable-sixel-graphics`) should work.
@@ -52,7 +52,7 @@ Inline HTML rendering requires kitty / WezTerm / Ghostty / iTerm2 / Sixel.
 ```
 
 Functionality is fully preserved: the model's structured content is
-readable, and auto-export to `~/.savvagent/canvases/` still runs so
+readable, and auto-export to `~/.otto/canvases/` still runs so
 you can open the file in a browser.
 
 ## SSH
@@ -78,7 +78,7 @@ Passthrough is likely disabled. Add `set -g allow-passthrough on` to
 `~/.tmux.conf` and reload. See the Tmux section above.
 
 **Images render glitched or torn outside tmux.**
-File a bug at <https://github.com/savvagent/savvagent-cli/issues> with
+File a bug at <https://github.com/savvagent/otto/issues> with
 your terminal name and version.
 
 **Render is blocky or wrong colours in a sixel terminal.**
@@ -88,5 +88,5 @@ whether your terminal supports 256 colours or more.
 
 **Auto-exported canvases are not appearing.**
 Confirm the `internal:html-canvas` plugin is enabled (`/plugins`). The
-export directory is `~/.savvagent/canvases/`; it is created on first
-export. Check `~/.savvagent/logs/savvagent.log` for any I/O errors.
+export directory is `~/.otto/canvases/`; it is created on first
+export. Check `~/.otto/logs/otto.log` for any I/O errors.

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Claude-Code-compatible user shell hooks (`settings.json`) with `PreToolUse` blocking via a new `PreToolUseGate` trait in `savvagent-host`, plus four observe-only event hooks (`PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`).
+**Goal:** Add Claude-Code-compatible user shell hooks (`settings.json`) with `PreToolUse` blocking via a new `PreToolUseGate` trait in `otto-host`, plus four observe-only event hooks (`PostToolUse`, `UserPromptSubmit`, `SessionStart`, `Stop`).
 
-**Architecture:** One new built-in plugin `internal:user-hooks` under `crates/savvagent/src/plugin/builtin/user_hooks/`. Reuses the four-path discovery pattern from sub-project A (`.savvagent/` and `.claude/` × project and user). A new `PreToolUseGate` trait in `savvagent-host` is consulted inside `ToolRegistry::call_with_bash_net_override` before tool dispatch. The plugin registers itself as the gate via a new savvagent-internal `Effect::RegisterPreToolGate { plugin_id }` (mirroring how providers register clients). Two new WIT-portable `Effect` variants (`PrependToPendingPrompt`, `CancelPendingTurn`) carry string payloads for prompt rewriting and turn cancellation.
+**Architecture:** One new built-in plugin `internal:user-hooks` under `crates/otto/src/plugin/builtin/user_hooks/`. Reuses the four-path discovery pattern from sub-project A (`.otto/` and `.claude/` × project and user). A new `PreToolUseGate` trait in `otto-host` is consulted inside `ToolRegistry::call_with_bash_net_override` before tool dispatch. The plugin registers itself as the gate via a new otto-internal `Effect::RegisterPreToolGate { plugin_id }` (mirroring how providers register clients). Two new WIT-portable `Effect` variants (`PrependToPendingPrompt`, `CancelPendingTurn`) carry string payloads for prompt rewriting and turn cancellation.
 
 **Tech Stack:** Rust 2024, `serde_json` (workspace), `globset = "0.4"` (add if not present), `async-trait` (workspace), `tokio::process::Command` (with `kill_on_drop`), `tempfile` (dev-dep, already present).
 
@@ -13,8 +13,8 @@
 ## Spec drift discoveries (read while drafting this plan)
 
 1. **`ToolRegistry` is `pub(crate)`** — the gate field belongs on `Host` (public API), not on `ToolRegistry`. The call sites at `session.rs:1249` and `session.rs:1494` invoke `self.tool_registry.call_with_bash_net_override(...)`. Consulting the gate must happen there (or inside `Host`-side helpers around them) rather than inside `ToolRegistry`.
-2. **`BuiltinProviderPlugin` lives at `crates/savvagent/src/plugin/builtin/provider_common.rs`** — pattern reference. The sibling `BuiltinHookPlugin` trait will live alongside it.
-3. **`globset` may not be a direct dep of `savvagent`** — `ignore` (used by sub-project A's discovery) pulls it in transitively. Task 4 verifies and adds as needed.
+2. **`BuiltinProviderPlugin` lives at `crates/otto/src/plugin/builtin/provider_common.rs`** — pattern reference. The sibling `BuiltinHookPlugin` trait will live alongside it.
+3. **`globset` may not be a direct dep of `otto`** — `ignore` (used by sub-project A's discovery) pulls it in transitively. Task 4 verifies and adds as needed.
 
 ---
 
@@ -22,29 +22,29 @@
 
 **Create:**
 
-- `crates/savvagent-host/src/pre_tool_gate.rs` — `PreToolUseGate` trait + `PreToolDecision` enum.
-- `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` — `Plugin` impl, dispatch glue, plus the `BuiltinHookPlugin` trait impl.
-- `crates/savvagent/src/plugin/builtin/user_hooks/config.rs` — serde types: `HooksConfig`, `MatcherGroup`, `HookCommand`.
-- `crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs` — walk + merge the four `settings.json` files.
-- `crates/savvagent/src/plugin/builtin/user_hooks/matcher.rs` — `globset` compile + cached patterns.
-- `crates/savvagent/src/plugin/builtin/user_hooks/payload.rs` — stdin JSON builder per `HookKind`.
-- `crates/savvagent/src/plugin/builtin/user_hooks/decision.rs` — `HookDecision` + JSON-stdout parse.
-- `crates/savvagent/src/plugin/builtin/user_hooks/runner.rs` — spawn shell child, await with timeout, parse outcome.
-- `crates/savvagent/src/plugin/builtin/user_hooks/pre_tool_gate.rs` — plugin's `impl PreToolUseGate`.
-- `crates/savvagent/src/plugin/builtin/user_hooks/reload.rs` — `/reload-hooks` slash command handler.
+- `crates/otto-host/src/pre_tool_gate.rs` — `PreToolUseGate` trait + `PreToolDecision` enum.
+- `crates/otto/src/plugin/builtin/user_hooks/mod.rs` — `Plugin` impl, dispatch glue, plus the `BuiltinHookPlugin` trait impl.
+- `crates/otto/src/plugin/builtin/user_hooks/config.rs` — serde types: `HooksConfig`, `MatcherGroup`, `HookCommand`.
+- `crates/otto/src/plugin/builtin/user_hooks/discovery.rs` — walk + merge the four `settings.json` files.
+- `crates/otto/src/plugin/builtin/user_hooks/matcher.rs` — `globset` compile + cached patterns.
+- `crates/otto/src/plugin/builtin/user_hooks/payload.rs` — stdin JSON builder per `HookKind`.
+- `crates/otto/src/plugin/builtin/user_hooks/decision.rs` — `HookDecision` + JSON-stdout parse.
+- `crates/otto/src/plugin/builtin/user_hooks/runner.rs` — spawn shell child, await with timeout, parse outcome.
+- `crates/otto/src/plugin/builtin/user_hooks/pre_tool_gate.rs` — plugin's `impl PreToolUseGate`.
+- `crates/otto/src/plugin/builtin/user_hooks/reload.rs` — `/reload-hooks` slash command handler.
 
 **Modify:**
 
-- `crates/savvagent-plugin/src/effect.rs` — add three `Effect` variants (`RegisterPreToolGate`, `PrependToPendingPrompt`, `CancelPendingTurn`).
-- `crates/savvagent-host/src/lib.rs` — re-export `pre_tool_gate` module.
-- `crates/savvagent-host/src/session.rs` — `Host` field for the gate, setter, call-site consultation around tool dispatch.
-- `crates/savvagent/src/app.rs` — shared `Arc<RwLock<HooksIndex>>` field, startup load.
-- `crates/savvagent/src/main.rs` — pass the shared handle into `register_builtins`.
-- `crates/savvagent/src/plugin/mod.rs` — register the new plugin in `register_builtins`.
-- `crates/savvagent/src/plugin/builtin/mod.rs` — declare the `user_hooks` module.
-- `crates/savvagent/src/plugin/builtin/provider_common.rs` — add sibling `BuiltinHookPlugin` trait + `HookEntry` (mirrors `BuiltinProviderPlugin`/`ProviderEntry`).
-- `crates/savvagent/src/plugin/effects.rs` — `apply_effects` arms for the three new variants.
-- `crates/savvagent/Cargo.toml` — `globset.workspace = true` if absent.
+- `crates/otto-plugin/src/effect.rs` — add three `Effect` variants (`RegisterPreToolGate`, `PrependToPendingPrompt`, `CancelPendingTurn`).
+- `crates/otto-host/src/lib.rs` — re-export `pre_tool_gate` module.
+- `crates/otto-host/src/session.rs` — `Host` field for the gate, setter, call-site consultation around tool dispatch.
+- `crates/otto/src/app.rs` — shared `Arc<RwLock<HooksIndex>>` field, startup load.
+- `crates/otto/src/main.rs` — pass the shared handle into `register_builtins`.
+- `crates/otto/src/plugin/mod.rs` — register the new plugin in `register_builtins`.
+- `crates/otto/src/plugin/builtin/mod.rs` — declare the `user_hooks` module.
+- `crates/otto/src/plugin/builtin/provider_common.rs` — add sibling `BuiltinHookPlugin` trait + `HookEntry` (mirrors `BuiltinProviderPlugin`/`ProviderEntry`).
+- `crates/otto/src/plugin/effects.rs` — `apply_effects` arms for the three new variants.
+- `crates/otto/Cargo.toml` — `globset.workspace = true` if absent.
 - `README.md` — new "User-defined hooks" section + on-disk paths reference.
 - `CHANGELOG.md` — `[Unreleased]` entry.
 
@@ -52,8 +52,8 @@
 
 ## Conventions
 
-- All `cargo test` invocations specify the crate (`-p savvagent` or `-p savvagent-host`) for fast iteration.
-- `cargo test -p savvagent` runs MULTIPLE test binaries. The main lib/bin runner is the one with hundreds of tests. Always read the FIRST `test result` line.
+- All `cargo test` invocations specify the crate (`-p otto` or `-p otto-host`) for fast iteration.
+- `cargo test -p otto` runs MULTIPLE test binaries. The main lib/bin runner is the one with hundreds of tests. Always read the FIRST `test result` line.
 - CI uses `RUSTFLAGS=-D warnings`. New `pub` items not yet consumed get `#[allow(dead_code)]` with a brief `// consumed by Task N` comment, removed once Task N lands.
 - Disk-asserting tests gate to `#[cfg(unix)]` (follow-up tracking the `dirs::home_dir()` Windows test-isolation gap remains open from sub-project A).
 - Tests touching `HOME` use `HOME_LOCK` + `HomeGuard` per [[feedback_test_locale_isolation]].
@@ -65,13 +65,13 @@
 ### Task 1: Skeleton plugin + registration
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`
-- Modify: `crates/savvagent/src/plugin/mod.rs` (`register_builtins`)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs`
+- Modify: `crates/otto/src/plugin/mod.rs` (`register_builtins`)
 
 - [ ] **Step 1: Smoke test + plugin shell**
 
-Create `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`:
+Create `crates/otto/src/plugin/builtin/user_hooks/mod.rs`:
 
 ```rust
 //! `internal:user-hooks` — discovers and dispatches Claude-Code-compatible
@@ -79,7 +79,7 @@ Create `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`:
 //! `docs/superpowers/specs/2026-05-22-user-hooks-design.md`.
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Contributions, Effect, Manifest, Plugin, PluginError, PluginId, PluginKind, SlashSpec,
 };
 
@@ -150,7 +150,7 @@ mod tests {
 
 - [ ] **Step 2: Declare the module**
 
-Append to `crates/savvagent/src/plugin/builtin/mod.rs`:
+Append to `crates/otto/src/plugin/builtin/mod.rs`:
 
 ```rust
 /// `internal:user-hooks` — Claude-Code-compatible user shell hooks from
@@ -160,7 +160,7 @@ pub mod user_hooks;
 
 - [ ] **Step 3: Register in `register_builtins`**
 
-In `crates/savvagent/src/plugin/mod.rs`, inside the `plugins` Vec in `register_builtins`, add (alphabetical position is fine):
+In `crates/otto/src/plugin/mod.rs`, inside the `plugins` Vec in `register_builtins`, add (alphabetical position is fine):
 
 ```rust
         Box::new(builtin::user_hooks::UserHooksPlugin::new()),
@@ -168,13 +168,13 @@ In `crates/savvagent/src/plugin/mod.rs`, inside the `plugins` Vec in `register_b
 
 - [ ] **Step 4: Update the expected-list test**
 
-In `crates/savvagent/src/plugin/mod.rs`'s `register_builtins_pr8_complete` test, add `"internal:user-hooks"` to the expected-ids list and bump the count assertions by 1 (e.g. `set.plugins.len()` from 26 → 27, registry `.len()` from 30 → 31, and update the trailing comment).
+In `crates/otto/src/plugin/mod.rs`'s `register_builtins_pr8_complete` test, add `"internal:user-hooks"` to the expected-ids list and bump the count assertions by 1 (e.g. `set.plugins.len()` from 26 → 27, registry `.len()` from 30 → 31, and update the trailing comment).
 
 - [ ] **Step 5: Run the smoke test**
 
 ```bash
-cargo test -p savvagent plugin::builtin::user_hooks::tests::manifest_has_reload_hooks
-cargo test -p savvagent --test 'register_builtins_pr8_complete' 2>&1 | head -10
+cargo test -p otto plugin::builtin::user_hooks::tests::manifest_has_reload_hooks
+cargo test -p otto --test 'register_builtins_pr8_complete' 2>&1 | head -10
 ```
 
 Either invocation works. Confirm both pass.
@@ -183,9 +183,9 @@ Either invocation works. Confirm both pass.
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-git add crates/savvagent/src/plugin/builtin/user_hooks/mod.rs \
-        crates/savvagent/src/plugin/builtin/mod.rs \
-        crates/savvagent/src/plugin/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/mod.rs \
+        crates/otto/src/plugin/builtin/mod.rs \
+        crates/otto/src/plugin/mod.rs
 git commit -m "feat(plugin/user-hooks): plugin skeleton with /reload-hooks"
 ```
 
@@ -194,12 +194,12 @@ git commit -m "feat(plugin/user-hooks): plugin skeleton with /reload-hooks"
 ### Task 2: JSON config types
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/config.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` (add `mod config;`)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/config.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs` (add `mod config;`)
 
 - [ ] **Step 1: Write failing tests + impl**
 
-Create `crates/savvagent/src/plugin/builtin/user_hooks/config.rs`:
+Create `crates/otto/src/plugin/builtin/user_hooks/config.rs`:
 
 ```rust
 //! Serde types for the Claude-Code-compatible `settings.json` hooks block.
@@ -331,7 +331,7 @@ mod tests {
 
 - [ ] **Step 2: Declare the module**
 
-Add to `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`:
+Add to `crates/otto/src/plugin/builtin/user_hooks/mod.rs`:
 
 ```rust
 mod config;
@@ -340,7 +340,7 @@ mod config;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::user_hooks::config::tests
+cargo test -p otto plugin::builtin::user_hooks::config::tests
 ```
 
 Expected: 6 PASS.
@@ -354,8 +354,8 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/config.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/config.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): settings.json schema types"
 ```
 
@@ -364,19 +364,19 @@ git commit -m "feat(plugin/user-hooks): settings.json schema types"
 ### Task 3: Matcher (globset)
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/matcher.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` (add `mod matcher;`)
-- Possibly modify: `crates/savvagent/Cargo.toml` (add `globset.workspace = true` if absent)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/matcher.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs` (add `mod matcher;`)
+- Possibly modify: `crates/otto/Cargo.toml` (add `globset.workspace = true` if absent)
 
 - [ ] **Step 1: Verify `globset` workspace dep**
 
 Inspect:
 
 ```bash
-grep -n "globset" Cargo.toml crates/savvagent/Cargo.toml
+grep -n "globset" Cargo.toml crates/otto/Cargo.toml
 ```
 
-If `globset` is in `[workspace.dependencies]` of the root `Cargo.toml` but NOT in `crates/savvagent/Cargo.toml`, append to the latter's `[dependencies]`:
+If `globset` is in `[workspace.dependencies]` of the root `Cargo.toml` but NOT in `crates/otto/Cargo.toml`, append to the latter's `[dependencies]`:
 
 ```toml
 globset.workspace = true
@@ -388,11 +388,11 @@ If it's missing entirely from the workspace, append to root `Cargo.toml`'s `[wor
 globset = "0.4"
 ```
 
-…and then add `globset.workspace = true` to `crates/savvagent/Cargo.toml` as above.
+…and then add `globset.workspace = true` to `crates/otto/Cargo.toml` as above.
 
 - [ ] **Step 2: Write the failing tests + impl**
 
-Create `crates/savvagent/src/plugin/builtin/user_hooks/matcher.rs`:
+Create `crates/otto/src/plugin/builtin/user_hooks/matcher.rs`:
 
 ```rust
 //! Compiled tool-name matchers built from `MatcherGroup::matcher` strings.
@@ -487,7 +487,7 @@ mod matcher;
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::user_hooks::matcher::tests
+cargo test -p otto plugin::builtin::user_hooks::matcher::tests
 ```
 
 Expected: 6 PASS.
@@ -501,10 +501,10 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/matcher.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/matcher.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 # Add Cargo.toml only if you actually modified it.
-git add crates/savvagent/Cargo.toml Cargo.toml 2>/dev/null || true
+git add crates/otto/Cargo.toml Cargo.toml 2>/dev/null || true
 git commit -m "feat(plugin/user-hooks): glob-pattern matcher"
 ```
 
@@ -513,21 +513,21 @@ git commit -m "feat(plugin/user-hooks): glob-pattern matcher"
 ### Task 4: Discovery — four-path walk + merge + per-event index
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` (add `mod discovery;`)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/discovery.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs` (add `mod discovery;`)
 
 - [ ] **Step 1: Failing tests + impl**
 
-Create `crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs`:
+Create `crates/otto/src/plugin/builtin/user_hooks/discovery.rs`:
 
 ```rust
 //! Walks the four well-known `settings.json` paths and merges hook lists
 //! into a per-event index keyed by `HookEvent`.
 //!
 //! Precedence order (sequential execution within an event respects this):
-//! 1. `<project>/.savvagent/settings.json`
+//! 1. `<project>/.otto/settings.json`
 //! 2. `<project>/.claude/settings.json`
-//! 3. `~/.savvagent/settings.json`
+//! 3. `~/.otto/settings.json`
 //! 4. `~/.claude/settings.json`
 
 #![allow(dead_code)] // consumed by Task 18 (plugin index) + Task 19 (gate)
@@ -582,9 +582,9 @@ pub struct HooksIndex {
 /// index. Missing files are silently ignored; malformed files warn-log.
 pub fn walk_all(project_root: &Path, home: &Path) -> HooksIndex {
     let paths: [PathBuf; 4] = [
-        project_root.join(".savvagent").join("settings.json"),
+        project_root.join(".otto").join("settings.json"),
         project_root.join(".claude").join("settings.json"),
-        home.join(".savvagent").join("settings.json"),
+        home.join(".otto").join("settings.json"),
         home.join(".claude").join("settings.json"),
     ];
     let mut index = HooksIndex::default();
@@ -687,7 +687,7 @@ mod tests {
         let proj = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         write(
-            &proj.path().join(".savvagent"),
+            &proj.path().join(".otto"),
             "settings.json",
             r#"{ "hooks": { "Stop": [ { "hooks": [ { "command": "A" } ] } ] } }"#,
         );
@@ -697,7 +697,7 @@ mod tests {
             r#"{ "hooks": { "Stop": [ { "hooks": [ { "command": "B" } ] } ] } }"#,
         );
         write(
-            &home.path().join(".savvagent"),
+            &home.path().join(".otto"),
             "settings.json",
             r#"{ "hooks": { "Stop": [ { "hooks": [ { "command": "C" } ] } ] } }"#,
         );
@@ -720,9 +720,9 @@ mod tests {
     fn malformed_json_warns_other_files_load() {
         let proj = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
-        write(&proj.path().join(".savvagent"), "settings.json", "{ broken");
+        write(&proj.path().join(".otto"), "settings.json", "{ broken");
         write(
-            &home.path().join(".savvagent"),
+            &home.path().join(".otto"),
             "settings.json",
             r#"{ "hooks": { "Stop": [ { "hooks": [ { "command": "ok" } ] } ] } }"#,
         );
@@ -739,7 +739,7 @@ mod tests {
         let proj = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         write(
-            &proj.path().join(".savvagent"),
+            &proj.path().join(".otto"),
             "settings.json",
             r#"{ "hooks": { "SubagentStop": [ { "hooks": [ { "command": "x" } ] } ], "Stop": [ { "hooks": [ { "command": "y" } ] } ] } }"#,
         );
@@ -756,7 +756,7 @@ mod tests {
         let proj = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         write(
-            &proj.path().join(".savvagent"),
+            &proj.path().join(".otto"),
             "settings.json",
             r#"{ "hooks": { "PreToolUse": [ { "matcher": "[bad", "hooks": [ { "command": "x" } ] }, { "matcher": "*", "hooks": [ { "command": "y" } ] } ] } }"#,
         );
@@ -774,7 +774,7 @@ mod tests {
         let proj = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         write(
-            &proj.path().join(".savvagent"),
+            &proj.path().join(".otto"),
             "settings.json",
             r#"{ "hooks": { "Stop": [ { "hooks": [ { "type": "webhook", "command": "x" }, { "command": "y" } ] } ] } }"#,
         );
@@ -800,7 +800,7 @@ mod discovery;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::user_hooks::discovery::tests
+cargo test -p otto plugin::builtin::user_hooks::discovery::tests
 ```
 
 Expected: 6 PASS.
@@ -814,8 +814,8 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/discovery.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): four-path discovery + per-event index"
 ```
 
@@ -824,12 +824,12 @@ git commit -m "feat(plugin/user-hooks): four-path discovery + per-event index"
 ### Task 5: Payload builder
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/payload.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` (add `mod payload;`)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/payload.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs` (add `mod payload;`)
 
 - [ ] **Step 1: Failing tests + impl**
 
-Create `crates/savvagent/src/plugin/builtin/user_hooks/payload.rs`:
+Create `crates/otto/src/plugin/builtin/user_hooks/payload.rs`:
 
 ```rust
 //! Builds the stdin JSON payload each hook receives. Shape matches
@@ -996,7 +996,7 @@ mod payload;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::user_hooks::payload::tests
+cargo test -p otto plugin::builtin::user_hooks::payload::tests
 ```
 
 Expected: 5 PASS.
@@ -1010,8 +1010,8 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/payload.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/payload.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): stdin JSON payload builders"
 ```
 
@@ -1020,12 +1020,12 @@ git commit -m "feat(plugin/user-hooks): stdin JSON payload builders"
 ### Task 6: Decision types + JSON stdout parser
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/decision.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` (add `mod decision;`)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/decision.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs` (add `mod decision;`)
 
 - [ ] **Step 1: Failing tests + impl**
 
-Create `crates/savvagent/src/plugin/builtin/user_hooks/decision.rs`:
+Create `crates/otto/src/plugin/builtin/user_hooks/decision.rs`:
 
 ```rust
 //! Hook outcome decision types + parser for the Claude-Code-compatible
@@ -1341,7 +1341,7 @@ mod decision;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::user_hooks::decision::tests
+cargo test -p otto plugin::builtin::user_hooks::decision::tests
 ```
 
 Expected: 10 PASS.
@@ -1355,8 +1355,8 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/decision.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/decision.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): outcome parser (exit-code + structured JSON)"
 ```
 
@@ -1365,12 +1365,12 @@ git commit -m "feat(plugin/user-hooks): outcome parser (exit-code + structured J
 ### Task 7: Runner (shell process spawn + timeout)
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/runner.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` (add `mod runner;`)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/runner.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs` (add `mod runner;`)
 
 - [ ] **Step 1: Failing tests + impl**
 
-Create `crates/savvagent/src/plugin/builtin/user_hooks/runner.rs`:
+Create `crates/otto/src/plugin/builtin/user_hooks/runner.rs`:
 
 ```rust
 //! Spawns a shell hook, writes the JSON payload to its stdin, awaits
@@ -1401,7 +1401,7 @@ pub async fn run_one(
     let mut child = match Command::new("sh")
         .arg("-c")
         .arg(command)
-        .env("SAVVAGENT_PROJECT_DIR", project_root)
+        .env("OTTO_PROJECT_DIR", project_root)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1573,7 +1573,7 @@ mod tests {
     async fn project_dir_env_is_set() {
         let (_d, _w, stdout, _stderr) = run_one(
             HookEvent::Stop,
-            r#"echo "$SAVVAGENT_PROJECT_DIR""#,
+            r#"echo "$OTTO_PROJECT_DIR""#,
             5,
             &payload(),
             &root(),
@@ -1595,7 +1595,7 @@ mod runner;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::user_hooks::runner::tests
+cargo test -p otto plugin::builtin::user_hooks::runner::tests
 ```
 
 Expected: 7 PASS.
@@ -1609,28 +1609,28 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/runner.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/runner.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): shell runner with timeout + decision parse"
 ```
 
 ---
 
-### Task 8: `PreToolUseGate` trait in `savvagent-host`
+### Task 8: `PreToolUseGate` trait in `otto-host`
 
 **Files:**
-- Create: `crates/savvagent-host/src/pre_tool_gate.rs`
-- Modify: `crates/savvagent-host/src/lib.rs` (re-export module + key types)
+- Create: `crates/otto-host/src/pre_tool_gate.rs`
+- Modify: `crates/otto-host/src/lib.rs` (re-export module + key types)
 
 - [ ] **Step 1: Failing tests + trait**
 
-Create `crates/savvagent-host/src/pre_tool_gate.rs`:
+Create `crates/otto-host/src/pre_tool_gate.rs`:
 
 ```rust
-//! `PreToolUseGate` — savvagent-internal trait for gating tool dispatch.
+//! `PreToolUseGate` — otto-internal trait for gating tool dispatch.
 //!
 //! This is NOT part of the WIT-portable plugin surface; it lives in
-//! `savvagent-host` and is consulted by the `Host` before
+//! `otto-host` and is consulted by the `Host` before
 //! `ToolRegistry::call_with_bash_net_override`. The user-hooks plugin
 //! implements it; future hooks (e.g. subagent-level gates) may too.
 
@@ -1703,7 +1703,7 @@ mod tests {
 
 - [ ] **Step 2: Re-export from `lib.rs`**
 
-Append to `crates/savvagent-host/src/lib.rs`:
+Append to `crates/otto-host/src/lib.rs`:
 
 ```rust
 /// `PreToolUseGate` trait and `PreToolDecision` enum.
@@ -1714,7 +1714,7 @@ pub use pre_tool_gate::{PreToolDecision, PreToolUseGate};
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent-host pre_tool_gate::tests
+cargo test -p otto-host pre_tool_gate::tests
 ```
 
 Expected: 2 PASS.
@@ -1728,8 +1728,8 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/pre_tool_gate.rs \
-        crates/savvagent-host/src/lib.rs
+git add crates/otto-host/src/pre_tool_gate.rs \
+        crates/otto-host/src/lib.rs
 git commit -m "feat(host): PreToolUseGate trait + PreToolDecision"
 ```
 
@@ -1738,11 +1738,11 @@ git commit -m "feat(host): PreToolUseGate trait + PreToolDecision"
 ### Task 9: `Host` field + setter for the gate
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 - [ ] **Step 1: Add the field to `Host`**
 
-In `crates/savvagent-host/src/session.rs`, find the `pub struct Host` declaration (around line 289). Add a new field, mirroring the existing `Arc<…>`-typed handles:
+In `crates/otto-host/src/session.rs`, find the `pub struct Host` declaration (around line 289). Add a new field, mirroring the existing `Arc<…>`-typed handles:
 
 ```rust
     /// Optional `PreToolUseGate` consulted before every tool dispatch.
@@ -1814,7 +1814,7 @@ Wire `test_host_minimal()` from whatever existing helper builds a `Host` for tes
 - [ ] **Step 4: Run**
 
 ```bash
-cargo test -p savvagent-host pre_tool_gate_starts_none_and_can_be_set
+cargo test -p otto-host pre_tool_gate_starts_none_and_can_be_set
 ```
 
 Expected: PASS.
@@ -1828,7 +1828,7 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "feat(host): Host::pre_tool_gate field + set/snapshot accessors"
 ```
 
@@ -1837,12 +1837,12 @@ git commit -m "feat(host): Host::pre_tool_gate field + set/snapshot accessors"
 ### Task 10: Wire the gate into the tool-dispatch path
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs` (call sites around the two `call_with_bash_net_override` invocations)
+- Modify: `crates/otto-host/src/session.rs` (call sites around the two `call_with_bash_net_override` invocations)
 
 - [ ] **Step 1: Locate dispatch sites**
 
 ```bash
-grep -n "call_with_bash_net_override" crates/savvagent-host/src/session.rs
+grep -n "call_with_bash_net_override" crates/otto-host/src/session.rs
 ```
 
 Two sites: around lines 1249 and 1494 (the model-driven and slash-driven tool paths).
@@ -1885,7 +1885,7 @@ Add to `impl Host` (or a free helper module local to `session.rs`):
     }
 ```
 
-If `ToolCallOutcome::error` isn't `pub` from the `tools` module, check its actual public constructors and adapt. Look for `pub fn error` or `pub fn new_error` in `crates/savvagent-host/src/tools.rs`.
+If `ToolCallOutcome::error` isn't `pub` from the `tools` module, check its actual public constructors and adapt. Look for `pub fn error` or `pub fn new_error` in `crates/otto-host/src/tools.rs`.
 
 - [ ] **Step 3: Invoke at the two dispatch sites**
 
@@ -1937,11 +1937,11 @@ In `session.rs` tests:
 
 Adapt to the actual test helpers available. If no easy harness exists, add a smaller test inside `tools.rs` that constructs a `Host`-like wrapper and exercises just the gating helper. The minimum-viable test is the snapshot test from Task 9; full path coverage can be deferred to Task 24 (E2E).
 
-- [ ] **Step 5: Build + run all `savvagent-host` tests to ensure no regression**
+- [ ] **Step 5: Build + run all `otto-host` tests to ensure no regression**
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent-host 2>&1 | grep -E "^test result" | head -3
+cargo test -p otto-host 2>&1 | grep -E "^test result" | head -3
 ```
 
 Expect no regressions (no decrease from the prior pass count).
@@ -1949,7 +1949,7 @@ Expect no regressions (no decrease from the prior pass count).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "feat(host): consult PreToolUseGate before tool dispatch"
 ```
 
@@ -1958,15 +1958,15 @@ git commit -m "feat(host): consult PreToolUseGate before tool dispatch"
 ### Task 11: Three new `Effect` variants
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/effect.rs`
+- Modify: `crates/otto-plugin/src/effect.rs`
 
 - [ ] **Step 1: Add the variants**
 
-In `crates/savvagent-plugin/src/effect.rs`, append to the `Effect` enum:
+In `crates/otto-plugin/src/effect.rs`, append to the `Effect` enum:
 
 ```rust
     /// Announce that this plugin provides a `PreToolUseGate`. The
-    /// runtime fetches the gate object via a savvagent-internal seam
+    /// runtime fetches the gate object via a otto-internal seam
     /// (not part of the WIT-portable surface) and installs it on the
     /// host. Mirrors the [`Effect::RegisterProvider`] pattern.
     RegisterPreToolGate {
@@ -2022,12 +2022,12 @@ mod added_hook_effects_smoke {
 - [ ] **Step 3: Run**
 
 ```bash
-cargo test -p savvagent-plugin effect::added_hook_effects_smoke
-cargo test -p savvagent-plugin
-cargo test -p savvagent 2>&1 | grep -E "^test result" | head -1
+cargo test -p otto-plugin effect::added_hook_effects_smoke
+cargo test -p otto-plugin
+cargo test -p otto 2>&1 | grep -E "^test result" | head -1
 ```
 
-All should pass (the savvagent main bin uses the same wildcard arm in `apply_effects` as sub-project A's three new variants did — see Task 11 of sub-project A's plan for verification).
+All should pass (the otto main bin uses the same wildcard arm in `apply_effects` as sub-project A's three new variants did — see Task 11 of sub-project A's plan for verification).
 
 - [ ] **Step 4: Build clean**
 
@@ -2038,7 +2038,7 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/effect.rs
+git add crates/otto-plugin/src/effect.rs
 git commit -m "feat(plugin/effect): RegisterPreToolGate, PrependToPendingPrompt, CancelPendingTurn"
 ```
 
@@ -2047,30 +2047,30 @@ git commit -m "feat(plugin/effect): RegisterPreToolGate, PrependToPendingPrompt,
 ### Task 12: `BuiltinHookPlugin` trait sibling
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/provider_common.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_common.rs`
 
 - [ ] **Step 1: Add the trait + entry**
 
-Append to `crates/savvagent/src/plugin/builtin/provider_common.rs` (next to the existing `BuiltinProviderPlugin` declaration):
+Append to `crates/otto/src/plugin/builtin/provider_common.rs` (next to the existing `BuiltinProviderPlugin` declaration):
 
 ```rust
-/// Savvagent-internal trait that hook plugins implement to hand the
+/// Otto-internal trait that hook plugins implement to hand the
 /// runtime an `Arc<dyn PreToolUseGate>`. Mirrors
 /// [`BuiltinProviderPlugin`] / [`ProviderEntry`]: the registry holds
 /// one `Arc<Mutex<dyn BuiltinHookPlugin>>` view, and `take_pre_tool_gate`
 /// produces the concrete trait object for the host.
-pub(crate) trait BuiltinHookPlugin: savvagent_plugin::Plugin {
+pub(crate) trait BuiltinHookPlugin: otto_plugin::Plugin {
     /// Surrender the plugin's `PreToolUseGate` to the runtime. The
     /// runtime calls this exactly once at startup, after observing
     /// `Effect::RegisterPreToolGate`. The plugin may return the same
     /// `Arc` on every call (the gate is shared state).
     fn take_pre_tool_gate(
         &mut self,
-    ) -> Option<std::sync::Arc<dyn savvagent_host::PreToolUseGate>>;
+    ) -> Option<std::sync::Arc<dyn otto_host::PreToolUseGate>>;
 }
 ```
 
-If `savvagent_host::PreToolUseGate` isn't re-exported from the crate's root yet, verify Task 8 Step 2 added the `pub use pre_tool_gate::{PreToolDecision, PreToolUseGate};` re-export.
+If `otto_host::PreToolUseGate` isn't re-exported from the crate's root yet, verify Task 8 Step 2 added the `pub use pre_tool_gate::{PreToolDecision, PreToolUseGate};` re-export.
 
 - [ ] **Step 2: Smoke test**
 
@@ -2085,9 +2085,9 @@ In `provider_common.rs`'s existing `#[cfg(test)] mod tests` (or create one), add
         // a compile-time presence check more than a behavior test).
         struct Stub;
         #[async_trait::async_trait]
-        impl savvagent_plugin::Plugin for Stub {
-            fn manifest(&self) -> savvagent_plugin::Manifest {
-                use savvagent_plugin::*;
+        impl otto_plugin::Plugin for Stub {
+            fn manifest(&self) -> otto_plugin::Manifest {
+                use otto_plugin::*;
                 Manifest {
                     id: PluginId::new("internal:test-stub").unwrap(),
                     name: "stub".into(),
@@ -2101,7 +2101,7 @@ In `provider_common.rs`'s existing `#[cfg(test)] mod tests` (or create one), add
         impl super::BuiltinHookPlugin for Stub {
             fn take_pre_tool_gate(
                 &mut self,
-            ) -> Option<std::sync::Arc<dyn savvagent_host::PreToolUseGate>> {
+            ) -> Option<std::sync::Arc<dyn otto_host::PreToolUseGate>> {
                 None
             }
         }
@@ -2114,13 +2114,13 @@ In `provider_common.rs`'s existing `#[cfg(test)] mod tests` (or create one), add
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::builtin::provider_common::tests::builtin_hook_plugin_default_impl_returns_none
+cargo test -p otto plugin::builtin::provider_common::tests::builtin_hook_plugin_default_impl_returns_none
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/provider_common.rs
+git add crates/otto/src/plugin/builtin/provider_common.rs
 git commit -m "feat(plugin/provider-common): BuiltinHookPlugin sibling trait"
 ```
 
@@ -2129,11 +2129,11 @@ git commit -m "feat(plugin/provider-common): BuiltinHookPlugin sibling trait"
 ### Task 13: `apply_effects` arm for `RegisterPreToolGate`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/effects.rs`
+- Modify: `crates/otto/src/plugin/effects.rs`
 
 - [ ] **Step 1: Locate**
 
-`grep -n "fn apply_one\|Effect::RegisterProvider" crates/savvagent/src/plugin/effects.rs` — read the `RegisterProvider` arm; the new arm follows the same shape (lookup plugin, take handle, set on host).
+`grep -n "fn apply_one\|Effect::RegisterProvider" crates/otto/src/plugin/effects.rs` — read the `RegisterProvider` arm; the new arm follows the same shape (lookup plugin, take handle, set on host).
 
 - [ ] **Step 2: Add the arm**
 
@@ -2170,7 +2170,7 @@ Near the `RegisterProvider` arm:
         }
 ```
 
-`get_hook_entry` and `as_hook` are placeholders for the registry surface — read `crates/savvagent/src/plugin/registry.rs` and either reuse existing accessors or extend the registry with these (see Task 14 if extension is needed).
+`get_hook_entry` and `as_hook` are placeholders for the registry surface — read `crates/otto/src/plugin/registry.rs` and either reuse existing accessors or extend the registry with these (see Task 14 if extension is needed).
 
 - [ ] **Step 3: Write a test**
 
@@ -2191,8 +2191,8 @@ If the registry plumbing in Task 14 isn't ready yet, mark this test `#[ignore]` 
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::effects::tests 2>&1 | tail -5
-git add crates/savvagent/src/plugin/effects.rs
+cargo test -p otto plugin::effects::tests 2>&1 | tail -5
+git add crates/otto/src/plugin/effects.rs
 git commit -m "feat(plugin/effects): apply RegisterPreToolGate"
 ```
 
@@ -2201,11 +2201,11 @@ git commit -m "feat(plugin/effects): apply RegisterPreToolGate"
 ### Task 14: Registry plumbing for `HookEntry`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/registry.rs` (mirror the existing `ProviderEntry` surface for hooks)
+- Modify: `crates/otto/src/plugin/registry.rs` (mirror the existing `ProviderEntry` surface for hooks)
 
 - [ ] **Step 1: Add `HookEntry` next to `ProviderEntry`**
 
-Search `crates/savvagent/src/plugin/registry.rs` for `ProviderEntry`. Mirror the same structure for hook plugins:
+Search `crates/otto/src/plugin/registry.rs` for `ProviderEntry`. Mirror the same structure for hook plugins:
 
 ```rust
 /// One hook-plugin entry. The dual-Arc pattern mirrors `ProviderEntry`
@@ -2213,12 +2213,12 @@ Search `crates/savvagent/src/plugin/registry.rs` for `ProviderEntry`. Mirror the
 /// the same instance.
 pub struct HookEntry {
     pub as_plugin: std::sync::Arc<
-        tokio::sync::Mutex<dyn savvagent_plugin::Plugin>,
+        tokio::sync::Mutex<dyn otto_plugin::Plugin>,
     >,
     pub as_hook: std::sync::Arc<
         tokio::sync::Mutex<dyn crate::plugin::builtin::provider_common::BuiltinHookPlugin>,
     >,
-    pub id: savvagent_plugin::PluginId,
+    pub id: otto_plugin::PluginId,
 }
 
 impl HookEntry {
@@ -2231,7 +2231,7 @@ impl HookEntry {
             let g = arc.try_lock().expect("constructor not contended");
             g.manifest().id
         };
-        let as_plugin: std::sync::Arc<tokio::sync::Mutex<dyn savvagent_plugin::Plugin>> =
+        let as_plugin: std::sync::Arc<tokio::sync::Mutex<dyn otto_plugin::Plugin>> =
             arc.clone();
         let as_hook: std::sync::Arc<
             tokio::sync::Mutex<dyn crate::plugin::builtin::provider_common::BuiltinHookPlugin>,
@@ -2246,7 +2246,7 @@ Add `pub hook_entries: Vec<HookEntry>` to whatever struct currently holds `provi
 ```rust
     pub fn get_hook_entry(
         &self,
-        id: &savvagent_plugin::PluginId,
+        id: &otto_plugin::PluginId,
     ) -> Option<&HookEntry> {
         self.hook_entries.iter().find(|e| e.id == *id)
     }
@@ -2267,8 +2267,8 @@ mod hook_entry_tests {
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::registry 2>&1 | tail -5
-git add crates/savvagent/src/plugin/registry.rs
+cargo test -p otto plugin::registry 2>&1 | tail -5
+git add crates/otto/src/plugin/registry.rs
 git commit -m "feat(plugin/registry): HookEntry dual-view sibling to ProviderEntry"
 ```
 
@@ -2277,12 +2277,12 @@ git commit -m "feat(plugin/registry): HookEntry dual-view sibling to ProviderEnt
 ### Task 15: `apply_effects` arms for `PrependToPendingPrompt` + `CancelPendingTurn`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/effects.rs`
-- Modify: `crates/savvagent/src/app.rs` (add `pending_prompt` field + cancel flag)
+- Modify: `crates/otto/src/plugin/effects.rs`
+- Modify: `crates/otto/src/app.rs` (add `pending_prompt` field + cancel flag)
 
 - [ ] **Step 1: Add App-side state**
 
-In `crates/savvagent/src/app.rs`, near the existing `pending_*` fields:
+In `crates/otto/src/app.rs`, near the existing `pending_*` fields:
 
 ```rust
     /// Prompt text accumulated by `UserPromptSubmit` hooks before
@@ -2379,8 +2379,8 @@ Adapt to whatever the actual worker-spawn invocation site looks like (read it be
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::effects::tests::prepend_concatenates_in_order plugin::effects::tests::cancel_with_empty_reason_uses_default
-git add crates/savvagent/src/plugin/effects.rs crates/savvagent/src/app.rs crates/savvagent/src/main.rs
+cargo test -p otto plugin::effects::tests::prepend_concatenates_in_order plugin::effects::tests::cancel_with_empty_reason_uses_default
+git add crates/otto/src/plugin/effects.rs crates/otto/src/app.rs crates/otto/src/main.rs
 git commit -m "feat(plugin/effects): apply PrependToPendingPrompt + CancelPendingTurn"
 ```
 
@@ -2389,8 +2389,8 @@ git commit -m "feat(plugin/effects): apply PrependToPendingPrompt + CancelPendin
 ### Task 16: `pre_tool_gate.rs` impl on the plugin
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_hooks/pre_tool_gate.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` (add `pub mod pre_tool_gate;` + `impl BuiltinHookPlugin`)
+- Create: `crates/otto/src/plugin/builtin/user_hooks/pre_tool_gate.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs` (add `pub mod pre_tool_gate;` + `impl BuiltinHookPlugin`)
 
 - [ ] **Step 1: Implementation**
 
@@ -2406,7 +2406,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use savvagent_host::{PreToolDecision, PreToolUseGate};
+use otto_host::{PreToolDecision, PreToolUseGate};
 use serde_json::Value;
 use tokio::sync::RwLock;
 
@@ -2523,7 +2523,7 @@ impl UserHooksPlugin {
 impl BuiltinHookPlugin for UserHooksPlugin {
     fn take_pre_tool_gate(
         &mut self,
-    ) -> Option<Arc<dyn savvagent_host::PreToolUseGate>> {
+    ) -> Option<Arc<dyn otto_host::PreToolUseGate>> {
         Some(self.gate_arc())
     }
 }
@@ -2562,9 +2562,9 @@ In `pre_tool_gate.rs`'s `#[cfg(test)]`:
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::builtin::user_hooks
-git add crates/savvagent/src/plugin/builtin/user_hooks/pre_tool_gate.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+cargo test -p otto plugin::builtin::user_hooks
+git add crates/otto/src/plugin/builtin/user_hooks/pre_tool_gate.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): PreToolUseGate impl + plugin gate wiring"
 ```
 
@@ -2573,7 +2573,7 @@ git commit -m "feat(plugin/user-hooks): PreToolUseGate impl + plugin gate wiring
 ### Task 17: `on_event` for `PostToolUse` / `SessionStart`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs`
 
 - [ ] **Step 1: Subscribe + dispatch**
 
@@ -2581,10 +2581,10 @@ Extend the plugin's `manifest()` to include `Contributions::hooks` for the event
 
 ```rust
 contributions.hooks = vec![
-    savvagent_plugin::HookKind::ToolCallEnd,       // -> PostToolUse
-    savvagent_plugin::HookKind::HostStarting,      // -> SessionStart
-    savvagent_plugin::HookKind::PromptSubmitted,   // -> UserPromptSubmit (Task 18)
-    savvagent_plugin::HookKind::TurnEnd,           // -> Stop (Task 18)
+    otto_plugin::HookKind::ToolCallEnd,       // -> PostToolUse
+    otto_plugin::HookKind::HostStarting,      // -> SessionStart
+    otto_plugin::HookKind::PromptSubmitted,   // -> UserPromptSubmit (Task 18)
+    otto_plugin::HookKind::TurnEnd,           // -> Stop (Task 18)
 ];
 ```
 
@@ -2593,9 +2593,9 @@ Implement `on_event` that ignores all but the four `HookKind`s above:
 ```rust
     async fn on_event(
         &mut self,
-        event: savvagent_plugin::HostEvent,
-    ) -> Result<Vec<Effect>, savvagent_plugin::PluginError> {
-        use savvagent_plugin::HostEvent;
+        event: otto_plugin::HostEvent,
+    ) -> Result<Vec<Effect>, otto_plugin::PluginError> {
+        use otto_plugin::HostEvent;
         match event {
             HostEvent::ToolCallEnd { id: _, success, .. } => {
                 self.dispatch_post_tool_use(success).await
@@ -2620,7 +2620,7 @@ Implement `on_event` that ignores all but the four `HookKind`s above:
 Concrete impl:
 
 ```rust
-    async fn dispatch_post_tool_use(&mut self, success: bool) -> Result<Vec<Effect>, savvagent_plugin::PluginError> {
+    async fn dispatch_post_tool_use(&mut self, success: bool) -> Result<Vec<Effect>, otto_plugin::PluginError> {
         // Implementation similar to PreToolUse dispatch but with the
         // PostToolUse payload and no Block→short-circuit.
         let idx = self.hooks.read().await;
@@ -2635,7 +2635,7 @@ Concrete impl:
         Ok(vec![])
     }
 
-    async fn dispatch_session_start(&mut self) -> Result<Vec<Effect>, savvagent_plugin::PluginError> {
+    async fn dispatch_session_start(&mut self) -> Result<Vec<Effect>, otto_plugin::PluginError> {
         // Run matching SessionStart hooks; surface stdout/warnings as
         // PushNotes.
         Ok(vec![])
@@ -2654,7 +2654,7 @@ Add tests in `mod.rs`:
     #[tokio::test]
     async fn no_hooks_means_no_effects() {
         let mut p = mk_plugin(HooksIndex::default());
-        let effs = p.on_event(savvagent_plugin::HostEvent::HostStarting).await.unwrap();
+        let effs = p.on_event(otto_plugin::HostEvent::HostStarting).await.unwrap();
         assert!(effs.is_empty());
     }
 ```
@@ -2663,8 +2663,8 @@ Add tests in `mod.rs`:
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::builtin::user_hooks
-git add crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+cargo test -p otto plugin::builtin::user_hooks
+git add crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): subscribe to ToolCallEnd + HostStarting"
 ```
 
@@ -2673,7 +2673,7 @@ git commit -m "feat(plugin/user-hooks): subscribe to ToolCallEnd + HostStarting"
 ### Task 18: `UserPromptSubmit` + `Stop` dispatch (block-capable)
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs`
 
 - [ ] **Step 1: Implement `dispatch_user_prompt_submit`**
 
@@ -2681,7 +2681,7 @@ git commit -m "feat(plugin/user-hooks): subscribe to ToolCallEnd + HostStarting"
     async fn dispatch_user_prompt_submit(
         &mut self,
         prompt: &str,
-    ) -> Result<Vec<Effect>, savvagent_plugin::PluginError> {
+    ) -> Result<Vec<Effect>, otto_plugin::PluginError> {
         use crate::plugin::builtin::user_hooks::discovery::HookEvent;
         let idx = self.hooks.read().await;
         let Some(groups) = idx.by_event.get(&HookEvent::UserPromptSubmit) else {
@@ -2708,7 +2708,7 @@ git commit -m "feat(plugin/user-hooks): subscribe to ToolCallEnd + HostStarting"
                 .await;
                 for w in &warnings {
                     effects.push(Effect::PushNote {
-                        line: savvagent_plugin::StyledLine::plain(format!("[warn] {w}")),
+                        line: otto_plugin::StyledLine::plain(format!("[warn] {w}")),
                     });
                 }
                 match decision {
@@ -2751,8 +2751,8 @@ Same shape as `dispatch_user_prompt_submit`, payload is `payload::stop(&ctx, fal
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::builtin::user_hooks
-git add crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+cargo test -p otto plugin::builtin::user_hooks
+git add crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): UserPromptSubmit + Stop dispatch (block-capable)"
 ```
 
@@ -2761,8 +2761,8 @@ git commit -m "feat(plugin/user-hooks): UserPromptSubmit + Stop dispatch (block-
 ### Task 19: `/reload-hooks` slash command
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`
-- Create (optional): `crates/savvagent/src/plugin/builtin/user_hooks/reload.rs` if extracted
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs`
+- Create (optional): `crates/otto/src/plugin/builtin/user_hooks/reload.rs` if extracted
 
 - [ ] **Step 1: Implement in `handle_slash`**
 
@@ -2771,7 +2771,7 @@ git commit -m "feat(plugin/user-hooks): UserPromptSubmit + Stop dispatch (block-
         &mut self,
         name: &str,
         _args: Vec<String>,
-    ) -> Result<Vec<Effect>, savvagent_plugin::PluginError> {
+    ) -> Result<Vec<Effect>, otto_plugin::PluginError> {
         if name != "reload-hooks" {
             return Ok(vec![]);
         }
@@ -2785,14 +2785,14 @@ git commit -m "feat(plugin/user-hooks): UserPromptSubmit + Stop dispatch (block-
         let mut effs: Vec<Effect> = warnings
             .into_iter()
             .map(|w| Effect::PushNote {
-                line: savvagent_plugin::StyledLine::plain(format!("[warn] user-hooks: {w}")),
+                line: otto_plugin::StyledLine::plain(format!("[warn] user-hooks: {w}")),
             })
             .collect();
         effs.push(Effect::ReindexPlugin {
-            id: savvagent_plugin::PluginId::new("internal:user-hooks").unwrap(),
+            id: otto_plugin::PluginId::new("internal:user-hooks").unwrap(),
         });
         effs.push(Effect::PushNote {
-            line: savvagent_plugin::StyledLine::plain("user-hooks: reloaded"),
+            line: otto_plugin::StyledLine::plain("user-hooks: reloaded"),
         });
         Ok(effs)
     }
@@ -2813,8 +2813,8 @@ git commit -m "feat(plugin/user-hooks): UserPromptSubmit + Stop dispatch (block-
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::builtin::user_hooks::tests::reload_emits_reindex_plugin_effect
-git add crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+cargo test -p otto plugin::builtin::user_hooks::tests::reload_emits_reindex_plugin_effect
+git add crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): /reload-hooks rescans + reindexes"
 ```
 
@@ -2823,8 +2823,8 @@ git commit -m "feat(plugin/user-hooks): /reload-hooks rescans + reindexes"
 ### Task 20: App field for hooks index + startup load
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
-- Modify: `crates/savvagent/src/main.rs`
+- Modify: `crates/otto/src/app.rs`
+- Modify: `crates/otto/src/main.rs`
 
 - [ ] **Step 1: Shared handle on `App`**
 
@@ -2868,7 +2868,7 @@ Add the fields to the App constructor literal:
 
 - [ ] **Step 2: Pass to `register_builtins`**
 
-In `crates/savvagent/src/plugin/mod.rs::register_builtins`, change the signature to accept the additional handles (mirror how `trust_levels` was added in sub-project A):
+In `crates/otto/src/plugin/mod.rs::register_builtins`, change the signature to accept the additional handles (mirror how `trust_levels` was added in sub-project A):
 
 ```rust
 pub(crate) fn register_builtins(
@@ -2899,7 +2899,7 @@ In `main.rs`, update the call to `register_builtins` to pass the new args.
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent 2>&1 | grep -E "^test result" | head -1
+cargo test -p otto 2>&1 | grep -E "^test result" | head -1
 ```
 
 The existing `register_builtins_pr8_complete` test will need updating to call `register_builtins` with the new arguments. Construct test stubs:
@@ -2917,7 +2917,7 @@ let _set = register_builtins(
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs crates/savvagent/src/main.rs crates/savvagent/src/plugin/mod.rs
+git add crates/otto/src/app.rs crates/otto/src/main.rs crates/otto/src/plugin/mod.rs
 git commit -m "feat(app): user_hooks_index + transcript_path shared handles"
 ```
 
@@ -2926,7 +2926,7 @@ git commit -m "feat(app): user_hooks_index + transcript_path shared handles"
 ### Task 21: Register the `HookEntry` in `register_builtins`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/mod.rs`
+- Modify: `crates/otto/src/plugin/mod.rs`
 
 - [ ] **Step 1: Insert `HookEntry`**
 
@@ -2955,7 +2955,7 @@ In whatever code-path runs once at startup (e.g. `Plugin::on_event(HostEvent::Ho
 
 ```rust
 Effect::RegisterPreToolGate {
-    plugin_id: savvagent_plugin::PluginId::new("internal:user-hooks").unwrap(),
+    plugin_id: otto_plugin::PluginId::new("internal:user-hooks").unwrap(),
 }
 ```
 
@@ -2965,14 +2965,14 @@ Alternatively, emit it from `register_builtins` directly into a startup-effect q
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent 2>&1 | grep -E "^test result" | head -1
+cargo test -p otto 2>&1 | grep -E "^test result" | head -1
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/mod.rs \
-        crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/mod.rs \
+        crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "feat(plugin/user-hooks): register HookEntry + emit RegisterPreToolGate"
 ```
 
@@ -3000,7 +3000,7 @@ All three must finish clean.
 
 - [ ] **Step 3: Manual smoke**
 
-Build, then create a minimal `~/.savvagent/settings.json`:
+Build, then create a minimal `~/.otto/settings.json`:
 
 ```json
 {
@@ -3017,12 +3017,12 @@ Build, then create a minimal `~/.savvagent/settings.json`:
 }
 ```
 
-Run `cargo run -p savvagent`, ask the model to call any tool, and confirm the conversation log shows `[blocked] blocked` instead of the tool's normal output.
+Run `cargo run -p otto`, ask the model to call any tool, and confirm the conversation log shows `[blocked] blocked` instead of the tool's normal output.
 
 Then clean up the test settings file:
 
 ```bash
-rm ~/.savvagent/settings.json
+rm ~/.otto/settings.json
 ```
 
 - [ ] **Step 4: No commit here**
@@ -3050,8 +3050,8 @@ Under `## [Unreleased]`, add:
 ```markdown
 ### Added
 - User-defined hooks. Drop a Claude-Code-compatible `settings.json`
-  under `.savvagent/` (project), `.claude/` (project-claude),
-  `~/.savvagent/`, or `~/.claude/`; the `hooks` block contributes shell
+  under `.otto/` (project), `.claude/` (project-claude),
+  `~/.otto/`, or `~/.claude/`; the `hooks` block contributes shell
   hooks for `PreToolUse`, `PostToolUse`, `UserPromptSubmit`,
   `SessionStart`, and `Stop`. `PreToolUse` and `UserPromptSubmit`/`Stop`
   can block (exit 2 or `{"continue":false}`). `UserPromptSubmit` hooks
@@ -3071,7 +3071,7 @@ git commit -m "docs(user-hooks): README section + CHANGELOG entry"
 ### Task 24: End-to-end integration test
 
 **Files:**
-- Create: `crates/savvagent/tests/user_hooks_e2e.rs` OR an inline integration test in `mod.rs` if the binary-only crate constraint applies (see sub-project A Task 22).
+- Create: `crates/otto/tests/user_hooks_e2e.rs` OR an inline integration test in `mod.rs` if the binary-only crate constraint applies (see sub-project A Task 22).
 
 - [ ] **Step 1: Write the e2e**
 
@@ -3086,9 +3086,9 @@ Smoke-shape test: build a `UserHooksPlugin` against a temp `settings.json`, driv
 
         let tmp = tempfile::TempDir::new().unwrap();
         let proj = tmp.path().to_path_buf();
-        std::fs::create_dir_all(proj.join(".savvagent")).unwrap();
+        std::fs::create_dir_all(proj.join(".otto")).unwrap();
         std::fs::write(
-            proj.join(".savvagent/settings.json"),
+            proj.join(".otto/settings.json"),
             r#"{
                 "hooks": {
                     "PreToolUse": [
@@ -3116,7 +3116,7 @@ Smoke-shape test: build a `UserHooksPlugin` against a temp `settings.json`, driv
 
         let decision = gate.check("run", &serde_json::json!({})).await;
         match decision {
-            savvagent_host::PreToolDecision::Block(reason) => {
+            otto_host::PreToolDecision::Block(reason) => {
                 assert_eq!(reason, "deny");
             }
             _ => panic!("expected Block"),
@@ -3128,13 +3128,13 @@ Smoke-shape test: build a `UserHooksPlugin` against a temp `settings.json`, driv
 
 ```bash
 RUSTFLAGS="-D warnings" cargo build --workspace
-cargo test -p savvagent plugin::builtin::user_hooks
+cargo test -p otto plugin::builtin::user_hooks
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/mod.rs
+git add crates/otto/src/plugin/builtin/user_hooks/mod.rs
 git commit -m "test(plugin/user-hooks): end-to-end PreToolUse block"
 ```
 
@@ -3160,7 +3160,7 @@ Per [[feedback_phase_release_rollup]], no version bump in this plan's scope. Whe
 | Reserved-but-never-fired events (`Notification`, `SubagentStop`, `PreCompact`) | 4 (warn-log at discovery) |
 | Glob matchers via `globset` | 3 |
 | stdin JSON payload per event | 5 |
-| `SAVVAGENT_PROJECT_DIR` env | 7 |
+| `OTTO_PROJECT_DIR` env | 7 |
 | Exit codes: 0 / 2 / other | 6, 7 |
 | Structured JSON stdout: `continue`, `stopReason`, `suppressOutput`, `hookSpecificOutput`, legacy `decision`/`reason` | 6 |
 | `permissionDecision: "ask"` treated as `"deny"` in v1 | 6 |

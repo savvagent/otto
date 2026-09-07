@@ -7,7 +7,7 @@ Related:
 - `docs/superpowers/specs/2026-05-12-v0.9.0-plugin-system-design.md` — `HookKind`, `Effect`, and the built-in plugin pattern this design extends
 - `docs/superpowers/specs/2026-05-21-user-slash-commands-design.md` — sub-project A; established four-path discovery, frontmatter parsing, `@<path>` inclusion
 - `docs/superpowers/specs/2026-05-22-user-hooks-design.md` — sub-project B; established `PreToolUseGate`, `SubagentStop` reservation, hook stdin contract this design extends
-- Issue [#92](https://github.com/robhicks/savvagent-rs/issues/92) — separate concern, unaffected
+- Issue [#92](https://github.com/robhicks/otto-rs/issues/92) — separate concern, unaffected
 
 ## Context: the multi-subsystem split
 
@@ -19,7 +19,7 @@ Related:
 | D | External plugins (WASM, honoring v0.9.0's deferred WIT promise) | future |
 
 Sub-projects A and B introduced the four-path discovery pattern
-(`.savvagent/` and `.claude/` × project and user scopes) and a stdin/exit-code
+(`.otto/` and `.claude/` × project and user scopes) and a stdin/exit-code
 hook contract compatible with Claude Code's `settings.json`. Sub-project C
 reuses that discovery shape for agent definition files and adds the
 last missing primitive needed for parity: **a `task` tool the parent model
@@ -27,7 +27,7 @@ can call to spawn a focused subagent with a constrained tool set**.
 
 ## Problem
 
-Today, every model interaction in savvagent runs against the full active
+Today, every model interaction in otto runs against the full active
 tool registry with one system prompt. Long, focused tasks ("review this
 diff for security issues", "trace the dependency graph for module X")
 either pollute the main conversation or have to be hand-rolled by the
@@ -39,7 +39,7 @@ Every comparable agent exposes a subagent surface:
 - OpenCode: `.opencode/agent/<name>.md` plus an analogous tool.
 - Cursor: rules-driven implicit modes.
 
-Savvagent will ship the Claude-Code-compatible shape so existing
+Otto will ship the Claude-Code-compatible shape so existing
 `.claude/agents/*.md` libraries work unmodified, and the parent model
 can delegate focused work to a subagent that runs its own turn loop
 with its own system prompt and a filtered tool set.
@@ -69,15 +69,15 @@ in this release.
 ### Discovery paths
 
 Mirror sub-projects A and B. First-wins by agent name; project beats
-user, savvagent beats claude:
+user, otto beats claude:
 
-1. `<project>/.savvagent/agents/**/*.md`
+1. `<project>/.otto/agents/**/*.md`
 2. `<project>/.claude/agents/**/*.md`
-3. `~/.savvagent/agents/**/*.md`
+3. `~/.otto/agents/**/*.md`
 4. `~/.claude/agents/**/*.md`
 
-Project root resolves the same way `SAVVAGENT.md` does (walk up from
-cwd for `.git/`, `.savvagent/`, or root). Slug = filename without
+Project root resolves the same way `OTTO.md` does (walk up from
+cwd for `.git/`, `.otto/`, or root). Slug = filename without
 `.md`, lowercase-kebab-case validated.
 
 ### File shape
@@ -187,7 +187,7 @@ When the user-agents plugin's `task` handler fires:
 
 1. Resolve `subagent_type` against the in-memory `AgentSpec` index.
    Unknown → return `ToolResult { is_error: true, content: "unknown subagent_type: <name>" }`. Parent loop continues.
-2. Check depth against `SAVVAGENT_AGENT_MAX_DEPTH` (default 3, configurable).
+2. Check depth against `OTTO_AGENT_MAX_DEPTH` (default 3, configurable).
    Exceeded → `is_error: true` ToolResult; no SubHost constructed.
 3. Build a `SubHost`:
 
@@ -210,7 +210,7 @@ When the user-agents plugin's `task` handler fires:
 
 Subagents may call `task` again (their tool view always includes `task`
 subject to depth — see §3). Depth lives on `SubagentContext` threaded
-through the in-process tool path; exceeding `SAVVAGENT_AGENT_MAX_DEPTH`
+through the in-process tool path; exceeding `OTTO_AGENT_MAX_DEPTH`
 returns `is_error: true` before constructing the next SubHost.
 Default 3 (parent → child → grandchild → no further).
 
@@ -227,10 +227,10 @@ clean `end_turn`).
 
 ### Workspace layout
 
-- `crates/savvagent-host/src/subhost.rs` *(new)* — `SubHost` struct, `run_subagent` entry point, `SubagentContext`, depth handling
-- `crates/savvagent-host/src/tools.rs` *(extension)* — `InProcessToolHandler` trait, in-process registration path, `ToolCallContext`
-- `crates/savvagent-plugin/src/effect.rs` *(extension)* — `RegisterInProcessTool` variant
-- `crates/savvagent/src/plugin/builtin/user_agents/` *(new)* — discovery, frontmatter, body inclusion, plugin manifest, `task` tool handler, `/reload-agents` command
+- `crates/otto-host/src/subhost.rs` *(new)* — `SubHost` struct, `run_subagent` entry point, `SubagentContext`, depth handling
+- `crates/otto-host/src/tools.rs` *(extension)* — `InProcessToolHandler` trait, in-process registration path, `ToolCallContext`
+- `crates/otto-plugin/src/effect.rs` *(extension)* — `RegisterInProcessTool` variant
+- `crates/otto/src/plugin/builtin/user_agents/` *(new)* — discovery, frontmatter, body inclusion, plugin manifest, `task` tool handler, `/reload-agents` command
 
 ### Effect surface
 
@@ -243,7 +243,7 @@ Effect::RegisterInProcessTool {
 }
 ```
 
-This stays savvagent-internal — it carries a non-portable `Arc<dyn Trait>`
+This stays otto-internal — it carries a non-portable `Arc<dyn Trait>`
 and will **not** be exposed to WASM plugins (sub-project D). The WIT
 surface for D explicitly excludes it; the design here is purely an
 in-process extension point for built-in plugins.
@@ -293,7 +293,7 @@ view of `ToolRegistry` is untouched.
 ### `task` and depth
 
 The subagent's tool view always includes `task` — but if depth ≥
-`SAVVAGENT_AGENT_MAX_DEPTH`, the `task` ToolDef is **not** included in
+`OTTO_AGENT_MAX_DEPTH`, the `task` ToolDef is **not** included in
 the subagent's provider call (so the model doesn't see it as available).
 Equivalent runtime gate fires if a model fabricates the name anyway.
 
@@ -380,7 +380,7 @@ with `stop_hook_active=true` so a misbehaving hook can't infinite-loop.
 
 ### Hook ordering
 
-Project savvagent → project claude → user savvagent → user claude,
+Project otto → project claude → user otto → user claude,
 identical to B. Matcher syntax (globs against the tool name) is
 unchanged. The `subagent` field is **not** part of the matcher syntax in
 v1 — authors filter inside their hook script if they care.
@@ -462,7 +462,7 @@ accommodates this — only a version-tolerant deserializer is needed.
 
 ### Headless mode
 
-The headless example (`crates/savvagent-host/examples/headless.rs`) sees
+The headless example (`crates/otto-host/examples/headless.rs`) sees
 subagent execution as a single `task` tool call that takes time. No
 special handling needed.
 
@@ -504,7 +504,7 @@ and B.
 - **`SubagentPromptSubmit` hook event.** The synthetic prompt the parent passes to `task` is not surfaced as a hook event.
 - **Per-agent token-budget separate from parent.** Subagent's provider call uses the same context window the parent does.
 - **Multi-turn user-visible subagent conversations.** A subagent runs to its own `end_turn` and that's the result; user can't directly chat with a running subagent.
-- **WIT-portable subagent surface.** `RegisterInProcessTool` is savvagent-internal; sub-project D (WASM plugins) will define its own portable agent shape if needed.
+- **WIT-portable subagent surface.** `RegisterInProcessTool` is otto-internal; sub-project D (WASM plugins) will define its own portable agent shape if needed.
 
 ### Dependencies
 
@@ -524,7 +524,7 @@ time, but provisionally **v0.17.0**.
 Same commit must:
 
 - Bump `[workspace.package].version` and mirror into `[workspace.dependencies]` literals per [[feedback_semver]]
-- Update README: new "User-defined agents" section under TUI features; add `.savvagent/agents/` to the on-disk paths reference; document the `task` tool in the tool list
+- Update README: new "User-defined agents" section under TUI features; add `.otto/agents/` to the on-disk paths reference; document the `task` tool in the tool list
 - Update PRD: add a bullet to §3 Goals for the agent surface; add a paragraph to §4 Non-goals naming the v1 boundaries (per-agent provider, parallel fan-out, etc.)
 - Add CHANGELOG entry per [[feedback_release_notes]]
 - Bump `TRANSCRIPT_SCHEMA_VERSION` from 1 → 2
@@ -537,27 +537,27 @@ per [[feedback_cargo_dist_release]].
 
 | Test | Crate | File |
 |------|-------|------|
-| Discovery walks four paths with correct precedence | `savvagent` | `plugin/builtin/user_agents/discovery.rs` `#[cfg(test)]` |
-| Discovery skips files with malformed YAML, missing description, empty body | `savvagent` | same |
-| Frontmatter: `tools:` string vs YAML-list parsing; `tools: []` intent preserved | `savvagent` | `frontmatter.rs` |
-| `@<path>` expansion at load time, missing-file warning | `savvagent` | `body.rs` |
-| `task` tool not registered when zero agents discovered | `savvagent` | `plugin.rs` |
-| `task` tool's `subagent_type` enum updates on `/reload-agents` | `savvagent` | `plugin.rs` |
-| `Effect::RegisterInProcessTool` round-trip through plugin runtime | `savvagent` | `plugin/runtime` test |
-| `SubHost` runs to `end_turn` and returns final assistant text | `savvagent-host` | `subhost.rs` |
-| `SubHost` honors `tools: []` (only `task` available, subject to depth) | `savvagent-host` | same |
-| `SubHost` honors `tools:` absent (inherits parent's full tool set) | `savvagent-host` | same |
-| `ScopedToolRegistry` rejects out-of-allowlist names at runtime | `savvagent-host` | `tools.rs` |
-| Depth cap aborts at configured limit; `SAVVAGENT_AGENT_MAX_DEPTH` env honored | `savvagent-host` | `subhost.rs` |
-| Parent cancellation propagates to subagent via child token | `savvagent-host` | same |
-| Cancelled subagent does NOT fire `SubagentStop` | `savvagent-host` | same |
-| `subagent` field present in PreToolUse stdin during subagent tool call | `savvagent` | `plugin/builtin/user_hooks/` integration test |
-| `subagent` field absent in parent-turn PreToolUse stdin (backward compat) | `savvagent` | same |
-| `SubagentStop` fires after SubHost end_turn, before `task` result returns | `savvagent` | same |
-| `SubagentStop` `stop_hook_active` loop guard | `savvagent` | same |
-| `UserPromptSubmit` does NOT fire for subagent prompts | `savvagent` | same |
-| Transcript v2 round-trip with nested subagent transcript | `savvagent-host` | `session.rs` |
-| Transcript v1 still loads on v0.17.0 binary (with warn-log) | `savvagent-host` | same |
+| Discovery walks four paths with correct precedence | `otto` | `plugin/builtin/user_agents/discovery.rs` `#[cfg(test)]` |
+| Discovery skips files with malformed YAML, missing description, empty body | `otto` | same |
+| Frontmatter: `tools:` string vs YAML-list parsing; `tools: []` intent preserved | `otto` | `frontmatter.rs` |
+| `@<path>` expansion at load time, missing-file warning | `otto` | `body.rs` |
+| `task` tool not registered when zero agents discovered | `otto` | `plugin.rs` |
+| `task` tool's `subagent_type` enum updates on `/reload-agents` | `otto` | `plugin.rs` |
+| `Effect::RegisterInProcessTool` round-trip through plugin runtime | `otto` | `plugin/runtime` test |
+| `SubHost` runs to `end_turn` and returns final assistant text | `otto-host` | `subhost.rs` |
+| `SubHost` honors `tools: []` (only `task` available, subject to depth) | `otto-host` | same |
+| `SubHost` honors `tools:` absent (inherits parent's full tool set) | `otto-host` | same |
+| `ScopedToolRegistry` rejects out-of-allowlist names at runtime | `otto-host` | `tools.rs` |
+| Depth cap aborts at configured limit; `OTTO_AGENT_MAX_DEPTH` env honored | `otto-host` | `subhost.rs` |
+| Parent cancellation propagates to subagent via child token | `otto-host` | same |
+| Cancelled subagent does NOT fire `SubagentStop` | `otto-host` | same |
+| `subagent` field present in PreToolUse stdin during subagent tool call | `otto` | `plugin/builtin/user_hooks/` integration test |
+| `subagent` field absent in parent-turn PreToolUse stdin (backward compat) | `otto` | same |
+| `SubagentStop` fires after SubHost end_turn, before `task` result returns | `otto` | same |
+| `SubagentStop` `stop_hook_active` loop guard | `otto` | same |
+| `UserPromptSubmit` does NOT fire for subagent prompts | `otto` | same |
+| Transcript v2 round-trip with nested subagent transcript | `otto-host` | `session.rs` |
+| Transcript v1 still loads on v0.17.0 binary (with warn-log) | `otto-host` | same |
 
 End-to-end smoke (integration test, runs against a stub provider):
 parent model emits a `task` call → SubHost spawns → subagent emits a

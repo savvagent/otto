@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship the `internal:changelog` plugin: a new `/changelog` slash command opens a dedicated screen that streams `https://raw.githubusercontent.com/robhicks/savvagent-rs/master/CHANGELOG.md`, renders it via `tui-markdown` translated into the plugin crate's `StyledLine` vocabulary, and supports scroll/retry/close keybindings. Per-session in-memory cache; no auto-open; closes #68.
+**Goal:** Ship the `internal:changelog` plugin: a new `/changelog` slash command opens a dedicated screen that streams `https://raw.githubusercontent.com/robhicks/otto-rs/master/CHANGELOG.md`, renders it via `tui-markdown` translated into the plugin crate's `StyledLine` vocabulary, and supports scroll/retry/close keybindings. Per-session in-memory cache; no auto-open; closes #68.
 
-**Architecture:** A single new built-in plugin under `crates/savvagent/src/plugin/builtin/changelog/` with three files (`mod.rs` for the plugin shell, `fetch.rs` for the network seam, `screen.rs` for the state machine + render). One new variant on `ScreenArgs` in `savvagent-plugin`. Spawned tokio task on screen open writes into `Arc<Mutex<ChangelogState>>`; render reads via `try_lock` (same non-blocking pattern as `SelfUpdatePlugin`). Markdown → `Vec<StyledLine>` is a self-contained adapter inside `screen.rs`.
+**Architecture:** A single new built-in plugin under `crates/otto/src/plugin/builtin/changelog/` with three files (`mod.rs` for the plugin shell, `fetch.rs` for the network seam, `screen.rs` for the state machine + render). One new variant on `ScreenArgs` in `otto-plugin`. Spawned tokio task on screen open writes into `Arc<Mutex<ChangelogState>>`; render reads via `try_lock` (same non-blocking pattern as `SelfUpdatePlugin`). Markdown → `Vec<StyledLine>` is a self-contained adapter inside `screen.rs`.
 
-**Tech Stack:** `tui-markdown 0.3` (workspace dep, `default-features = false` to skip the `syntect` + `ansi-to-tui` highlight-code stack), `reqwest` (already in workspace), `tokio` (already in workspace), the existing `savvagent-plugin` `Screen` trait. Project's stable toolchain (`rustup run stable`) is the test/lint reference per project memory.
+**Tech Stack:** `tui-markdown 0.3` (workspace dep, `default-features = false` to skip the `syntect` + `ansi-to-tui` highlight-code stack), `reqwest` (already in workspace), `tokio` (already in workspace), the existing `otto-plugin` `Screen` trait. Project's stable toolchain (`rustup run stable`) is the test/lint reference per project memory.
 
 **Spec:** `docs/superpowers/specs/2026-05-14-issue-68-changelog-viewer-design.md`
 
@@ -17,17 +17,17 @@
 ## File Map
 
 **New files**
-- `crates/savvagent/src/plugin/builtin/changelog/mod.rs` — plugin shell: manifest, `handle_slash`, `create_screen`, plugin-level tests.
-- `crates/savvagent/src/plugin/builtin/changelog/fetch.rs` — `ChangelogFetcher` trait + `GithubChangelogFetcher` reqwest impl + URL/UA tests.
-- `crates/savvagent/src/plugin/builtin/changelog/screen.rs` — `ChangelogState` enum, `ChangelogScreen` struct, `Screen` impl (state transitions, scroll math, key dispatch, markdown→`StyledLine` adapter), screen-level tests.
+- `crates/otto/src/plugin/builtin/changelog/mod.rs` — plugin shell: manifest, `handle_slash`, `create_screen`, plugin-level tests.
+- `crates/otto/src/plugin/builtin/changelog/fetch.rs` — `ChangelogFetcher` trait + `GithubChangelogFetcher` reqwest impl + URL/UA tests.
+- `crates/otto/src/plugin/builtin/changelog/screen.rs` — `ChangelogState` enum, `ChangelogScreen` struct, `Screen` impl (state transitions, scroll math, key dispatch, markdown→`StyledLine` adapter), screen-level tests.
 
 **Modified files**
 - `Cargo.toml` (workspace root) — add `tui-markdown` to `[workspace.dependencies]`.
-- `crates/savvagent/Cargo.toml` — pull `tui-markdown.workspace = true`.
-- `crates/savvagent-plugin/src/types.rs` — add `ScreenArgs::Changelog` variant + matching arm in `screen_id()` + extend the existing exhaustive test.
-- `crates/savvagent/src/plugin/builtin/mod.rs` — `pub mod changelog;` declaration.
-- `crates/savvagent/src/plugin/mod.rs` — register `ChangelogPlugin::new()` in the `plugins` vec inside `builtin_set()`.
-- `crates/savvagent/locales/{en,es,hi,pt}.toml` — new `[changelog]` section + `plugin.changelog-description` key.
+- `crates/otto/Cargo.toml` — pull `tui-markdown.workspace = true`.
+- `crates/otto-plugin/src/types.rs` — add `ScreenArgs::Changelog` variant + matching arm in `screen_id()` + extend the existing exhaustive test.
+- `crates/otto/src/plugin/builtin/mod.rs` — `pub mod changelog;` declaration.
+- `crates/otto/src/plugin/mod.rs` — register `ChangelogPlugin::new()` in the `plugins` vec inside `builtin_set()`.
+- `crates/otto/locales/{en,es,hi,pt}.toml` — new `[changelog]` section + `plugin.changelog-description` key.
 
 ---
 
@@ -35,7 +35,7 @@
 
 **Files:**
 - Modify: `Cargo.toml` (workspace root)
-- Modify: `crates/savvagent/Cargo.toml`
+- Modify: `crates/otto/Cargo.toml`
 
 - [ ] **Step 1: Add to workspace `[dependencies]` table**
 
@@ -49,9 +49,9 @@ In `Cargo.toml`, locate the existing `tui-textarea = …` line in `[workspace.de
 tui-markdown = { version = "0.3", default-features = false }
 ```
 
-- [ ] **Step 2: Pull the dep into the savvagent crate**
+- [ ] **Step 2: Pull the dep into the otto crate**
 
-In `crates/savvagent/Cargo.toml`, find the line `tui-textarea.workspace = true` and add directly above it:
+In `crates/otto/Cargo.toml`, find the line `tui-textarea.workspace = true` and add directly above it:
 
 ```toml
 tui-markdown.workspace = true
@@ -59,13 +59,13 @@ tui-markdown.workspace = true
 
 - [ ] **Step 3: Verify the dep resolves**
 
-Run: `rustup run stable cargo check -p savvagent 2>&1 | tail -5`
+Run: `rustup run stable cargo check -p otto 2>&1 | tail -5`
 Expected: `Finished `dev` profile …`. (No warnings about unresolved deps.)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Cargo.toml Cargo.lock crates/savvagent/Cargo.toml
+git add Cargo.toml Cargo.lock crates/otto/Cargo.toml
 git commit -m "deps: add tui-markdown 0.3 (workspace)
 
 Pulls the markdown→ratatui-Text renderer used by the upcoming
@@ -79,11 +79,11 @@ few code blocks to justify the binary bloat."
 ## Task 2: Add `ScreenArgs::Changelog` variant
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/types.rs`
+- Modify: `crates/otto-plugin/src/types.rs`
 
 - [ ] **Step 1: Extend the exhaustive `screen_id` test (failing first)**
 
-In `crates/savvagent-plugin/src/types.rs`, locate the test
+In `crates/otto-plugin/src/types.rs`, locate the test
 `fn screen_args_screen_id_pairs_every_non_none_variant()` (around line 529) and add a new assertion at the bottom of the function, just before the closing brace:
 
 ```rust
@@ -95,7 +95,7 @@ In `crates/savvagent-plugin/src/types.rs`, locate the test
 
 - [ ] **Step 2: Run the test to confirm it fails**
 
-Run: `rustup run stable cargo test -p savvagent-plugin screen_args_screen_id_pairs_every_non_none_variant 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-plugin screen_args_screen_id_pairs_every_non_none_variant 2>&1 | tail -10`
 Expected: compile error — `no variant or associated item named 'Changelog' found for enum 'ScreenArgs'`.
 
 - [ ] **Step 3: Add the variant**
@@ -122,18 +122,18 @@ Still in the same file, in `impl ScreenArgs::screen_id`, add the matching arm be
 
 - [ ] **Step 5: Run the test, confirm pass**
 
-Run: `rustup run stable cargo test -p savvagent-plugin screen_args_screen_id_pairs_every_non_none_variant 2>&1 | tail -5`
+Run: `rustup run stable cargo test -p otto-plugin screen_args_screen_id_pairs_every_non_none_variant 2>&1 | tail -5`
 Expected: `test result: ok. 1 passed; …`.
 
-- [ ] **Step 6: Run the rest of the savvagent-plugin tests to confirm no fallout**
+- [ ] **Step 6: Run the rest of the otto-plugin tests to confirm no fallout**
 
-Run: `rustup run stable cargo test -p savvagent-plugin 2>&1 | tail -5`
+Run: `rustup run stable cargo test -p otto-plugin 2>&1 | tail -5`
 Expected: all green.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/types.rs
+git add crates/otto-plugin/src/types.rs
 git commit -m "plugin: add ScreenArgs::Changelog variant for #68
 
 Pairs with the upcoming internal:changelog plugin's screen id
@@ -147,11 +147,11 @@ and leaves room for future args (e.g. scroll-to-version)."
 ## Task 3: `changelog/fetch.rs` — `ChangelogFetcher` trait + GitHub impl
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/changelog/fetch.rs`
+- Create: `crates/otto/src/plugin/builtin/changelog/fetch.rs`
 
 - [ ] **Step 1: Create the module file with the trait + production impl + tests**
 
-Create `crates/savvagent/src/plugin/builtin/changelog/fetch.rs` with:
+Create `crates/otto/src/plugin/builtin/changelog/fetch.rs` with:
 
 ```rust
 //! Network seam for `internal:changelog`.
@@ -167,12 +167,12 @@ use async_trait::async_trait;
 /// viewer always reflects the most recent release — including entries
 /// for versions the user hasn't installed yet.
 pub const CHANGELOG_URL: &str =
-    "https://raw.githubusercontent.com/robhicks/savvagent-rs/master/CHANGELOG.md";
+    "https://raw.githubusercontent.com/robhicks/otto-rs/master/CHANGELOG.md";
 
 /// User-Agent value sent with the request. Includes the running binary
 /// version so request logs identify the caller cohort, mirroring the
 /// pattern used in [`crate::plugin::builtin::self_update::check`].
-const USER_AGENT: &str = concat!("savvagent-rs/", env!("CARGO_PKG_VERSION"), " (changelog)");
+const USER_AGENT: &str = concat!("otto-rs/", env!("CARGO_PKG_VERSION"), " (changelog)");
 
 #[async_trait]
 pub trait ChangelogFetcher: Send + Sync {
@@ -209,7 +209,7 @@ mod tests {
         // the build's commit and stop users from seeing entries for
         // versions they haven't installed yet.
         assert!(
-            CHANGELOG_URL.starts_with("https://raw.githubusercontent.com/robhicks/savvagent-rs/"),
+            CHANGELOG_URL.starts_with("https://raw.githubusercontent.com/robhicks/otto-rs/"),
             "URL must hit raw.githubusercontent.com: {CHANGELOG_URL}"
         );
         assert!(
@@ -219,8 +219,8 @@ mod tests {
     }
 
     #[test]
-    fn user_agent_identifies_savvagent() {
-        assert!(USER_AGENT.contains("savvagent"));
+    fn user_agent_identifies_otto() {
+        assert!(USER_AGENT.contains("otto"));
         assert!(USER_AGENT.contains("changelog"));
     }
 }
@@ -233,7 +233,7 @@ Skip running tests for this task in isolation; they'll run as part of Task 5 onc
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/changelog/fetch.rs
+git add crates/otto/src/plugin/builtin/changelog/fetch.rs
 git commit -m "feat(changelog): add fetcher trait + reqwest-backed impl (#68)
 
 Pure network seam: ChangelogFetcher::fetch() returns the raw
@@ -248,11 +248,11 @@ identifies the caller cohort."
 ## Task 4: `changelog/screen.rs` — state enum + struct + state-transition tests
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/changelog/screen.rs`
+- Create: `crates/otto/src/plugin/builtin/changelog/screen.rs`
 
 - [ ] **Step 1: Create the file with state types, struct, constructor, and the in-test stub fetcher**
 
-Create `crates/savvagent/src/plugin/builtin/changelog/screen.rs` with:
+Create `crates/otto/src/plugin/builtin/changelog/screen.rs` with:
 
 ```rust
 //! `internal:changelog` screen: state machine + render + key handling.
@@ -269,7 +269,7 @@ Create `crates/savvagent/src/plugin/builtin/changelog/screen.rs` with:
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, Region, Screen, StyledLine,
     StyledSpan, TextMods,
 };
@@ -387,7 +387,7 @@ mod tests {
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/changelog/screen.rs
+git add crates/otto/src/plugin/builtin/changelog/screen.rs
 git commit -m "feat(changelog): screen state enum + transitions (#68)
 
 ChangelogState (Loading | Loaded | Failed), ChangelogScreen owning a
@@ -401,7 +401,7 @@ Loaded."
 ## Task 5: `changelog/screen.rs` — `Screen::on_key` keybindings
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/changelog/screen.rs`
+- Modify: `crates/otto/src/plugin/builtin/changelog/screen.rs`
 
 - [ ] **Step 1: Add `on_key` tests**
 
@@ -411,7 +411,7 @@ Append the following tests inside the existing `mod tests` block in `screen.rs` 
     fn key(c: KeyCodePortable) -> KeyEventPortable {
         KeyEventPortable {
             code: c,
-            modifiers: savvagent_plugin::KeyMods::default(),
+            modifiers: otto_plugin::KeyMods::default(),
         }
     }
 
@@ -593,7 +593,7 @@ impl Screen for ChangelogScreen {
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/changelog/screen.rs
+git add crates/otto/src/plugin/builtin/changelog/screen.rs
 git commit -m "feat(changelog): screen on_key + PAGE_SIZE + tips (#68)
 
 Adds the keybinding surface: j/↓ + k/↑ line scroll (saturating),
@@ -607,7 +607,7 @@ filled in by the next commit."
 ## Task 6: `changelog/screen.rs` — `Screen::render` with scroll windowing
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/changelog/screen.rs`
+- Modify: `crates/otto/src/plugin/builtin/changelog/screen.rs`
 
 - [ ] **Step 1: Add render tests inside the existing `mod tests`**
 
@@ -739,7 +739,7 @@ In the same file, replace the previous `fn render(&self, _region: Region) -> Vec
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/changelog/screen.rs
+git add crates/otto/src/plugin/builtin/changelog/screen.rs
 git commit -m "feat(changelog): screen render with scroll windowing (#68)
 
 Loading → localized placeholder; Failed → error line + retry hint;
@@ -754,7 +754,7 @@ prior offset is safe."
 ## Task 7: `changelog/screen.rs` — markdown → `Vec<StyledLine>` adapter
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/changelog/screen.rs`
+- Modify: `crates/otto/src/plugin/builtin/changelog/screen.rs`
 
 - [ ] **Step 1: Add adapter tests**
 
@@ -853,11 +853,11 @@ pub(crate) fn markdown_to_styled_lines(input: &str) -> Vec<StyledLine> {
 }
 
 /// Map a `ratatui_core::style::Color` to the plugin crate's
-/// [`savvagent_plugin::ThemeColor`]. Reset → `None` so the runtime
+/// [`otto_plugin::ThemeColor`]. Reset → `None` so the runtime
 /// inherits from the active theme.
-fn map_color(c: ratatui_core::style::Color) -> Option<savvagent_plugin::ThemeColor> {
+fn map_color(c: ratatui_core::style::Color) -> Option<otto_plugin::ThemeColor> {
     use ratatui_core::style::Color;
-    use savvagent_plugin::ThemeColor;
+    use otto_plugin::ThemeColor;
     Some(match c {
         Color::Reset => return None,
         Color::Black => ThemeColor::Black,
@@ -889,7 +889,7 @@ No additional `use` lines at the top of the file: `markdown_to_styled_lines` bri
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/changelog/screen.rs
+git add crates/otto/src/plugin/builtin/changelog/screen.rs
 git commit -m "feat(changelog): markdown → StyledLine adapter (#68)
 
 Pure function markdown_to_styled_lines() drives tui-markdown and maps
@@ -905,11 +905,11 @@ inheritance)."
 ## Task 8: `changelog/mod.rs` — `ChangelogPlugin` shell
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/changelog/mod.rs`
+- Create: `crates/otto/src/plugin/builtin/changelog/mod.rs`
 
 - [ ] **Step 1: Create the module file with the plugin shell + tests**
 
-Create `crates/savvagent/src/plugin/builtin/changelog/mod.rs` with:
+Create `crates/otto/src/plugin/builtin/changelog/mod.rs` with:
 
 ```rust
 //! `internal:changelog` plugin: streams CHANGELOG.md from
@@ -929,7 +929,7 @@ Create `crates/savvagent/src/plugin/builtin/changelog/mod.rs` with:
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Contributions, Effect, Manifest, Plugin, PluginError, PluginId, PluginKind, Screen,
     ScreenArgs, ScreenSpec, SlashSpec,
 };
@@ -1171,7 +1171,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the new submodule into the plugin tree**
 
-Edit `crates/savvagent/src/plugin/builtin/mod.rs`. Find the existing `pub mod self_update;` line (around line 61) and add directly above it:
+Edit `crates/otto/src/plugin/builtin/mod.rs`. Find the existing `pub mod self_update;` line (around line 61) and add directly above it:
 
 ```rust
 /// `internal:changelog` plugin: streams CHANGELOG.md and renders it
@@ -1181,13 +1181,13 @@ pub mod changelog;
 
 - [ ] **Step 3: Verify the new module compiles**
 
-Run: `rustup run stable cargo check -p savvagent 2>&1 | tail -10`
-Expected: `Finished `dev` profile …` (no errors). If you see `error[E0432]: unresolved import …` for `ScreenSpec`, look it up in `crates/savvagent-plugin/src/manifest.rs` to confirm the type name and fix the `use` line accordingly.
+Run: `rustup run stable cargo check -p otto 2>&1 | tail -10`
+Expected: `Finished `dev` profile …` (no errors). If you see `error[E0432]: unresolved import …` for `ScreenSpec`, look it up in `crates/otto-plugin/src/manifest.rs` to confirm the type name and fix the `use` line accordingly.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/changelog/mod.rs crates/savvagent/src/plugin/builtin/mod.rs
+git add crates/otto/src/plugin/builtin/changelog/mod.rs crates/otto/src/plugin/builtin/mod.rs
 git commit -m "feat(changelog): ChangelogPlugin shell + module wiring (#68)
 
 Manifest contributes /changelog slash + the \"changelog\" screen.
@@ -1203,14 +1203,14 @@ on both Ok and Err."
 ## Task 9: Locale strings — add `[changelog]` section to all four locales
 
 **Files:**
-- Modify: `crates/savvagent/locales/en.toml`
-- Modify: `crates/savvagent/locales/es.toml`
-- Modify: `crates/savvagent/locales/hi.toml`
-- Modify: `crates/savvagent/locales/pt.toml`
+- Modify: `crates/otto/locales/en.toml`
+- Modify: `crates/otto/locales/es.toml`
+- Modify: `crates/otto/locales/hi.toml`
+- Modify: `crates/otto/locales/pt.toml`
 
 - [ ] **Step 1: Add the `[changelog]` block to `en.toml`**
 
-Locate the `[self-update]` section in `crates/savvagent/locales/en.toml` (around line 121). Immediately after the closing of that section (the blank line before `[picker.themes]`), insert:
+Locate the `[self-update]` section in `crates/otto/locales/en.toml` (around line 121). Immediately after the closing of that section (the blank line before `[picker.themes]`), insert:
 
 ```toml
 [changelog]
@@ -1229,7 +1229,7 @@ changelog-description     = "View the project's CHANGELOG.md release notes"
 
 - [ ] **Step 2: Mirror in `es.toml`**
 
-Same surgery in `crates/savvagent/locales/es.toml` with these strings (insertion points: after `[self-update]` block, and below `self-update-description` in `[plugin]`):
+Same surgery in `crates/otto/locales/es.toml` with these strings (insertion points: after `[self-update]` block, and below `self-update-description` in `[plugin]`):
 
 ```toml
 [changelog]
@@ -1276,13 +1276,13 @@ changelog-description     = "Ver as notas de versão do CHANGELOG.md do projeto"
 
 - [ ] **Step 5: Run the locales test (catches missing-key drift across files)**
 
-Run: `rustup run stable cargo test -p savvagent --test locales 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto --test locales 2>&1 | tail -10`
 Expected: all green. (If a non-English locale is missing a key the test fails with the offending key name; add it.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/locales/en.toml crates/savvagent/locales/es.toml crates/savvagent/locales/hi.toml crates/savvagent/locales/pt.toml
+git add crates/otto/locales/en.toml crates/otto/locales/es.toml crates/otto/locales/hi.toml crates/otto/locales/pt.toml
 git commit -m "i18n: add [changelog] section + plugin description (#68)
 
 New keys: slash-summary, loading, fetch-failed, retry-hint, tips, plus
@@ -1294,11 +1294,11 @@ plugin.changelog-description. en is canonical; es/hi/pt translated."
 ## Task 10: Register `ChangelogPlugin` in the runtime
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/mod.rs`
+- Modify: `crates/otto/src/plugin/mod.rs`
 
 - [ ] **Step 1: Add the registration**
 
-In `crates/savvagent/src/plugin/mod.rs`, locate the `plugins` vec inside `builtin_set()` (around line 80–98). Insert in alphabetical order (between `builtin::clear::ClearPlugin` and `builtin::command_palette::…`):
+In `crates/otto/src/plugin/mod.rs`, locate the `plugins` vec inside `builtin_set()` (around line 80–98). Insert in alphabetical order (between `builtin::clear::ClearPlugin` and `builtin::command_palette::…`):
 
 ```rust
         Box::new(builtin::changelog::ChangelogPlugin::new()),
@@ -1306,7 +1306,7 @@ In `crates/savvagent/src/plugin/mod.rs`, locate the `plugins` vec inside `builti
 
 - [ ] **Step 2: Run the full self_update + changelog test surface**
 
-Run: `rustup run stable cargo test -p savvagent changelog 2>&1 | tail -20`
+Run: `rustup run stable cargo test -p otto changelog 2>&1 | tail -20`
 Expected: all changelog tests pass (counted in the `test result: ok.` line).
 
 - [ ] **Step 3: Run the full crate test suite**
@@ -1317,7 +1317,7 @@ Expected: every line says `ok.`. No `FAILED` lines.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/mod.rs
+git add crates/otto/src/plugin/mod.rs
 git commit -m "feat(changelog): register ChangelogPlugin in builtin set (#68)
 
 Wires the new plugin into the runtime so /changelog actually fires.
@@ -1359,7 +1359,7 @@ Expected: every line says `ok.`. No `FAILED`.
 - [ ] **Step 5: Inspect the diff once more before push**
 
 Run: `git status && git log --oneline master..HEAD`
-Expected: ~10 commits ahead of master, 8 modified files plus new `crates/savvagent/src/plugin/builtin/changelog/{mod,fetch,screen}.rs` and `docs/superpowers/specs/2026-05-14-issue-68-changelog-viewer-design.md` and `docs/superpowers/plans/2026-05-14-issue-68-changelog-viewer.md`.
+Expected: ~10 commits ahead of master, 8 modified files plus new `crates/otto/src/plugin/builtin/changelog/{mod,fetch,screen}.rs` and `docs/superpowers/specs/2026-05-14-issue-68-changelog-viewer-design.md` and `docs/superpowers/plans/2026-05-14-issue-68-changelog-viewer.md`.
 
 - [ ] **Step 6: Push the branch**
 
@@ -1377,7 +1377,7 @@ gh pr create --title "feat(changelog): /changelog slash + viewer screen (#68)" -
 ## Summary
 
 - New built-in plugin `internal:changelog` exposes a `/changelog` slash command that opens a dedicated screen.
-- Screen streams `https://raw.githubusercontent.com/robhicks/savvagent-rs/master/CHANGELOG.md` and renders it via `tui-markdown`, translating the output into the plugin crate's `StyledLine` vocabulary.
+- Screen streams `https://raw.githubusercontent.com/robhicks/otto-rs/master/CHANGELOG.md` and renders it via `tui-markdown`, translating the output into the plugin crate's `StyledLine` vocabulary.
 - Scroll/retry/close keybindings: `j/k`/`↑/↓` line, `PageUp/PageDown`, `g/G`, `r` (in `Failed`), `Esc/q`.
 - New `ScreenArgs::Changelog` variant; locale strings added in en/es/hi/pt.
 - No auto-open after self-update — pure on-demand. Per-session in-memory cache.
@@ -1389,8 +1389,8 @@ Closes #68. Ships in the same release as #67 (auto-install all release binaries)
 - [x] `rustup run stable cargo fmt --all -- --check`
 - [x] `rustup run stable cargo clippy --workspace --all-targets -- -D warnings`
 - [x] `rustup run stable cargo test --workspace`
-- [ ] Manual: `cargo run -p savvagent`, type `/changelog`, confirm fetch + render + scroll + Esc close. (Run after merge.)
-- [ ] Manual: simulate offline (`SAVVAGENT_NO_UPDATE_CHECK=1` and disconnect), `/changelog`, confirm `Failed` state shows error and `r` retries. (Run after merge.)
+- [ ] Manual: `cargo run -p otto`, type `/changelog`, confirm fetch + render + scroll + Esc close. (Run after merge.)
+- [ ] Manual: simulate offline (`OTTO_NO_UPDATE_CHECK=1` and disconnect), `/changelog`, confirm `Failed` state shows error and `r` retries. (Run after merge.)
 EOF
 )"
 ```

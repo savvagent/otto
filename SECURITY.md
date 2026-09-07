@@ -1,6 +1,6 @@
 # Security model
 
-Savvagent runs language-model-driven tool spawns. The sandbox layer is
+Otto runs language-model-driven tool spawns. The sandbox layer is
 designed to contain a compromised or misbehaving tool — including
 third-party MCP servers — without crippling normal use.
 
@@ -16,7 +16,7 @@ As of v0.7, when `enabled = true` (the default on Linux and macOS):
   (`Once`/`Always-this-session`/`Deny`) replaces the static fallback in a
   follow-up release tracked under issue #17.
 - **Reads** of well-known sensitive paths under `$HOME` are denied. The
-  canonical list lives in `crates/savvagent-host/src/sensitive_paths.rs`
+  canonical list lives in `crates/otto-host/src/sensitive_paths.rs`
   (`SENSITIVE_HOME_STEMS`). On every supported platform it currently
   includes `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.config/gh`,
   `~/.mozilla`, and `~/.config/google-chrome`. macOS additionally covers
@@ -54,7 +54,7 @@ Interactive:
 /sandbox off
 ```
 
-Or in `~/.savvagent/sandbox.toml`:
+Or in `~/.otto/sandbox.toml`:
 
 ```toml
 enabled = false

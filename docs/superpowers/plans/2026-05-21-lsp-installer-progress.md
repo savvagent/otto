@@ -6,7 +6,7 @@
 
 **Architecture:** The picker hands off to a new modal `lsp_installer.progress` screen. The screen owns an `Arc<Mutex<ProgressState>>` and a `tokio::spawn`'d driver task that runs the existing `install_binary_entry` / `install_npm_entry` futures sequentially. The driver task's notify-callback writes per-stage progress into the shared state; the screen's `render()` reads from it each frame. The TUI main loop already polls events every 50 ms, so progress updates land in the UI within ~50 ms with no new `Effect` / `HostEvent` / `WorkerMsg` plumbing.
 
-**Tech Stack:** Rust, tokio, `savvagent_plugin::Screen`, existing `internal:lsp-installer` plugin, existing `installer::Downloader` + `NpmRunner` traits.
+**Tech Stack:** Rust, tokio, `otto_plugin::Screen`, existing `internal:lsp-installer` plugin, existing `installer::Downloader` + `NpmRunner` traits.
 
 **Spec:** `docs/superpowers/specs/2026-05-21-lsp-installer-progress-design.md`
 
@@ -16,11 +16,11 @@
 
 | File | Role |
 | ---- | ---- |
-| `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` (new) | `ProgressState`, `EntryProgress`, `EntryStatus`, the driver task constructor + lifecycle. Pure data + the one `tokio::spawn` call site. |
-| `crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs` (new) | `LspProgressScreen` implementing `savvagent_plugin::Screen`. Renders from `ProgressState`; handles Enter / Esc. |
-| `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs` (modify) | Add new screen to `Contributions::screens`; add `create_screen` arm; add `progress` and `progress_screen` to `pub mod` list. |
-| `crates/savvagent/src/plugin/builtin/lsp_installer/screen.rs` (modify) | `Confirm` arm emits `OpenScreen { id: "lsp_installer.progress", args: ScreenArgs::LspInstallProgress { entry_ids } }` instead of `RunSlash { name: "lsp", args: ["__install", …] }`. |
-| `crates/savvagent-plugin/src/types.rs` (modify) | Add `ScreenArgs::LspInstallProgress { entry_ids: Vec<String> }` and update `screen_id()`. |
+| `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` (new) | `ProgressState`, `EntryProgress`, `EntryStatus`, the driver task constructor + lifecycle. Pure data + the one `tokio::spawn` call site. |
+| `crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs` (new) | `LspProgressScreen` implementing `otto_plugin::Screen`. Renders from `ProgressState`; handles Enter / Esc. |
+| `crates/otto/src/plugin/builtin/lsp_installer/mod.rs` (modify) | Add new screen to `Contributions::screens`; add `create_screen` arm; add `progress` and `progress_screen` to `pub mod` list. |
+| `crates/otto/src/plugin/builtin/lsp_installer/screen.rs` (modify) | `Confirm` arm emits `OpenScreen { id: "lsp_installer.progress", args: ScreenArgs::LspInstallProgress { entry_ids } }` instead of `RunSlash { name: "lsp", args: ["__install", …] }`. |
+| `crates/otto-plugin/src/types.rs` (modify) | Add `ScreenArgs::LspInstallProgress { entry_ids: Vec<String> }` and update `screen_id()`. |
 
 `installer.rs` does **not** change — the existing `notify: impl Fn(InstallProgress)` callback shape is exactly the seam we need.
 
@@ -29,12 +29,12 @@
 ### Task 1: Add `ScreenArgs::LspInstallProgress` to the plugin surface
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/types.rs` — `ScreenArgs` enum + `screen_id()` method.
+- Modify: `crates/otto-plugin/src/types.rs` — `ScreenArgs` enum + `screen_id()` method.
 - Test: same file, `mod tests` at the bottom.
 
 - [ ] **Step 1: Add a failing test for the new variant + screen_id mapping**
 
-Open `crates/savvagent-plugin/src/types.rs`, find the existing `mod tests` block, append:
+Open `crates/otto-plugin/src/types.rs`, find the existing `mod tests` block, append:
 
 ```rust
 #[test]
@@ -59,13 +59,13 @@ fn lsp_install_progress_screen_id_is_lsp_installer_progress() {
 
 - [ ] **Step 2: Run the tests; confirm they fail to compile**
 
-Run: `cargo test -p savvagent-plugin --lib lsp_install_progress`
+Run: `cargo test -p otto-plugin --lib lsp_install_progress`
 
 Expected: compile error — `ScreenArgs::LspInstallProgress` does not exist.
 
 - [ ] **Step 3: Add the variant + `screen_id()` arm**
 
-In `crates/savvagent-plugin/src/types.rs`, inside `pub enum ScreenArgs { … }` add the variant (alphabetical-ish — after `LanguagePicker` works):
+In `crates/otto-plugin/src/types.rs`, inside `pub enum ScreenArgs { … }` add the variant (alphabetical-ish — after `LanguagePicker` works):
 
 ```rust
     /// Open the LSP-installer progress modal with the given catalog ids.
@@ -87,21 +87,21 @@ In the `impl ScreenArgs { fn screen_id(&self) -> Option<&'static str> { match se
 
 - [ ] **Step 4: Run the tests; confirm they pass**
 
-Run: `cargo test -p savvagent-plugin --lib lsp_install_progress`
+Run: `cargo test -p otto-plugin --lib lsp_install_progress`
 
 Expected: 2 tests pass.
 
 - [ ] **Step 5: Run the rest of the plugin crate's tests to confirm no regression**
 
-Run: `cargo test -p savvagent-plugin`
+Run: `cargo test -p otto-plugin`
 
 Expected: all pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/types.rs
-git commit -m "feat(savvagent-plugin): add ScreenArgs::LspInstallProgress variant for the LSP install-progress modal"
+git add crates/otto-plugin/src/types.rs
+git commit -m "feat(otto-plugin): add ScreenArgs::LspInstallProgress variant for the LSP install-progress modal"
 ```
 
 ---
@@ -109,13 +109,13 @@ git commit -m "feat(savvagent-plugin): add ScreenArgs::LspInstallProgress varian
 ### Task 2: Define `ProgressState`, `EntryStatus`, and pure state-mutation helpers
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs` — add `pub mod progress;`
+- Create: `crates/otto/src/plugin/builtin/lsp_installer/progress.rs`
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/mod.rs` — add `pub mod progress;`
 - Test: same `progress.rs` file, `#[cfg(test)] mod tests`.
 
 - [ ] **Step 1: Create the file with the type definitions**
 
-Create `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs`:
+Create `crates/otto/src/plugin/builtin/lsp_installer/progress.rs`:
 
 ```rust
 //! Shared progress state for `lsp_installer.progress`.
@@ -144,7 +144,7 @@ pub struct ProgressState {
     /// close" footer only when this is set.
     pub finished: bool,
     /// Optional final note from the config-writer pass — `Some(reason)`
-    /// when the merge into `~/.savvagent/lsp.toml` failed, `None`
+    /// when the merge into `~/.otto/lsp.toml` failed, `None`
     /// otherwise. Rendered as an extra footer line.
     pub config_error: Option<String>,
 }
@@ -240,7 +240,7 @@ mod tests {
 
 - [ ] **Step 2: Register the module in `mod.rs`**
 
-Open `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs`. After the existing `pub mod catalog;` etc. block (around line 7-11), add:
+Open `crates/otto/src/plugin/builtin/lsp_installer/mod.rs`. After the existing `pub mod catalog;` etc. block (around line 7-11), add:
 
 ```rust
 pub mod progress;
@@ -250,20 +250,20 @@ pub mod progress;
 
 - [ ] **Step 3: Run the new tests**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress`
 
 Expected: 2 tests pass.
 
-- [ ] **Step 4: Run the whole savvagent crate's tests to confirm no regression**
+- [ ] **Step 4: Run the whole otto crate's tests to confirm no regression**
 
-Run: `cargo test -p savvagent`
+Run: `cargo test -p otto`
 
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress.rs crates/otto/src/plugin/builtin/lsp_installer/mod.rs
 git commit -m "feat(internal:lsp-installer): ProgressState + EntryStatus types for the progress modal"
 ```
 
@@ -274,11 +274,11 @@ git commit -m "feat(internal:lsp-installer): ProgressState + EntryStatus types f
 This step keeps the state-transition logic separate from the spawned-task glue so it can be tested without any async.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` — add `apply_notification` + tests.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` — add `apply_notification` + tests.
 
 - [ ] **Step 1: Add failing tests for `apply_notification`**
 
-Append to `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` (inside the existing `#[cfg(test)] mod tests` block):
+Append to `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` (inside the existing `#[cfg(test)] mod tests` block):
 
 ```rust
     use crate::plugin::builtin::lsp_installer::installer::InstallProgress;
@@ -401,7 +401,7 @@ Append to `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` (insid
 
 - [ ] **Step 2: Run the tests; confirm they fail to compile**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress`
 
 Expected: compile error — `apply_notification` not in scope.
 
@@ -462,14 +462,14 @@ pub fn apply_notification(state: &mut ProgressState, ev: InstallProgress) {
 
 - [ ] **Step 4: Run the tests; confirm they pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress`
 
 Expected: all `progress` tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress.rs
 git commit -m "feat(internal:lsp-installer): apply_notification folds InstallProgress into ProgressState"
 ```
 
@@ -480,7 +480,7 @@ git commit -m "feat(internal:lsp-installer): apply_notification folds InstallPro
 The screen's constructor needs to turn the `Vec<String>` from `ScreenArgs::LspInstallProgress` into a populated `ProgressState`, marking unknown ids as `Failed { fatal: false }`.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` — add `initial_state_for_ids` + tests.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` — add `initial_state_for_ids` + tests.
 
 - [ ] **Step 1: Add failing tests**
 
@@ -528,7 +528,7 @@ Append inside `#[cfg(test)] mod tests`:
 
 - [ ] **Step 2: Run the tests; confirm compile failure**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress::tests::initial_state`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress::tests::initial_state`
 
 Expected: compile error — `initial_state_for_ids` not defined.
 
@@ -572,14 +572,14 @@ pub fn initial_state_for_ids(ids: &[String]) -> ProgressState {
 
 - [ ] **Step 4: Run the tests; confirm they pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress`
 
 Expected: all `progress` tests pass (including the three new ones).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress.rs
 git commit -m "feat(internal:lsp-installer): initial_state_for_ids resolves catalog ids into ProgressState"
 ```
 
@@ -590,7 +590,7 @@ git commit -m "feat(internal:lsp-installer): initial_state_for_ids resolves cata
 The driver task drives `install_binary_entry` / `install_npm_entry` for each known entry in `ProgressState`, updating the shared state through `apply_notification`. The function takes both the install path (so tests can use a tempdir) and the trait objects (so tests can substitute stubs).
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` — add `run_installs` + tests.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` — add `run_installs` + tests.
 
 - [ ] **Step 1: Add a failing happy-path test**
 
@@ -707,7 +707,7 @@ Append inside `#[cfg(test)] mod tests`:
 
 - [ ] **Step 2: Run the test; confirm compile failure**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress::tests::run_installs_marks_each_entry_installed`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress::tests::run_installs_marks_each_entry_installed`
 
 Expected: compile error — `run_installs` not defined.
 
@@ -832,7 +832,7 @@ A subtle correctness note: `InstallError::ChecksumMismatch`'s real shape is `{ e
 
 - [ ] **Step 4: Run the test; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress::tests::run_installs_marks_each_entry_installed`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress::tests::run_installs_marks_each_entry_installed`
 
 Expected: pass. The "Installed" check should succeed for both entries.
 
@@ -955,20 +955,20 @@ Append inside `#[cfg(test)] mod tests`:
 
 - [ ] **Step 6: Run all `run_installs` tests; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress::tests::run_installs`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress::tests::run_installs`
 
 Expected: 3 tests pass.
 
 - [ ] **Step 7: Confirm the whole crate still compiles & tests pass**
 
-Run: `cargo test -p savvagent --lib`
+Run: `cargo test -p otto --lib`
 
 Expected: all pass.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress.rs
 git commit -m "feat(internal:lsp-installer): run_installs drives the per-entry install loop against shared state"
 ```
 
@@ -979,7 +979,7 @@ git commit -m "feat(internal:lsp-installer): run_installs drives the per-entry i
 This wraps `run_installs` with the final pieces: it collects `Installed` outcomes, calls `config_writer::merge_into_user_config`, captures any error in `state.config_error`, and sets `state.finished = true`.
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` — add `spawn_driver` + tests.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` — add `spawn_driver` + tests.
 
 - [ ] **Step 1: Add a failing test for finish + config-writer success path**
 
@@ -1026,7 +1026,7 @@ Append inside `#[cfg(test)] mod tests`:
 
 - [ ] **Step 2: Run the test; confirm compile failure**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress::tests::spawn_driver_finishes_and_writes_config`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress::tests::spawn_driver_finishes_and_writes_config`
 
 Expected: compile error — `spawn_driver` not defined.
 
@@ -1110,20 +1110,20 @@ pub fn spawn_driver(
 
 - [ ] **Step 4: Run the test; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress::tests::spawn_driver_finishes_and_writes_config`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress::tests::spawn_driver_finishes_and_writes_config`
 
 Expected: pass.
 
 - [ ] **Step 5: Run the whole crate to confirm no regressions**
 
-Run: `cargo test -p savvagent`
+Run: `cargo test -p otto`
 
 Expected: all pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress.rs
 git commit -m "feat(internal:lsp-installer): spawn_driver orchestrates run_installs + config-writer + finished flag"
 ```
 
@@ -1134,13 +1134,13 @@ git commit -m "feat(internal:lsp-installer): spawn_driver orchestrates run_insta
 The screen owns the `Arc<Mutex<ProgressState>>` and the (unused after-spawn) `JoinHandle`. Its `new()` decides whether to spawn at all — if every id resolved to `Failed { fatal: false }` (all unknown), there's nothing to install and the screen opens already-finished.
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs` — add `pub mod progress_screen;`
+- Create: `crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs`
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/mod.rs` — add `pub mod progress_screen;`
 - Test: in `progress_screen.rs` `#[cfg(test)] mod tests`.
 
 - [ ] **Step 1: Create the file with the skeleton + a failing test**
 
-Create `crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs`:
+Create `crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs`:
 
 ```rust
 //! `LspProgressScreen` — modal that owns the install-driver task and
@@ -1149,7 +1149,7 @@ Create `crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs`:
 //! See `docs/superpowers/specs/2026-05-21-lsp-installer-progress-design.md`.
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, Region, Screen, StyledLine,
 };
 use std::sync::Arc;
@@ -1264,7 +1264,7 @@ mod tests {
 
 - [ ] **Step 2: Register the module in `mod.rs`**
 
-Open `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs`. Add to the module declarations:
+Open `crates/otto/src/plugin/builtin/lsp_installer/mod.rs`. Add to the module declarations:
 
 ```rust
 pub mod progress_screen;
@@ -1272,20 +1272,20 @@ pub mod progress_screen;
 
 - [ ] **Step 3: Run the tests; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress_screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress_screen`
 
 Expected: 2 tests pass.
 
 - [ ] **Step 4: Confirm the whole crate still compiles**
 
-Run: `cargo build -p savvagent`
+Run: `cargo build -p otto`
 
 Expected: success.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs crates/otto/src/plugin/builtin/lsp_installer/mod.rs
 git commit -m "feat(internal:lsp-installer): LspProgressScreen skeleton + basic render"
 ```
 
@@ -1296,7 +1296,7 @@ git commit -m "feat(internal:lsp-installer): LspProgressScreen skeleton + basic 
 Replace the minimal render with one that matches the spec's per-stage labels and shows the summary footer (`K of N done · M in progress · Q queued`).
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs` — rewrite `render` + helpers + tests.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs` — rewrite `render` + helpers + tests.
 
 - [ ] **Step 1: Add failing tests for the formatted render output**
 
@@ -1483,7 +1483,7 @@ Replace the existing `render_lists_an_entry_per_id` test and append new ones ins
         let out = rendered(&s);
         assert!(out.contains("All done"));
         assert!(out.contains("Press Enter"));
-        assert!(out.contains("Restart savvagent"));
+        assert!(out.contains("Restart otto"));
     }
 
     #[test]
@@ -1507,7 +1507,7 @@ Replace the existing `render_lists_an_entry_per_id` test and append new ones ins
 
 - [ ] **Step 2: Run the new tests; confirm they fail**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress_screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress_screen`
 
 Expected: several assertion failures (the minimal renderer doesn't emit the spec strings).
 
@@ -1552,7 +1552,7 @@ impl LspProgressScreen {
                 "All done — {installed} installed, {failed} failed."
             )));
             out.push(StyledLine::plain(
-                "Press Enter to close. Restart savvagent to pick up the new servers.",
+                "Press Enter to close. Restart otto to pick up the new servers.",
             ));
             if let Some(err) = &state.config_error {
                 out.push(StyledLine::plain(format!(
@@ -1649,20 +1649,20 @@ Delete the now-unused `glyph_for` helper.
 
 - [ ] **Step 4: Run the tests; confirm they pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress_screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress_screen`
 
 Expected: all render tests pass.
 
 - [ ] **Step 5: Run clippy on the worktree's stable toolchain**
 
-Run: `rustup run stable cargo clippy -p savvagent --lib -- -D warnings`
+Run: `rustup run stable cargo clippy -p otto --lib -- -D warnings`
 
 Expected: success.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs
 git commit -m "feat(internal:lsp-installer): rich per-stage render formatting + summary footer"
 ```
 
@@ -1671,14 +1671,14 @@ git commit -m "feat(internal:lsp-installer): rich per-stage render formatting + 
 ### Task 9: `on_key` — Enter (when finished) closes + emits summary notes; Esc dismisses with continue-in-background note
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs` — fill in `on_key` + tests.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs` — fill in `on_key` + tests.
 
 - [ ] **Step 1: Add failing tests**
 
 Append inside `#[cfg(test)] mod tests`:
 
 ```rust
-    use savvagent_plugin::KeyMods;
+    use otto_plugin::KeyMods;
 
     fn key(code: KeyCodePortable) -> KeyEventPortable {
         KeyEventPortable {
@@ -1823,7 +1823,7 @@ Append inside `#[cfg(test)] mod tests`:
 
 - [ ] **Step 2: Run the tests; confirm failures**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress_screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress_screen`
 
 Expected: 4 new tests fail (current `on_key` returns empty Vec).
 
@@ -1889,7 +1889,7 @@ fn close_and_summary(state: &ProgressState) -> Vec<Effect> {
     }
     effs.push(Effect::PushNote {
         line: StyledLine::plain(
-            "[lsp-installer] done — restart savvagent to pick up the new servers".to_string(),
+            "[lsp-installer] done — restart otto to pick up the new servers".to_string(),
         ),
     });
     effs
@@ -1898,14 +1898,14 @@ fn close_and_summary(state: &ProgressState) -> Vec<Effect> {
 
 - [ ] **Step 4: Run the tests; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress_screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress_screen`
 
 Expected: all `on_key` + render tests pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs
 git commit -m "feat(internal:lsp-installer): progress screen Enter closes + emits summary, Esc dismisses with background note"
 ```
 
@@ -1913,11 +1913,11 @@ git commit -m "feat(internal:lsp-installer): progress screen Enter closes + emit
 
 ### Task 10: Wire `spawn_driver` into `LspProgressScreen::new`
 
-The screen now constructs and spawns the driver when there's work to do. We construct the dependencies (`Target`, `~/.savvagent/lsp-bin`, `~/.savvagent/lsp.toml`, `ReqwestDownloader`, `SystemNpmRunner`) the same way `handle_install` does today — preserving the same error-handling semantics (pre-mark state with a single error entry; skip spawn).
+The screen now constructs and spawns the driver when there's work to do. We construct the dependencies (`Target`, `~/.otto/lsp-bin`, `~/.otto/lsp.toml`, `ReqwestDownloader`, `SystemNpmRunner`) the same way `handle_install` does today — preserving the same error-handling semantics (pre-mark state with a single error entry; skip spawn).
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs` — fill in the body of `LspProgressScreen::new`.
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` — make sure `spawn_driver` is `pub`.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs` — fill in the body of `LspProgressScreen::new`.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` — make sure `spawn_driver` is `pub`.
 
 - [ ] **Step 1: Implement the spawn inside `new`**
 
@@ -1959,8 +1959,8 @@ Replace the body of `LspProgressScreen::new` in `progress_screen.rs` with:
             }
         };
 
-        let lsp_bin_root = home.join(".savvagent").join("lsp-bin");
-        let lsp_toml = home.join(".savvagent").join("lsp.toml");
+        let lsp_bin_root = home.join(".otto").join("lsp-bin");
+        let lsp_toml = home.join(".otto").join("lsp.toml");
 
         // Resolve queued ids → static catalog refs. (Already-failed
         // entries from initial_state_for_ids stay as they are.)
@@ -2033,20 +2033,20 @@ Append inside `#[cfg(test)] mod tests`:
 
 - [ ] **Step 3: Run all progress-screen tests; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress_screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress_screen`
 
 Expected: pass. (No network calls — every known catalog id requires real downloads, but we don't pass any known ids here.)
 
 - [ ] **Step 4: Run the whole crate to confirm no regressions**
 
-Run: `cargo test -p savvagent`
+Run: `cargo test -p otto`
 
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress_screen.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress_screen.rs
 git commit -m "feat(internal:lsp-installer): wire spawn_driver into LspProgressScreen::new"
 ```
 
@@ -2055,11 +2055,11 @@ git commit -m "feat(internal:lsp-installer): wire spawn_driver into LspProgressS
 ### Task 11: Register the new screen in the plugin manifest + `create_screen`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs` — append a `ScreenSpec`, add a `create_screen` arm.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/mod.rs` — append a `ScreenSpec`, add a `create_screen` arm.
 
 - [ ] **Step 1: Add a failing test for the new manifest entry**
 
-Open `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs`, find the `#[cfg(test)] mod tests` block, append:
+Open `crates/otto/src/plugin/builtin/lsp_installer/mod.rs`, find the `#[cfg(test)] mod tests` block, append:
 
 ```rust
     #[test]
@@ -2078,7 +2078,7 @@ Open `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs`, find the `#[cfg
 
     #[test]
     fn create_screen_returns_progress_screen() {
-        use savvagent_plugin::ScreenArgs;
+        use otto_plugin::ScreenArgs;
         let p = LspInstallerPlugin::new();
         let screen = p
             .create_screen(
@@ -2094,7 +2094,7 @@ Open `crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs`, find the `#[cfg
 
 - [ ] **Step 2: Run the tests; confirm they fail**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::tests::manifest_advertises_progress_screen plugin::builtin::lsp_installer::tests::create_screen_returns_progress_screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::tests::manifest_advertises_progress_screen plugin::builtin::lsp_installer::tests::create_screen_returns_progress_screen`
 
 Expected: failures — the manifest doesn't list the screen and `create_screen` doesn't know the id.
 
@@ -2152,14 +2152,14 @@ Then extend `create_screen`:
 
 - [ ] **Step 4: Run the tests; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer`
 
 Expected: all pass (including the two new tests).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/mod.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/mod.rs
 git commit -m "feat(internal:lsp-installer): manifest entry + create_screen arm for lsp_installer.progress"
 ```
 
@@ -2168,11 +2168,11 @@ git commit -m "feat(internal:lsp-installer): manifest entry + create_screen arm 
 ### Task 12: Picker `Confirm` opens the progress screen instead of `RunSlash __install`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/screen.rs` — `Confirm` arm + tests.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/screen.rs` — `Confirm` arm + tests.
 
 - [ ] **Step 1: Update the existing `Confirm`-emits-RunSlash test, and add an OpenScreen one**
 
-Open `crates/savvagent/src/plugin/builtin/lsp_installer/screen.rs`, find the `enter_with_one_selection_emits_runslash_install` test (~line 173) and replace it with:
+Open `crates/otto/src/plugin/builtin/lsp_installer/screen.rs`, find the `enter_with_one_selection_emits_runslash_install` test (~line 173) and replace it with:
 
 ```rust
     #[tokio::test]
@@ -2187,7 +2187,7 @@ Open `crates/savvagent/src/plugin/builtin/lsp_installer/screen.rs`, find the `en
                     Effect::OpenScreen { id, args } => {
                         assert_eq!(id, "lsp_installer.progress");
                         match args {
-                            savvagent_plugin::ScreenArgs::LspInstallProgress { entry_ids } => {
+                            otto_plugin::ScreenArgs::LspInstallProgress { entry_ids } => {
                                 assert_eq!(entry_ids.len(), 1, "exactly one id");
                             }
                             other => panic!("expected LspInstallProgress args, got {other:?}"),
@@ -2203,7 +2203,7 @@ Open `crates/savvagent/src/plugin/builtin/lsp_installer/screen.rs`, find the `en
 
 - [ ] **Step 2: Run the test; confirm failure**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::screen::tests::enter_with_one_selection_emits_openscreen_progress`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::screen::tests::enter_with_one_selection_emits_openscreen_progress`
 
 Expected: failure — the picker still emits `RunSlash`.
 
@@ -2221,7 +2221,7 @@ In `screen.rs`, find the `MultiSelectOutcome::Confirm(items)` arm of `on_key` (~
                     Effect::CloseScreen,
                     Effect::OpenScreen {
                         id: "lsp_installer.progress".into(),
-                        args: savvagent_plugin::ScreenArgs::LspInstallProgress { entry_ids },
+                        args: otto_plugin::ScreenArgs::LspInstallProgress { entry_ids },
                     },
                 ])])
             }
@@ -2231,14 +2231,14 @@ In `screen.rs`, find the `MultiSelectOutcome::Confirm(items)` arm of `on_key` (~
 
 - [ ] **Step 4: Run the test; confirm pass**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::screen`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::screen`
 
 Expected: all picker tests pass (the zero-selection-closes test still works).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/screen.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/screen.rs
 git commit -m "feat(internal:lsp-installer): picker Confirm opens the progress modal instead of RunSlash __install"
 ```
 
@@ -2249,7 +2249,7 @@ git commit -m "feat(internal:lsp-installer): picker Confirm opens the progress m
 This integration test boots the plugin, simulates a picker Confirm, opens the progress screen with a real spawned driver, and waits for `state.finished` against a local HTTP fixture (same shape as `installer::smoke_local_http_install`).
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs` — add an `#[cfg(test)] async fn smoke_end_to_end` test that drives `spawn_driver` against a real catalog-shaped entry served from a loopback listener.
+- Modify: `crates/otto/src/plugin/builtin/lsp_installer/progress.rs` — add an `#[cfg(test)] async fn smoke_end_to_end` test that drives `spawn_driver` against a real catalog-shaped entry served from a loopback listener.
 
 - [ ] **Step 1: Add the failing test**
 
@@ -2365,7 +2365,7 @@ Append inside `#[cfg(test)] mod tests` in `progress.rs`:
 
 - [ ] **Step 2: Run the smoke test**
 
-Run: `cargo test -p savvagent --lib plugin::builtin::lsp_installer::progress::tests::smoke_spawn_driver_end_to_end`
+Run: `cargo test -p otto --lib plugin::builtin::lsp_installer::progress::tests::smoke_spawn_driver_end_to_end`
 
 Expected: pass.
 
@@ -2384,7 +2384,7 @@ Expected: clean.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/lsp_installer/progress.rs
+git add crates/otto/src/plugin/builtin/lsp_installer/progress.rs
 git commit -m "test(internal:lsp-installer): end-to-end smoke for the progress driver against a local HTTP server"
 ```
 
@@ -2404,7 +2404,7 @@ Expected: success.
 
 - [ ] **Step 2: Run the TUI against a real catalog entry**
 
-Run: `cargo run -p savvagent`
+Run: `cargo run -p otto`
 
 In the TUI, type `/lsp`, select one or two language servers with Space, press Enter. The progress modal should open. For each selected server you should see status flip through `queued → downloading… X.X MB / Y.Y MB → verifying SHA256… → extracting… → installed` (or `running npm…` for npm entries). Once all entries settle, the footer should change to `All done — N installed, M failed. Press Enter to close.`.
 

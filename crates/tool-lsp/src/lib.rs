@@ -4,8 +4,8 @@
 //! pyright, gopls, …) behind a small MCP tool surface and publishes diagnostics
 //! as MCP resources (`lsp://diagnostics/<absolute-path>`).
 //!
-//! Language servers are configured in `~/.savvagent/lsp.toml` (global) and
-//! optionally overridden per repo at `<repo>/.savvagent/lsp.toml`. No
+//! Language servers are configured in `~/.otto/lsp.toml` (global) and
+//! optionally overridden per repo at `<repo>/.otto/lsp.toml`. No
 //! languages are hardcoded; see the README for example entries.
 
 #![forbid(unsafe_code)]
@@ -48,7 +48,7 @@ use rmcp::{
 };
 use tokio::sync::OnceCell;
 
-/// Entrypoint used by the `savvagent-tool-lsp` shim binary. Reads the
+/// Entrypoint used by the `otto-tool-lsp` shim binary. Reads the
 /// configured `lsp.toml` files, starts an rmcp stdio server, and serves
 /// until stdin closes. While the server runs we spin a background task
 /// that calls [`LspPool::evict_idle`] every `IDLE_TIMEOUT / 2`; on EOF
@@ -115,17 +115,17 @@ pub struct LspServer {
 
 impl LspServer {
     /// Construct a new server: loads global + per-repo `lsp.toml`,
-    /// pins the SAVVAGENT_TOOL_LSP_ROOT (defaulting to the process CWD),
+    /// pins the OTTO_TOOL_LSP_ROOT (defaulting to the process CWD),
     /// and initializes an empty session pool.
     pub fn new() -> anyhow::Result<Self> {
         let home = std::env::var("HOME").map(std::path::PathBuf::from).ok();
         let global = home
-            .map(|h| h.join(".savvagent/lsp.toml"))
+            .map(|h| h.join(".otto/lsp.toml"))
             .unwrap_or_else(|| std::path::PathBuf::from("/dev/null"));
         let cwd = std::env::current_dir()?;
-        let repo = cwd.join(".savvagent/lsp.toml");
+        let repo = cwd.join(".otto/lsp.toml");
         let config = config::LspConfig::load(&global, Some(&repo))?;
-        let root = std::env::var("SAVVAGENT_TOOL_LSP_ROOT")
+        let root = std::env::var("OTTO_TOOL_LSP_ROOT")
             .map(std::path::PathBuf::from)
             .unwrap_or(cwd);
         let peer: Arc<OnceCell<Peer<RoleServer>>> = Arc::new(OnceCell::new());

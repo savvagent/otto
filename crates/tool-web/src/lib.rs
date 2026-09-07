@@ -90,7 +90,7 @@ impl WebTools {
     /// Query a configured search backend.
     #[tool(
         name = "web_search",
-        description = "Search the web via a configured backend (Brave Search API or SearXNG) and return {title, url, snippet} results. Requires SAVVAGENT_BRAVE_API_KEY or SAVVAGENT_SEARXNG_URL to be set. Args: {query, max_results?}."
+        description = "Search the web via a configured backend (Brave Search API or SearXNG) and return {title, url, snippet} results. Requires OTTO_BRAVE_API_KEY or OTTO_SEARXNG_URL to be set. Args: {query, max_results?}."
     )]
     pub async fn web_search(
         &self,
@@ -108,22 +108,22 @@ impl ServerHandler for WebTools {
             .with_server_info(
                 Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
                     .with_description(
-                        "Savvagent web-access tool server (web_fetch, web_search). \
+                        "Otto web-access tool server (web_fetch, web_search). \
                          web_fetch enforces an SSRF guard on every request; \
                          web_search requires an explicitly configured backend.",
                     ),
             )
             .with_instructions(
-                "Web access tool server for Savvagent. web_fetch retrieves a URL as \
+                "Web access tool server for Otto. web_fetch retrieves a URL as \
                  readable text and refuses loopback/private/link-local targets. \
-                 web_search requires SAVVAGENT_BRAVE_API_KEY or SAVVAGENT_SEARXNG_URL \
+                 web_search requires OTTO_BRAVE_API_KEY or OTTO_SEARXNG_URL \
                  to be set and returns setup instructions otherwise.",
             )
     }
 }
 
 /// Serve [`WebTools`] over a stdio MCP transport. Shared between the
-/// `savvagent-tool-web` binary and the bundled shim in the `savvagent`
+/// `otto-tool-web` binary and the bundled shim in the `otto`
 /// crate's release archive.
 pub async fn run() -> anyhow::Result<()> {
     use rmcp::{ServiceExt, transport::stdio};
@@ -138,7 +138,7 @@ pub async fn run() -> anyhow::Result<()> {
         .init();
 
     tracing::info!(
-        "savvagent-tool-web {} starting on stdio",
+        "otto-tool-web {} starting on stdio",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -202,9 +202,9 @@ mod mcp_tests {
         // SAFETY: guarded by `#[serial]`, shared with search.rs's tests that
         // also mutate these same env vars.
         unsafe {
-            std::env::remove_var("SAVVAGENT_BRAVE_API_KEY");
+            std::env::remove_var("OTTO_BRAVE_API_KEY");
             std::env::remove_var("BRAVE_API_KEY");
-            std::env::remove_var("SAVVAGENT_SEARXNG_URL");
+            std::env::remove_var("OTTO_SEARXNG_URL");
         }
         let tools = WebTools::new();
         let err = expect_err(

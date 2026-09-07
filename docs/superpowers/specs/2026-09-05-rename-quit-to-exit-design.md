@@ -2,16 +2,16 @@
 
 Date: 2026-09-05
 Status: IMPLEMENTED
-Related: `savvagent/savvagent-cli#20`
+Related: `savvagent/otto#20`
 
 ## Problem
 
-Savvagent's slash-command surface still uses `/quit` for session termination, while the issue's
+Otto's slash-command surface still uses `/quit` for session termination, while the issue's
 acceptance criteria require `/exit` to match the convention used by comparable agentic coding CLIs.
 The existing implementation is a built-in core plugin that registers `/quit`
-(`crates/savvagent/src/plugin/builtin/quit/mod.rs:1`), is advertised in the home command list
-(`crates/savvagent/src/app.rs:1427`), appears in the command-palette regression fixture
-(`crates/savvagent/src/plugin/builtin/command_palette/screen.rs:284`), and is documented in the
+(`crates/otto/src/plugin/builtin/quit/mod.rs:1`), is advertised in the home command list
+(`crates/otto/src/app.rs:1427`), appears in the command-palette regression fixture
+(`crates/otto/src/plugin/builtin/command_palette/screen.rs:284`), and is documented in the
 README (`README.md:160`). Because the README-documented slash-command surface is a public interface
 under the repo's workflow rules, renaming this command is a deliberate breaking change that cannot
 fast-path.
@@ -38,18 +38,18 @@ Success criteria:
 Rename the command at the built-in plugin boundary first, then update every user-facing discovery
 surface and test that hard-codes the old spelling.
 
-1. In `crates/savvagent/src/plugin/builtin/quit/mod.rs:8-81`, keep the module path and `Effect::Quit`
+1. In `crates/otto/src/plugin/builtin/quit/mod.rs:8-81`, keep the module path and `Effect::Quit`
    behavior but rename the user-facing command from `quit` to `exit`, retitle the plugin metadata,
    and rename the core plugin id from `internal:quit` to `internal:exit` so the plugin manager and
    builtin-manifest tests stay semantically aligned with the new command name.
-2. Update builtin registration expectations in `crates/savvagent/src/plugin/mod.rs:237` and the
-   home command list in `crates/savvagent/src/app.rs:1427` to advertise `/exit` instead of `/quit`.
+2. Update builtin registration expectations in `crates/otto/src/plugin/mod.rs:237` and the
+   home command list in `crates/otto/src/app.rs:1427` to advertise `/exit` instead of `/quit`.
 3. Update command-palette fixture/test coverage in
-   `crates/savvagent/src/plugin/builtin/command_palette/screen.rs:284-352` so the regression test
+   `crates/otto/src/plugin/builtin/command_palette/screen.rs:284-352` so the regression test
    still proves the termination command is discoverable and dispatches `Effect::RunSlash { name:
    "exit", .. }`.
-4. Keep `Effect::Quit` unchanged in `crates/savvagent/src/plugin/effects.rs:215` and its regression
-   coverage in `crates/savvagent/src/plugin/effects.rs:1201-1219`; only update comments/test prose
+4. Keep `Effect::Quit` unchanged in `crates/otto/src/plugin/effects.rs:215` and its regression
+   coverage in `crates/otto/src/plugin/effects.rs:1201-1219`; only update comments/test prose
    that name `/quit`, because the effect is the stable internal shutdown action while the slash name
    is the public surface being renamed.
 5. Update locale keys and README docs so user-facing text no longer mentions `/quit`. The key names
@@ -92,12 +92,12 @@ change for a core built-in plugin, not as a separately versioned public ABI surf
 ## Premise corrections
 
 - The issue's affected-file list is incomplete for the current codebase: locale catalogs,
-  `crates/savvagent/src/plugin/mod.rs`, and command-palette tests also hard-code `/quit` and must be
+  `crates/otto/src/plugin/mod.rs`, and command-palette tests also hard-code `/quit` and must be
   updated for a coherent rename.
-- `crates/savvagent/src/tui.rs` does not implement the slash command; it only contains a generic
+- `crates/otto/src/tui.rs` does not implement the slash command; it only contains a generic
   restore comment about quitting from the alternate screen. Functional changes are not expected
   there unless wording cleanup is warranted.
-- The rename itself does not need new runtime shutdown behavior in `crates/savvagent/src/main.rs`,
+- The rename itself does not need new runtime shutdown behavior in `crates/otto/src/main.rs`,
   because quitting is already expressed through `Effect::Quit`; however, startup regression coverage
   and user-command collision handling may still need small `main.rs` / `plugin/manifests.rs` changes
   once `/exit` becomes the built-in spelling.

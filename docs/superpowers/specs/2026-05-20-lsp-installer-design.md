@@ -2,20 +2,20 @@
 
 **Status:** Drafted 2026-05-20. Blocked on PR #90 (`feat/host-resources-and-tool-lsp`) merging — installer writes `lsp.toml` entries the `tool-lsp` config loader added in that PR will consume.
 
-**Owner area:** `crates/savvagent/src/plugin/builtin/lsp_installer/` (new), `crates/savvagent/src/plugin/widgets/multi_select_list.rs` (new).
+**Owner area:** `crates/otto/src/plugin/builtin/lsp_installer/` (new), `crates/otto/src/plugin/widgets/multi_select_list.rs` (new).
 
 ## Goals
 
 1. Ship a `/lsp` slash command that opens a multi-select picker listing curated language-server entries (name, language, install method, install status).
-2. Let the user pick one or more, confirm, and have savvagent download or install the binaries with no further intervention.
-3. Auto-merge the corresponding entries into `~/.savvagent/lsp.toml` so the next time `tool-lsp` spawns, the LSPs are usable.
+2. Let the user pick one or more, confirm, and have otto download or install the binaries with no further intervention.
+3. Auto-merge the corresponding entries into `~/.otto/lsp.toml` so the next time `tool-lsp` spawns, the LSPs are usable.
 4. Surface install progress and final status in the conversation log so the user sees what happened.
 
 ## Non-Goals
 
 - **Auto-updating** installed LSPs. v1 installs a pinned version and stops; users re-run `/lsp` to upgrade. The picker shows the installed version vs. the catalog version side-by-side so the choice is obvious.
-- **Uninstalling.** Users delete `~/.savvagent/lsp-bin/<id>/` manually and edit `lsp.toml`. Add a `/lsp remove` follow-up if anyone asks.
-- **Per-project install isolation.** Binaries are global at `~/.savvagent/lsp-bin/`; `lsp.toml` resolution is the only place per-project overrides apply (already handled by the loader from PR #90).
+- **Uninstalling.** Users delete `~/.otto/lsp-bin/<id>/` manually and edit `lsp.toml`. Add a `/lsp remove` follow-up if anyone asks.
+- **Per-project install isolation.** Binaries are global at `~/.otto/lsp-bin/`; `lsp.toml` resolution is the only place per-project overrides apply (already handled by the loader from PR #90).
 - **Installing language toolchains.** If `npm` isn't on `$PATH`, we bail with a clear message and do not attempt to install Node.
 - **Discovering already-installed system LSPs.** We don't probe `$PATH` for pre-existing `rust-analyzer` etc.; the user explicitly opts in via the picker. Out-of-band installs are still respected by `tool-lsp`'s `command` resolution.
 
@@ -54,10 +54,10 @@ On Enter with `n` items checked, the picker closes and the conversation log show
 [lsp-installer] installing 2 servers…
 [lsp-installer] rust-analyzer 2025.04.21: downloading…
 [lsp-installer] lua-language-server 3.13.2: downloading…
-[lsp-installer] rust-analyzer 2025.04.21: extracted to ~/.savvagent/lsp-bin/rust-analyzer/rust-analyzer
-[lsp-installer] lua-language-server 3.13.2: extracted to ~/.savvagent/lsp-bin/lua-language-server/bin/lua-language-server
-[lsp-installer] wrote 2 entries to ~/.savvagent/lsp.toml
-[lsp-installer] done — restart savvagent or run /reload to pick up the new servers
+[lsp-installer] rust-analyzer 2025.04.21: extracted to ~/.otto/lsp-bin/rust-analyzer/rust-analyzer
+[lsp-installer] lua-language-server 3.13.2: extracted to ~/.otto/lsp-bin/lua-language-server/bin/lua-language-server
+[lsp-installer] wrote 2 entries to ~/.otto/lsp.toml
+[lsp-installer] done — restart otto or run /reload to pick up the new servers
 ```
 
 If `npm` isn't found and a Node-based server was selected:
@@ -72,7 +72,7 @@ If `npm` isn't found and a Node-based server was selected:
 ### PR 1 — Reusable multi-select widget
 
 A standalone state-machine helper lives at
-`crates/savvagent/src/plugin/widgets/multi_select_list.rs`. It is **not** a
+`crates/otto/src/plugin/widgets/multi_select_list.rs`. It is **not** a
 `Plugin` or `Screen` — it is a generic struct that any future `Screen` impl
 can wrap. This mirrors the existing `themes::picker::ThemePicker` /
 `themes::screen::ThemePickerScreen` split, with the picker state generalised
@@ -115,12 +115,12 @@ survives the same id appearing at a different filtered index. Confirm walks
 `items` (not the filtered view) so the returned `Vec<T>` is in catalog
 order regardless of selection sequence.
 
-No new types on the `savvagent-plugin` trait surface — this is a private
-helper inside the `savvagent` crate.
+No new types on the `otto-plugin` trait surface — this is a private
+helper inside the `otto` crate.
 
 ### PR 2 — `/lsp` plugin
 
-New module `crates/savvagent/src/plugin/builtin/lsp_installer/` with:
+New module `crates/otto/src/plugin/builtin/lsp_installer/` with:
 
 ```
 lsp_installer/
@@ -248,11 +248,11 @@ written):
 
 | id                              | category | version    | install method        | binary on PATH after install                          |
 | ------------------------------- | -------- | ---------- | --------------------- | ----------------------------------------------------- |
-| rust-analyzer                   | Binary   | 2025.04.21 | gzip / zip            | `~/.savvagent/lsp-bin/rust-analyzer/rust-analyzer`    |
-| clangd                          | Binary   | 19.1.0     | zip                   | `~/.savvagent/lsp-bin/clangd/bin/clangd`              |
-| lua-language-server             | Binary   | 3.13.2     | tar.gz / zip          | `~/.savvagent/lsp-bin/lua-language-server/bin/lua-language-server` |
-| zls                             | Binary   | 0.13.0     | tar.gz / zip          | `~/.savvagent/lsp-bin/zls/zls`                        |
-| marksman                        | Binary   | 2024-12-18 | gzip / zip            | `~/.savvagent/lsp-bin/marksman/marksman`              |
+| rust-analyzer                   | Binary   | 2025.04.21 | gzip / zip            | `~/.otto/lsp-bin/rust-analyzer/rust-analyzer`    |
+| clangd                          | Binary   | 19.1.0     | zip                   | `~/.otto/lsp-bin/clangd/bin/clangd`              |
+| lua-language-server             | Binary   | 3.13.2     | tar.gz / zip          | `~/.otto/lsp-bin/lua-language-server/bin/lua-language-server` |
+| zls                             | Binary   | 0.13.0     | tar.gz / zip          | `~/.otto/lsp-bin/zls/zls`                        |
+| marksman                        | Binary   | 2024-12-18 | gzip / zip            | `~/.otto/lsp-bin/marksman/marksman`              |
 | typescript-language-server      | Npm      | 4.3.3      | `npm i -g`            | `typescript-language-server` (npm global bin)         |
 | pyright                         | Npm      | 1.1.385    | `npm i -g`            | `pyright-langserver`                                  |
 | bash-language-server            | Npm      | 5.4.4      | `npm i -g`            | `bash-language-server`                                |
@@ -271,7 +271,7 @@ pattern.
 ```rust
 pub async fn install_entry(
     entry: &CatalogEntry,
-    lsp_bin_root: &Path,            // ~/.savvagent/lsp-bin/
+    lsp_bin_root: &Path,            // ~/.otto/lsp-bin/
     npm_path: Option<&Path>,        // pre-resolved by detect_npm()
     notify: impl Fn(InstallProgress),
 ) -> Result<InstallOutcome, InstallError>;
@@ -309,7 +309,7 @@ a constant in `mod.rs`; not surfaced as a config.
 
 #### Config merge
 
-`config_writer.rs` reads `~/.savvagent/lsp.toml` if present, parses it
+`config_writer.rs` reads `~/.otto/lsp.toml` if present, parses it
 into a `serde_json::Value`-tolerant intermediate (so we don't drop
 unknown future fields), upserts each new entry by `language.id`, and
 writes back via `toml::to_string_pretty`. The merge:
@@ -322,14 +322,14 @@ writes back via `toml::to_string_pretty`. The merge:
   same pattern (best-effort; `tempfile::persist` handles the platform
   differences).
 
-The first install in any session creates `~/.savvagent/lsp.toml` if
+The first install in any session creates `~/.otto/lsp.toml` if
 it doesn't exist.
 
 #### Reload semantics
 
 `tool-lsp` reads `lsp.toml` once at child-process startup. Updating the
 file *after* the LSP tool child has started doesn't take effect until the
-tool restarts. v1 prints a "restart savvagent or run /reload" hint after
+tool restarts. v1 prints a "restart otto or run /reload" hint after
 each successful install batch. A `/reload` command (re-spawning tool-lsp)
 is **out of scope** for this initiative — it should land as part of a
 broader "reload tools" affordance later.
@@ -337,7 +337,7 @@ broader "reload tools" affordance later.
 ### Filesystem layout
 
 ```
-~/.savvagent/
+~/.otto/
 ├── lsp.toml           # written/updated by config_writer.rs
 └── lsp-bin/
     ├── rust-analyzer/
@@ -351,7 +351,7 @@ broader "reload tools" affordance later.
         └── zls
 ```
 
-The installer creates `~/.savvagent/lsp-bin/<id>/`, downloads into it,
+The installer creates `~/.otto/lsp-bin/<id>/`, downloads into it,
 extracts in place, sets the executable bit on Unix, and uses
 `binary_path` (joined to the install dir) as the absolute path written
 into `lsp.toml`'s `command` field.
@@ -364,7 +364,7 @@ Already in workspace; new module reuses them:
 - `tokio` (spawn, async io).
 - `sha2` — **not yet in workspace.** Added to `[workspace.dependencies]`
   as `sha2 = "0.10"` plus an entry in the lsp_installer's `Cargo.toml`-equivalent
-  (which is the `savvagent` crate's `[dependencies]`, since the plugin is
+  (which is the `otto` crate's `[dependencies]`, since the plugin is
   in-tree).
 - `flate2` (gzip), `tar`, `zip` — **not yet in workspace.** Added to
   `[workspace.dependencies]`. `flate2 = "1"`, `tar = "0.4"`, `zip = "5"`.
@@ -426,7 +426,7 @@ No new deps for PR 1 (the widget uses only `std` + existing
    checksum diverges the install bails clearly. The cure is a catalog
    bump in our repo — same workflow as the `cargo-dist` versioning we
    already maintain.
-2. **GitHub rate limits.** Direct downloads from `github.com/.../releases/download/` use the asset CDN and aren't subject to API rate limits, but we still set a `User-Agent: savvagent/<version>` header.
+2. **GitHub rate limits.** Direct downloads from `github.com/.../releases/download/` use the asset CDN and aren't subject to API rate limits, but we still set a `User-Agent: otto/<version>` header.
 3. **Windows binary names.** Each catalog entry needs the `.exe` suffix
    for `binary_path` when `Target::WindowsX86_64`. Spec choice: store a
    single `binary_path` and append `.exe` on Windows in `install_entry`
@@ -438,8 +438,8 @@ No new deps for PR 1 (the widget uses only `std` + existing
    it (`tokio::fs::remove_dir_all`) before extracting. This means
    `/lsp` is idempotent and acts as both install and upgrade. Captured
    in the test plan.
-6. **Permissions.** We write to `~/.savvagent/lsp-bin/` and require
-   `chmod +x` on Unix. We do not need sudo. If `~/.savvagent/` is
+6. **Permissions.** We write to `~/.otto/lsp-bin/` and require
+   `chmod +x` on Unix. We do not need sudo. If `~/.otto/` is
    non-writable we emit a `Failed` stage and the batch carries on.
 
 ## Release shape
