@@ -384,14 +384,6 @@ impl McpServerEntry {
                     ));
                 }
             }
-            Self::Http {
-                auth: McpAuthMode::Oauth,
-                ..
-            } => {
-                return Err(
-                    "oauth is not yet supported; use auth = \"bearer\" or omit auth".into(),
-                );
-            }
             Self::Http { .. } => {}
         }
         Ok(())
@@ -1024,7 +1016,7 @@ transport = "bogus"
     }
 
     #[test]
-    fn oauth_is_tolerantly_loaded_but_rejected_by_validate() {
+    fn oauth_is_tolerantly_loaded_and_accepted_by_validate() {
         let entry: McpServerEntry = toml::from_str(
             r#"
 transport = "http"
@@ -1034,8 +1026,9 @@ auth = "oauth"
 "#,
         )
         .unwrap();
-        let err = entry.validate(&HashSet::new()).unwrap_err();
-        assert!(err.contains("not yet supported"));
+        entry
+            .validate(&HashSet::new())
+            .expect("oauth http entries should validate");
     }
 
     #[test]

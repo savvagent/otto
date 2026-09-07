@@ -102,6 +102,8 @@ tui-textarea.workspace = true
 ratatui-explorer.workspace = true
 keyring.workspace = true
 reqwest.workspace = true
+axum.workspace = true
+rmcp.workspace = true
 self_update.workspace = true
 semver.workspace = true
 # user-defined slash commands

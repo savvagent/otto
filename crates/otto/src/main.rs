@@ -41,6 +41,7 @@ mod config_file;
 mod creds;
 mod egui_app;
 mod mcp_config_writer;
+mod mcp_oauth;
 mod migration;
 mod models_pref;
 mod palette;
@@ -733,7 +734,7 @@ async fn bootstrap_pool_host(
     config.connect_timeout_ms = config_file.startup.connect_timeout_ms;
     config.routing_rules_path = crate::routing_pref::routing_toml_path();
     let (mcp_tools, mcp_manager_seed) =
-        resolve_configured_mcp_servers(config_file, &mut deferred_notes);
+        resolve_configured_mcp_servers(config_file, &mut deferred_notes).await;
     for endpoint in mcp_tools {
         config.tools.push(endpoint);
     }
@@ -762,7 +763,7 @@ async fn bootstrap_pool_host(
     }
 }
 
-fn resolve_configured_mcp_servers(
+async fn resolve_configured_mcp_servers(
     config_file: &config_file::ConfigFile,
     deferred_notes: &mut Vec<String>,
 ) -> (Vec<ToolEndpoint>, McpManagerSeed) {
@@ -808,7 +809,7 @@ fn resolve_configured_mcp_servers(
                 }
             },
             config_file::McpServerEntry::Http { name, url, auth } => {
-                match resolve_mcp_http_auth(name, auth) {
+                match resolve_mcp_http_auth(name, url, auth).await {
                     Ok(auth) => ToolEndpoint::Http {
                         name: name.clone(),
                         url: url.clone(),
@@ -854,8 +855,9 @@ fn resolve_mcp_stdio_env(
     Ok(resolved)
 }
 
-fn resolve_mcp_http_auth(
+async fn resolve_mcp_http_auth(
     server_name: &str,
+    url: &str,
     auth: &config_file::McpAuthMode,
 ) -> Result<HttpAuth, String> {
     match auth {
@@ -868,9 +870,15 @@ fn resolve_mcp_http_auth(
             };
             Ok(HttpAuth::Bearer { token })
         }
-        config_file::McpAuthMode::Oauth => {
-            Err("oauth is not yet supported; use auth = \"bearer\" or omit auth".into())
-        }
+        config_file::McpAuthMode::Oauth => match crate::mcp_oauth::load_stored_secret(server_name)?
+        {
+            Some(stored) => {
+                crate::mcp_oauth::build_startup_http_auth(server_name, url, stored).await
+            }
+            None => Err(format!(
+                "missing oauth keyring state for `mcp:{server_name}`; open /mcp to authorize"
+            )),
+        },
     }
 }
 
@@ -4292,8 +4300,8 @@ mod mcp_bootstrap_tests {
     use super::*;
     use std::collections::HashMap;
 
-    #[test]
-    fn resolve_configured_mcp_servers_builds_seed_and_endpoint_for_valid_stdio_entry() {
+    #[tokio::test]
+    async fn resolve_configured_mcp_servers_builds_seed_and_endpoint_for_valid_stdio_entry() {
         let config_file = crate::config_file::ConfigFile {
             startup: Default::default(),
             migration: Default::default(),
@@ -4306,7 +4314,7 @@ mod mcp_bootstrap_tests {
             ..Default::default()
         };
         let mut notes = Vec::new();
-        let (endpoints, seed) = resolve_configured_mcp_servers(&config_file, &mut notes);
+        let (endpoints, seed) = resolve_configured_mcp_servers(&config_file, &mut notes).await;
 
         assert!(notes.is_empty());
         assert_eq!(seed.configured.len(), 1);
@@ -4330,8 +4338,8 @@ mod mcp_bootstrap_tests {
         }
     }
 
-    #[test]
-    fn resolve_configured_mcp_servers_records_skip_note_for_missing_secret() {
+    #[tokio::test]
+    async fn resolve_configured_mcp_servers_records_skip_note_for_missing_secret() {
         let config_file = crate::config_file::ConfigFile {
             startup: Default::default(),
             migration: Default::default(),
@@ -4343,7 +4351,7 @@ mod mcp_bootstrap_tests {
             ..Default::default()
         };
         let mut notes = Vec::new();
-        let (endpoints, seed) = resolve_configured_mcp_servers(&config_file, &mut notes);
+        let (endpoints, seed) = resolve_configured_mcp_servers(&config_file, &mut notes).await;
 
         assert!(endpoints.is_empty());
         assert_eq!(seed.configured.len(), 1);
@@ -4354,6 +4362,30 @@ mod mcp_bootstrap_tests {
         assert!(seed.skip_notes[0].1.contains("missing keyring secret"));
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("mcp server `remote` skipped"));
+    }
+
+    #[tokio::test]
+    async fn resolve_configured_mcp_servers_records_skip_note_for_missing_oauth_state() {
+        let config_file = crate::config_file::ConfigFile {
+            startup: Default::default(),
+            migration: Default::default(),
+            mcp_servers: vec![crate::config_file::McpServerEntry::Http {
+                name: "remote-oauth-missing".into(),
+                url: "https://example.test/mcp".into(),
+                auth: crate::config_file::McpAuthMode::Oauth,
+            }],
+            ..Default::default()
+        };
+        let mut notes = Vec::new();
+        let (endpoints, seed) = resolve_configured_mcp_servers(&config_file, &mut notes).await;
+
+        assert!(endpoints.is_empty());
+        assert_eq!(seed.configured.len(), 1);
+        assert_eq!(seed.skip_notes.len(), 1);
+        assert_eq!(seed.skip_notes[0].0, "remote-oauth-missing");
+        assert!(seed.skip_notes[0].1.contains("open /mcp to authorize"));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("mcp server `remote-oauth-missing` skipped"));
     }
 }
 

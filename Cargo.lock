@@ -5249,6 +5249,7 @@ version = "0.25.2"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "base64 0.22.1",
  "bytes",
  "crossterm",
