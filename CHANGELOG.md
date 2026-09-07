@@ -8,6 +8,13 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.25.3 - 2026-09-07
+
+### Fixed
+
+- The startup splash screen's ASCII-art logo now spells "OTTO" instead of the old "SAVVAGENT"
+  block-letter art. (#67)
+
 ## 0.25.2 - 2026-09-07
 
 ### Added
