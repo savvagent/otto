@@ -164,10 +164,14 @@ from the TUI's perspective — an env-var-only setup never gets past
 `NoCredentials`.
 
 Fix (the three cloud shims only; `provider_local` has no API key concept):
-when `creds::load(PROVIDER_ID)` returns `Ok(None)`, check
-`std::env::var(<VENDOR_ENV_VAR>).is_ok()` (the same var name the builder
-itself already reads) before concluding `NoCredentials`. If the env var is
-set, proceed to `.build()` **without** calling `.api_key(..)` so the
+when `creds::load(PROVIDER_ID)` returns `Ok(None)` **or `Err(_)`** (a
+keyring backend failure must not block an otherwise-valid env-only setup —
+treat it the same as "no keyring entry" for this fallback check only; it is
+still logged via `tracing::warn!`), check whether `std::env::var(<VENDOR_ENV_VAR>)`
+yields a **non-empty** value (matching the same non-empty criterion the
+builder itself enforces — an env var set to `""` is treated as absent, same
+as the builder does) before concluding `NoCredentials`. If a non-empty value
+is present, proceed to `.build()` **without** calling `.api_key(..)` so the
 builder's own existing fallback resolves it — this avoids duplicating the
 vendor's env-var-name knowledge in the TUI shim beyond a presence check.
 `try_connect_from_keyring` (the synchronous `/connect`-modal path) is
@@ -196,6 +200,57 @@ into `deferred_notes` unconditionally. Instead:
 This satisfies "the only startup message a user needs is 'not connected —
 run /connect' when nothing is available" while keeping a debugging path
 (`verbose = true`) for anyone who wants to see every connector attempt.
+
+#### 2a. `apply_pending_pool_add` is called from both startup and runtime — it must know which
+
+`apply_pending_pool_add` (`crates/otto/src/main.rs`) is not exclusive to
+explicit `/connect`. `HostEvent::HostStarting` subscribers (the same
+`try_connect_from_keyring`-based silent-connect path each provider plugin
+runs) also emit `Effect::RegisterProvider`, which queues `app.pending_pool_add`
+and is drained by the **one** startup call site right after the
+`HostStarting` dispatch (`main.rs` ~line 3071, inside the same startup
+sequence as `bootstrap_pool_host`). The other three call sites (~lines 1092,
+3478, 3764) drain pool-adds queued by user-driven actions (slash commands,
+screen actions, bound actions) after the TUI event loop is already running.
+
+Today `apply_pending_pool_add` treats every drain identically and
+unconditionally calls `app.push_note(...)` for the `Rejected` and
+fallback-note branches. Left as-is, this reintroduces exactly the noise
+this spec is trying to remove: if a user has one healthy provider and one
+configured-but-revoked provider, `HostStarting`'s silent-connect will queue
+a `RegisterProvider` for the revoked one, and the startup-time drain at
+line 3071 will unconditionally push a `Connect to <id> failed: ...` note
+even with `startup.verbose = false`.
+
+Fix: give `apply_pending_pool_add` a `startup: bool` parameter.
+
+- The call at ~line 3071 (immediately after the `HostStarting` dispatch,
+  still inside `bootstrap_pool_host`'s startup sequence) passes `true`.
+- The other three call sites (~1092, ~3478, ~3764 — all reached only after
+  the TUI's main loop is running, in response to a slash command or bound
+  action) pass `false`.
+- Inside `apply_pending_pool_add`, the `Rejected` and fallback-note (`Some
+  fallback_note`) branches gate their `app.push_note(...)` calls behind
+  `!startup || config_file.startup.verbose` (i.e. always shown for
+  runtime-driven drains — that is the existing, wanted `/connect` UX —
+  and shown for startup-driven drains only when `verbose` is on). The
+  `tracing::warn!`/`tracing::debug!` calls are unconditional either way, so
+  a `verbose = false` startup rejection is still fully diagnosable from
+  logs.
+- The `Ok(None)` ("key vanished from keyring") and hard `Err` ("host pool
+  rejected the add") branches keep the same `startup` gating treatment —
+  both are pre-existing rare/edge conditions, not the common "bad key"
+  case, but they're still startup noise if left ungated.
+- Notes must be gated **before** the `PoolError::AlreadyRegistered` check
+  in the `host.add_provider(reg).await` match, matching current code order
+  (the fallback note from a successful rebuild is pushed before the
+  dedup-with-bootstrap check runs) — the gating change must not reorder
+  this, only make the push conditional.
+
+This keeps the "one host, one pool, one source of truth" invariant intact:
+`apply_pending_pool_add` still always attempts the pool add (so a
+silently-connected provider ends up routable via `/model`), it only stops
+being noisy about *why* a rejected one didn't make it in, at startup.
 
 ### 3. Attribute turn-time provider errors to the provider
 
