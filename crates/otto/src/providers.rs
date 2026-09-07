@@ -76,6 +76,13 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         api_key_required: true,
     },
     ProviderSpec {
+        id: "deepseek",
+        display_name: "DeepSeek",
+        api_key_env: "DEEPSEEK_API_KEY",
+        default_model: "deepseek-v4-flash",
+        api_key_required: true,
+    },
+    ProviderSpec {
         id: "local",
         display_name: "Ollama (local)",
         api_key_env: "OLLAMA_HOST",

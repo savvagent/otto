@@ -22,7 +22,7 @@ pub enum MigrationOutcome {
 
 /// Known provider ids to scan the keyring for. Order matters: deterministic
 /// fallback when the user dismisses the picker.
-const KNOWN_PROVIDERS: &[&str] = &["anthropic", "gemini", "openai", "local"];
+const KNOWN_PROVIDERS: &[&str] = &["anthropic", "gemini", "openai", "deepseek", "local"];
 
 pub fn decide_migration(cfg: &ConfigFile) -> MigrationOutcome {
     if cfg.migration.v1_done {
