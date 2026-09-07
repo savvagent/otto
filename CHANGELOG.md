@@ -8,6 +8,8 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.24.0 - 2026-09-07
+
 ### Changed
 
 - **Breaking, comprehensive rename: the project is renamed from `savvagent` to `otto`.** Every
