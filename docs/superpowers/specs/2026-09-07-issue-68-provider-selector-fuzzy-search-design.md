@@ -31,7 +31,9 @@ Keep the existing `/connect` command and modal structure, but teach the modal to
 manage a lightweight query string and a filtered view over
 `crate::providers::effective_providers()`. The change stays entirely in the TUI
 shell (`crates/otto`) and does not alter `otto-host`, provider transport, or
-keyring persistence rules.
+keyring persistence rules. Because the work touches `crates/otto/src/app.rs`
+and `crates/otto/src/main.rs`, the implementation must preserve the host-swap
+`RwLock` rule by avoiding any new `.await` while holding host read guards.
 
 1. **App-owned selector state.** Extend `App` in `crates/otto/src/app.rs` with
    provider-selector query state and helper methods that derive the currently
@@ -56,8 +58,8 @@ keyring persistence rules.
    already empty. This keeps the flow keyboard-driven and consistent with other
    otto pickers.
 4. **Graceful short-list UI.** In `crates/otto/src/ui.rs:397-436`, render a
-   compact filter row only when it is useful: either the total provider catalog
-   exceeds a small threshold (so discoverability matters) or the user has
+   compact filter row only when it is useful: either the total provider catalog has more than five entries (so
+   discoverability matters) or the user has
    already typed a query. For short catalogs with an empty query, keep the
    current uncluttered list-only modal. When a query yields no matches, render an
    explicit empty-state row and keep the typed query visible so the user can edit
@@ -129,9 +131,9 @@ This is a TUI interaction improvement within the existing `/connect` command.
   Rationale: users may think in branded names ("OpenAI") or ids used elsewhere
   in otto (`openai`, `deepseek`).
 - **Short-list degradation means no always-visible search row when the provider
-  catalog is still just a handful of entries.** Rationale: the issue explicitly
-  asks to avoid search-box clutter; a hidden-until-needed row satisfies that
-  while still allowing typing to filter.
+  catalog has five or fewer entries.** Rationale: the issue explicitly asks to
+  avoid search-box clutter; hiding the row at today's five built-ins keeps the
+  existing uncluttered modal while still allowing typing to reveal filtering.
 - **Esc should clear the active query before dismissing the dialog.**
   Rationale: this matches common picker behavior and lets keyboard users recover
   from an over-restrictive query without reopening `/connect`.
@@ -155,8 +157,8 @@ keyring-based API-key capture rules.
       modal only when no stored credential exists; stored credentials still
       bypass the prompt.
 - [ ] For short provider catalogs, the selector remains uncluttered until a
-      query is actually needed, while longer catalogs show a discoverable filter
-      affordance.
+      query is actually needed, while catalogs with six or more entries show a
+      discoverable filter affordance.
 
 ## Error Handling & Edge Cases
 
