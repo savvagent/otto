@@ -393,7 +393,15 @@ pub fn render(
 
     // Screen-stack: if any screen is on top, paint it over the home chrome.
     if let Some((top_screen, layout)) = app.screen_stack.top() {
-        paint_screen(frame, area, chunks[4].y, top_screen, layout, palette);
+        paint_screen(
+            frame,
+            area,
+            chunks[4].y,
+            top_screen,
+            layout,
+            palette,
+            &app.splash_sandbox,
+        );
     }
 
     if matches!(app.input_mode, InputMode::SelectingProvider) {
@@ -1213,11 +1221,16 @@ fn paint_screen(
     screen: &dyn otto_plugin::Screen,
     layout: &otto_plugin::ScreenLayout,
     palette: Palette,
+    splash_sandbox: &crate::splash::SandboxSplashState,
 ) {
     use otto_plugin::ScreenLayout;
 
     match layout {
         ScreenLayout::Fullscreen { .. } => {
+            if screen.id() == "splash" {
+                crate::splash::render(f, area, splash_sandbox);
+                return;
+            }
             // Full-frame overlay: paint content directly.
             f.render_widget(Clear, area);
             f.buffer_mut().set_style(area, palette.base_style());
@@ -1534,7 +1547,12 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::plugin::builtin::themes::catalog::Theme;
-    use otto_plugin::{StyledLine, StyledSpan, TextMods, ThemeColor};
+    use async_trait::async_trait;
+    use otto_plugin::{
+        Effect, KeyEventPortable, PluginError, Region, Screen, ScreenLayout, StyledLine,
+        StyledSpan, TextMods, ThemeColor,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
 
     fn span(text: &str) -> StyledSpan {
@@ -1579,6 +1597,68 @@ mod tests {
 
     fn fresh_app() -> App {
         App::new(String::new(), PathBuf::from("."), "en".to_string())
+    }
+
+    struct FakeScreen {
+        id: String,
+        body: Vec<StyledLine>,
+        tips: Vec<StyledLine>,
+    }
+
+    #[async_trait]
+    impl Screen for FakeScreen {
+        fn id(&self) -> String {
+            self.id.clone()
+        }
+
+        fn render(&self, _region: Region) -> Vec<StyledLine> {
+            self.body.clone()
+        }
+
+        async fn on_key(&mut self, _key: KeyEventPortable) -> Result<Vec<Effect>, PluginError> {
+            Ok(vec![])
+        }
+
+        fn tips(&self) -> Vec<StyledLine> {
+            self.tips.clone()
+        }
+    }
+
+    fn render_paint_screen(
+        screen: &dyn Screen,
+        layout: &ScreenLayout,
+        palette: Palette,
+        splash_sandbox: crate::splash::SandboxSplashState,
+    ) -> Buffer {
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                paint_screen(
+                    frame,
+                    area,
+                    area.bottom(),
+                    screen,
+                    layout,
+                    palette,
+                    &splash_sandbox,
+                );
+            })
+            .expect("paint_screen draw succeeds");
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_text(buffer: &Buffer) -> String {
+        let area = buffer.area();
+        let mut out = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
     }
 
     #[test]
@@ -1691,6 +1771,67 @@ mod tests {
         let empty: Vec<Line<'static>> = vec![];
         let out = compose_footer_ratatui_line([&empty, &empty, &empty], &rsep());
         assert!(out.spans.is_empty());
+    }
+
+    #[test]
+    fn paint_screen_fullscreen_splash_uses_shared_splash_renderer() {
+        let buffer = render_paint_screen(
+            &FakeScreen {
+                id: "splash".into(),
+                body: vec![one_span_line("fake splash body")],
+                tips: vec![one_span_line("fake splash tips")],
+            },
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            palette(),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = buffer_text(&buffer);
+
+        assert!(
+            text.contains("███████╗"),
+            "fullscreen splash screen should render the shared startup logo: {text}"
+        );
+        assert!(
+            text.contains("the savvy MCP-native terminal coding agent"),
+            "fullscreen splash screen should render the shared startup tagline: {text}"
+        );
+        assert!(
+            text.contains("sandbox: on (use /sandbox off to disable)"),
+            "fullscreen splash screen should render the shared sandbox line: {text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "press any key to continue · v{}",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "fullscreen splash screen should render the shared versioned hint: {text}"
+        );
+        assert!(
+            !text.contains("fake splash body") && !text.contains("fake splash tips"),
+            "shared splash render should ignore plugin-provided body/tips text: {text}"
+        );
+    }
+
+    #[test]
+    fn paint_screen_fullscreen_non_splash_keeps_screen_render_output() {
+        let buffer = render_paint_screen(
+            &FakeScreen {
+                id: "plugins.manager".into(),
+                body: vec![one_span_line("fullscreen body")],
+                tips: vec![one_span_line("fullscreen tips")],
+            },
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            palette(),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = buffer_text(&buffer);
+
+        assert!(text.contains("fullscreen body"));
+        assert!(text.contains("fullscreen tips"));
+        assert!(
+            !text.contains("the savvy MCP-native terminal coding agent"),
+            "non-splash fullscreen screens must not be rerouted through splash rendering: {text}"
+        );
     }
 
     #[test]
