@@ -552,7 +552,7 @@ async fn bootstrap_pool_host(
                         }
                     }
                 }
-                Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::NoCredentials)) => {
+                Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Unavailable)) => {
                     // No credentials stored; user will /connect later.
                 }
                 Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Rejected(reason))) => {
@@ -1781,7 +1781,7 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot, 
             }
             r
         }
-        Ok(ProviderBuildOutcome::NoCredentials) => {
+        Ok(ProviderBuildOutcome::Unavailable) => {
             // Key vanished from keyring between RegisterProvider being
             // emitted and this drainer running. Rare; surface a note so
             // the user knows what happened.
@@ -2561,7 +2561,7 @@ async fn perform_connect(
             }
             r
         }
-        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::NoCredentials) => {
+        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Unavailable) => {
             // Keyring read returned nothing despite the just-saved key —
             // likely a backend issue.
             app.push_note(

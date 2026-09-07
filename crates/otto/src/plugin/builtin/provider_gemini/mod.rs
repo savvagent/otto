@@ -106,7 +106,7 @@ impl ProviderGeminiPlugin {
             && (std::env::var("GEMINI_API_KEY").is_ok_and(|v| !v.is_empty())
                 || std::env::var("GOOGLE_API_KEY").is_ok_and(|v| !v.is_empty()));
         if keyring_key.is_none() && !env_key_present {
-            return Ok(ProviderBuildOutcome::NoCredentials);
+            return Ok(ProviderBuildOutcome::Unavailable);
         }
         let mut builder = provider_gemini::GeminiProvider::builder();
         if let Some(key) = &keyring_key {

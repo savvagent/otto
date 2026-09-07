@@ -141,7 +141,7 @@ impl ProviderAnthropicPlugin {
     /// `ANTHROPIC_API_KEY` environment fallback) and the plugin's static
     /// capability metadata.
     ///
-    /// Returns [`ProviderBuildOutcome::NoCredentials`] when no key is found
+    /// Returns [`ProviderBuildOutcome::Unavailable`] when no key is found
     /// in either the keyring or the environment — this is not an error; the
     /// user can run `/connect anthropic` later.
     /// Returns [`ProviderBuildOutcome::Rejected`] when a key was found but
@@ -165,7 +165,7 @@ impl ProviderAnthropicPlugin {
         let env_key_present = keyring_key.is_none()
             && std::env::var("ANTHROPIC_API_KEY").is_ok_and(|v| !v.is_empty());
         if keyring_key.is_none() && !env_key_present {
-            return Ok(ProviderBuildOutcome::NoCredentials);
+            return Ok(ProviderBuildOutcome::Unavailable);
         }
         let mut builder = provider_anthropic::AnthropicProvider::builder();
         if let Some(key) = &keyring_key {

@@ -181,13 +181,18 @@ pub(crate) fn caps_from_list_models(
 ///
 /// `tracing::warn` still records the underlying error for log readers.
 /// Outcome of a provider shim's `try_build_registration`: distinguishes
-/// "no credentials at all" from "credentials present but rejected" from
+/// "not configured/unreachable" from "configured but rejected" from
 /// "ready to register" so callers (startup, `/connect`, pool-add) can give
 /// each case the right user-facing treatment instead of collapsing them
 /// into a single `Option`.
 pub(crate) enum ProviderBuildOutcome {
-    /// No key in the keyring and none in the environment fallback.
-    NoCredentials,
+    /// The provider has no usable configuration to attempt a connection
+    /// with: for keyed cloud shims (Anthropic/Gemini/OpenAI), no key in the
+    /// keyring and none in the environment fallback; for keyless shims
+    /// (Local/Ollama), the builder itself failed (e.g. endpoint unreachable
+    /// or misconfigured). Distinct from [`Self::Rejected`], which means a
+    /// connection attempt was made and explicitly refused.
+    Unavailable,
     /// A key was found but `list_models` rejected it (bad key, no credit,
     /// rate-limited, org disabled, ...). Carries a human-readable reason.
     Rejected(String),

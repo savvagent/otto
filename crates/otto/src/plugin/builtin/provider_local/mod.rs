@@ -88,7 +88,7 @@ impl ProviderLocalPlugin {
     /// Attempt to build a [`ProviderRegistration`] from the local Ollama
     /// endpoint. Unlike the cloud providers, no keyring lookup is needed;
     /// the call always tries to build a client. Returns
-    /// [`ProviderBuildOutcome::NoCredentials`] when the builder fails
+    /// [`ProviderBuildOutcome::Unavailable`] when the builder fails
     /// (Ollama not running) — not an error, the user can start
     /// `ollama serve` and run `/connect local` later. `provider_local` has
     /// no API key concept, so this is the only "not available" case; a
@@ -103,7 +103,7 @@ impl ProviderLocalPlugin {
                 tracing::warn!(error = %e, "ollama provider build failed at startup");
                 // Treat a failed build as "not available" rather than a hard
                 // error — Ollama might simply not be running yet.
-                return Ok(ProviderBuildOutcome::NoCredentials);
+                return Ok(ProviderBuildOutcome::Unavailable);
             }
         };
         let client: Arc<dyn ProviderClient + Send + Sync> =

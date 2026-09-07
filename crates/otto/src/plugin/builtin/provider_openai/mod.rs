@@ -113,7 +113,7 @@ impl ProviderOpenAiPlugin {
         let env_key_present =
             keyring_key.is_none() && std::env::var("OPENAI_API_KEY").is_ok_and(|v| !v.is_empty());
         if keyring_key.is_none() && !env_key_present {
-            return Ok(ProviderBuildOutcome::NoCredentials);
+            return Ok(ProviderBuildOutcome::Unavailable);
         }
         let mut builder = provider_openai::OpenAiProvider::builder();
         if let Some(key) = &keyring_key {
