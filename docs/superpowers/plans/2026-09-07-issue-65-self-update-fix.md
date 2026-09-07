@@ -28,10 +28,10 @@
 
 - [ ] Add failing tests in `crates/otto/src/plugin/builtin/self_update/mod.rs` covering: (a) a fresh cache entry equal to the running version no longer suppresses a startup fetch when a newer release exists, and (b) `/update` invoked from an `UpToDate` or `Unknown` state performs a live GitHub check and installs when the fetched tag is newer. Expected result: the new tests fail against the current stale-cache and state-only slash behavior.
 - [ ] Run `cargo test -p otto --bin otto plugin::builtin::self_update::tests::first_tick_equal_cache_revalidates_live -- --nocapture && cargo test -p otto --bin otto plugin::builtin::self_update::tests::slash_update_rechecks_live_and_installs_when_newer -- --nocapture`. Expected result: one or both tests fail before implementation.
-- [ ] Public-interface check: record in the task ledger that the `/update` slash-command surface keeps the same name/args/env vars and only corrects documented behavior.
+- [ ] Public-interface check: record in the per-task ledger for the Phase 6 summary (session todo notes, not a repo file) that the `/update` slash-command surface keeps the same name/args/env vars and only corrects documented behavior.
 - [ ] Host-swap/RwLock check: not applicable — no `app.rs` / `tui.rs` lock-bearing async path touched.
 - [ ] ProgressDispatcher check: not applicable — no streaming provider path touched.
-- [ ] Format and commit: after the task is implemented and passing, run `cargo fmt --all` and `git commit -m "otto: cover self-update stale-cache regressions"`.
+- [ ] Format and commit: stage the regression tests together with their implementation fix (no tests-only intermediate commit required), run `cargo fmt --all`, and `git commit -m "otto: cover self-update stale-cache regressions"`.
 
 ## Task 2: Fix startup revalidation, live `/update`, and docs
 
