@@ -23,9 +23,13 @@ starting and completing the authorization flow and surfacing authorization failu
   `token_endpoint_auth_method = "none"` with `application_type = "native"` during dynamic client
   registration. Rationale: the TUI is a local desktop/CLI app and must not ship or persist a shared
   client secret.
-- OAuth authorization will use a **loopback redirect URI** on `127.0.0.1` with an ephemeral port,
-  plus a manual copy-open fallback note if launching the browser fails. Rationale: this is the best
-  fit for a local native client and avoids custom URI schemes.
+- OAuth authorization will use a **loopback redirect URI** on `127.0.0.1` with a stable stored
+  redirect URI once a client registration exists; the first authorization attempt may choose an
+  ephemeral port, and later re-authorization attempts will try to re-bind that exact stored URI
+  before falling back to a fresh DCR registration if the port is unavailable. Otto will also show a
+  manual copy-open fallback note if launching the browser fails. Rationale: this preserves exact
+  redirect-URI matching for authorization servers that validate registered loopback URIs strictly
+  while still allowing recovery when the old port can no longer be reused.
 - The `/mcp` manager will remain **restart-to-apply** after successful authorization, matching the
   existing add/remove MCP-server UX shipped in #41. Rationale: runtime tool-registry mutation is
   still out of scope for this issue.
@@ -200,9 +204,11 @@ OAuth begin flow:
 1. Validate the selected server is `transport = "http"` + `auth = "oauth"`.
 2. Discover protected-resource and authorization-server metadata.
 3. Require `code_challenge_methods_supported` to contain `S256`; fail closed if absent.
-4. Start a loopback HTTP listener on `127.0.0.1:0` and derive `redirect_uri`.
-5. Build/register the public client via DCR if there is no stored registration bound to the
-   discovered issuer.
+4. If Otto already has a stored registration for the same issuer, try to bind a loopback listener at
+   that exact stored `redirect_uri`; otherwise bind `127.0.0.1:0` and derive a new `redirect_uri`.
+5. Reuse the stored client registration only when the issuer matches **and** the stored redirect URI
+   could be rebound exactly; otherwise perform a fresh DCR registration using the newly bound
+   listener URI and replace the stored registration on success.
 6. Create an `AuthorizationSession`, derive the authorization URL, extract/store the `state`, and
    remember the expected issuer / issuer-support flag for callback validation.
 7. Return effects that both open the authorization URL in the system browser and push a note telling
@@ -282,6 +288,8 @@ user can copy it manually.
 - **Authorization denied by user**: surface `error` / `error_description` from the callback.
 - **Refresh token unavailable or refresh rejected**: runtime requests fail with an authorization
   required message; `/mcp` can re-run the authorize flow.
+- **Stored redirect URI port unavailable**: fall back to a fresh listener + fresh DCR registration
+  rather than reusing a client whose redirect URI no longer matches.
 - **Loopback bind failure**: fail begin-auth with a clear local-listener error.
 - **Deleting a configured OAuth server**: remove the config row and delete the keyring secret just as
   the bearer path already does.
@@ -312,6 +320,9 @@ user can copy it manually.
   callback `iss` validation). The implementation must not assume `rmcp` already covers those details.
 - The current `/mcp` screen model is key-driven and intentionally simple. The final UX must stay
   understandable without introducing a full background task UI.
+- `ToolServerStatus` is a startup snapshot, not a live auth-health stream. The implementation should
+  keep OAuth runtime status simple: startup/auth-flow state must be reflected clearly in `/mcp`, and
+  deeper live-status work can stay out of scope unless required to satisfy the issue.
 - Dynamic client registration is deprecated in the MCP authorization docs in favor of client ID
   metadata documents, but the issue explicitly asks for DCR. Otto should keep the implementation
   narrowly scoped and avoid over-investing in abstractions that would only matter for a later CIMD
