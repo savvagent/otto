@@ -78,29 +78,29 @@ branch naming below matches the existing worktree branch name; do not rename it)
   `src/stream.rs`, `src/mcp.rs`, `tests/integration.rs`
 - Modify: `Cargo.toml` (root)
 
-- [ ] Read `crates/provider-openai/{Cargo.toml,src/api.rs,src/translate.rs,src/stream.rs,
+- [x] Read `crates/provider-openai/{Cargo.toml,src/api.rs,src/translate.rs,src/stream.rs,
       src/mcp.rs,src/lib.rs,tests/integration.rs}` in full — these are the files to mirror.
-- [ ] Create `crates/provider-deepseek/Cargo.toml`: same `[package]` shape as
+- [x] Create `crates/provider-deepseek/Cargo.toml`: same `[package]` shape as
       `provider-openai/Cargo.toml` (`name = "provider-deepseek"`, `description = "DeepSeek Chat
       Completions API as a Otto SPP provider"`, `[lib] name = "provider_deepseek" path =
       "src/lib.rs"`), identical `[dependencies]`/`[dev-dependencies]` block (`otto-protocol`,
       `otto-mcp`, `otto-fence`, `anyhow`, `async-trait`, `axum`, `bytes`, `dotenvy`, `futures`,
       `reqwest`, `rmcp`, `serde`, `serde_json`, `thiserror`, `tokio`, `tracing`,
       `tracing-subscriber`; dev: `tokio` with `macros`/`rt-multi-thread`, `axum` with `json`).
-- [ ] Copy `provider-openai/src/api.rs` to `provider-deepseek/src/api.rs` verbatim (DeepSeek's
+- [x] Copy `provider-openai/src/api.rs` to `provider-deepseek/src/api.rs` verbatim (DeepSeek's
       chat-completion request/response schema is identical to OpenAI's) — only update doc
       comments that say "OpenAI" to say "DeepSeek".
-- [ ] Copy `provider-openai/src/stream.rs` to `provider-deepseek/src/stream.rs` verbatim, updating
+- [x] Copy `provider-openai/src/stream.rs` to `provider-deepseek/src/stream.rs` verbatim, updating
       doc comments only. Verify (and preserve) any `JoinHandle::abort()` /
       `ProgressDispatcher`-forwarder pattern present in the source file byte-for-byte in behavior.
-- [ ] Copy `provider-openai/src/translate.rs` to `provider-deepseek/src/translate.rs`, renaming
+- [x] Copy `provider-openai/src/translate.rs` to `provider-deepseek/src/translate.rs`, renaming
       `request_to_openai`/`response_from_openai` to `request_to_deepseek`/
       `response_from_deepseek` (and updating any internal type names that reference `api::` items
       renamed in the previous steps — types themselves keep their shape, only the module's public
       fn names change to avoid confusingly-OpenAI-branded names in a DeepSeek crate). Do **not**
       add a `"thinking"` or `reasoning_effort` field to the outgoing request struct/serialization —
       per the spec's Non-goals, this crate never enables DeepSeek's thinking mode.
-- [ ] Copy `provider-openai/src/mcp.rs` to `provider-deepseek/src/mcp.rs`, renaming
+- [x] Copy `provider-openai/src/mcp.rs` to `provider-deepseek/src/mcp.rs`, renaming
       `OpenAiMcpServer` to `DeepSeekMcpServer` and updating its `from_shared` constructor's type
       bound to `DeepSeekProvider`. This file's `#[cfg(test)]` module includes
       `list_models_tool_returns_structured_filtered_set`, whose mock serves `/v1/models` with
@@ -109,7 +109,7 @@ branch naming below matches the existing worktree branch name; do not rename it)
       Task 1's `CHAT_COMPLETIONS_PATH`/`list_models` changes below), use DeepSeek fixture ids
       (`deepseek-v4-flash`, `deepseek-v4-pro`), and assert every listed id is returned unfiltered
       (no filtering behavior to test, unlike OpenAI's).
-- [ ] Write `crates/provider-deepseek/src/lib.rs` by copying `provider-openai/src/lib.rs` and
+- [x] Write `crates/provider-deepseek/src/lib.rs` by copying `provider-openai/src/lib.rs` and
       substituting: `OpenAiProvider`/`OpenAiProviderBuilder` → `DeepSeekProvider`/
       `DeepSeekProviderBuilder`; `DEFAULT_BASE_URL = "https://api.deepseek.com"`;
       `CHAT_COMPLETIONS_PATH = "/chat/completions"` (no `/v1` prefix); `DEFAULT_MODEL =
@@ -120,29 +120,29 @@ branch naming below matches the existing worktree branch name; do not rename it)
       sites matching Task 1's renamed `translate.rs` functions. Keep the module doc's crate-layout
       list, `#![forbid(unsafe_code)]`, `#![warn(missing_docs)]`, and error-mapping helpers
       (`map_reqwest_error`, `http_status_error`, `parse_error_response`) unchanged in shape.
-- [ ] Adjust the copied `list_models_tests` module (moved into `lib.rs`, same as
+- [x] Adjust the copied `list_models_tests` module (moved into `lib.rs`, same as
       `provider-openai`'s): since DeepSeek's catalog has no non-chat models to filter, rewrite the
       three tests to assert `list_models` returns every id the mock server lists unfiltered (drop
       the `text-embedding-3-small`/`whisper-1` filtering-out assertions; keep the HTTP-401
       error-propagation test and the default-model-id present/absent tests, using
       `deepseek-v4-flash`/`deepseek-v4-pro` ids in the mock fixtures instead of `gpt-4o-mini`/
       `o1-mini`).
-- [ ] Copy `provider-openai/tests/integration.rs` to `provider-deepseek/tests/integration.rs`,
+- [x] Copy `provider-openai/tests/integration.rs` to `provider-deepseek/tests/integration.rs`,
       updating provider type names and the mock chat-completions path to
       `/chat/completions` (no `/v1` prefix) to match this crate's `CHAT_COMPLETIONS_PATH`.
-- [ ] Add `crates/provider-deepseek` to root `Cargo.toml`'s `[workspace] members` (alphabetical
+- [x] Add `crates/provider-deepseek` to root `Cargo.toml`'s `[workspace] members` (alphabetical
       slot: after `crates/provider-anthropic`, before `crates/provider-gemini`) and to
       `workspace.dependencies` (`provider-deepseek = { path = "crates/provider-deepseek", version
       = "0.24.0" }`, same alphabetical slot).
-- [ ] Run targeted validation: `cargo test -p provider-deepseek`. Expect all unit + integration
+- [x] Run targeted validation: `cargo test -p provider-deepseek`. Expect all unit + integration
       tests to pass.
-- [ ] Run `cargo build -p provider-deepseek --all-targets` to confirm the new crate compiles
+- [x] Run `cargo build -p provider-deepseek --all-targets` to confirm the new crate compiles
       cleanly on its own before wiring it into `crates/otto`.
-- [ ] Public-interface check: this task adds a new library crate and a new optional env var
+- [x] Public-interface check: this task adds a new library crate and a new optional env var
       (`DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`, `OTTO_DEEPSEEK_LISTEN`) — additive only, per the
       spec's Non-Negotiable Rule 6 analysis. No existing interface changes shape.
-- [ ] Host-swap `RwLock` check: not applicable — this task touches no `app.rs`/`tui.rs` code.
-- [ ] ProgressDispatcher check: the `ProgressDispatcher` forwarder-abort pattern lives in
+- [x] Host-swap `RwLock` check: not applicable — this task touches no `app.rs`/`tui.rs` code.
+- [x] ProgressDispatcher check: the `ProgressDispatcher` forwarder-abort pattern lives in
       `crates/otto-host/src/provider.rs`'s `RmcpProviderClient` (the opt-in MCP-over-HTTP
       transport path), not in any provider crate's `stream.rs` — `provider-openai/src/stream.rs`
       is a plain SSE-to-`StreamEvent` adapter with no `ProgressDispatcher` involvement. This task
@@ -151,7 +151,7 @@ branch naming below matches the existing worktree branch name; do not rename it)
       (The `diff crates/provider-openai/src/stream.rs crates/provider-deepseek/src/stream.rs`
       check remains useful as a plain correctness check on the SSE adapter copy, just not as the
       ProgressDispatcher verification.)
-- [ ] Format and commit: `cargo fmt --all` then
+- [x] Format and commit: `cargo fmt --all` then
       `git commit -m "provider-deepseek: add DeepSeek Chat Completions provider crate"`.
 
 ## Task 2: Add the built-in `ProviderDeepSeekPlugin` provider shim
@@ -162,9 +162,9 @@ branch naming below matches the existing worktree branch name; do not rename it)
 - Modify: `crates/otto/Cargo.toml`
 - Create: `crates/otto/src/bin/otto-deepseek.rs`
 
-- [ ] Read `crates/otto/src/plugin/builtin/provider_openai/mod.rs` in full — this is the file to
+- [x] Read `crates/otto/src/plugin/builtin/provider_openai/mod.rs` in full — this is the file to
       mirror.
-- [ ] Write failing tests first in a new
+- [x] Write failing tests first in a new
       `crates/otto/src/plugin/builtin/provider_deepseek/mod.rs`: copy
       `provider_openai/mod.rs`'s five `#[cfg(test)] mod tests` functions
       (`no_creds_emits_prompt_api_key`, `handle_slash_with_stored_key_skips_modal`,
@@ -173,7 +173,7 @@ branch naming below matches the existing worktree branch name; do not rename it)
       `ProviderOpenAiPlugin` → `ProviderDeepSeekPlugin` and the keyring/provider-id string
       `"openai"` → `"deepseek"` throughout. These will fail to compile until the production code
       below exists.
-- [ ] Implement the production code in the same file: `PLUGIN_ID =
+- [x] Implement the production code in the same file: `PLUGIN_ID =
       "internal:provider-deepseek"`, `PROVIDER_ID = "deepseek"`, `DISPLAY_NAME = "DeepSeek"`;
       `ProviderDeepSeekPlugin` struct, `new()`, `#[cfg(test)] with_test_client`,
       `#[cfg(test)] set_active_for_render`; `capabilities()` returning two
@@ -186,32 +186,32 @@ branch naming below matches the existing worktree branch name; do not rename it)
       `try_connect_from_keyring`; the `Plugin` impl (`manifest`, `handle_slash`, `on_event`,
       `render_slot`) and `BuiltinProviderPlugin::take_client`, all copied from
       `provider_openai/mod.rs`'s shape with the constants above substituted.
-- [ ] Register the new submodule in `crates/otto/src/plugin/builtin/mod.rs` (add `pub(crate) mod
+- [x] Register the new submodule in `crates/otto/src/plugin/builtin/mod.rs` (add `pub(crate) mod
       provider_deepseek;` alongside the existing `provider_openai`/`provider_gemini` module
       declarations, in the same alphabetical/insertion-order convention already used there).
-- [ ] Add `provider-deepseek = { workspace = true }` to `crates/otto/Cargo.toml`'s
+- [x] Add `provider-deepseek = { workspace = true }` to `crates/otto/Cargo.toml`'s
       `[dependencies]` (alphabetical slot, after `provider-anthropic`, before `provider-gemini`) —
       required before the plugin module above will compile.
-- [ ] Add a `[[bin]] name = "otto-deepseek" path = "src/bin/otto-deepseek.rs"` target to
+- [x] Add a `[[bin]] name = "otto-deepseek" path = "src/bin/otto-deepseek.rs"` target to
       `crates/otto/Cargo.toml`, inserted after the `otto-openai` bin target.
-- [ ] Create `crates/otto/src/bin/otto-deepseek.rs` as a 10-line shim copied from
+- [x] Create `crates/otto/src/bin/otto-deepseek.rs` as a 10-line shim copied from
       `otto-openai.rs`, calling `provider_deepseek::run()`.
-- [ ] Add `otto-deepseek` rows to both `crates/otto/Cargo.toml`'s `[package.metadata.deb]`
+- [x] Add `otto-deepseek` rows to both `crates/otto/Cargo.toml`'s `[package.metadata.deb]`
       `assets` list and `[package.metadata.generate-rpm]` `assets` list, matching the existing
       `otto-anthropic`/`otto-gemini`/`otto-openai` row shape, inserted after the `otto-openai` row
       in each list.
-- [ ] Run targeted tests: `cargo test -p otto -- provider_deepseek::`. Expect all five tests to
+- [x] Run targeted tests: `cargo test -p otto -- provider_deepseek::`. Expect all five tests to
       pass.
-- [ ] Run `cargo build -p otto --bin otto-deepseek` to confirm the new shim binary compiles and
+- [x] Run `cargo build -p otto --bin otto-deepseek` to confirm the new shim binary compiles and
       links against the new crate.
-- [ ] Public-interface check: a new built-in provider plugin id (`internal:provider-deepseek`) and
+- [x] Public-interface check: a new built-in provider plugin id (`internal:provider-deepseek`) and
       a new shipped binary (`otto-deepseek`) — additive.
-- [ ] Host-swap `RwLock` check: not applicable — this plugin module holds no `Arc<RwLock<...>>`
+- [x] Host-swap `RwLock` check: not applicable — this plugin module holds no `Arc<RwLock<...>>`
       state of its own; it only constructs a client and hands it to the runtime via
       `BuiltinProviderPlugin::take_client`, same as every existing provider plugin.
-- [ ] ProgressDispatcher check: not applicable at this layer — already verified at the crate level
+- [x] ProgressDispatcher check: not applicable at this layer — already verified at the crate level
       in Task 1.
-- [ ] Format and commit: `cargo fmt --all` then
+- [x] Format and commit: `cargo fmt --all` then
       `git commit -m "otto: add ProviderDeepSeekPlugin built-in provider shim"`.
 
 ## Task 3: Wire DeepSeek into every provider-catalog call site
@@ -223,33 +223,33 @@ branch naming below matches the existing worktree branch name; do not rename it)
 - Modify: `crates/otto/src/migration.rs`
 - Modify: `crates/otto/src/plugin/effects.rs`
 
-- [ ] Write/adjust the failing test first in `crates/otto/src/plugin/effects.rs`: extend the
+- [x] Write/adjust the failing test first in `crates/otto/src/plugin/effects.rs`: extend the
       `build_connect_candidates` test's `for expected in [...]` array to include `"deepseek"`
       alongside `"anthropic"`, `"gemini"`, `"openai"`, `"local"`.
-- [ ] Run the targeted test before implementation: `cargo test -p otto -- build_connect_candidates`
+- [x] Run the targeted test before implementation: `cargo test -p otto -- build_connect_candidates`
       (or the exact test function name in that module). Expect failure — `"deepseek"` is not yet a
       connect candidate.
-- [ ] In `crates/otto/src/plugin/mod.rs`, add
+- [x] In `crates/otto/src/plugin/mod.rs`, add
       `ProviderEntry::new(builtin::provider_deepseek::ProviderDeepSeekPlugin::new())` to the `Vec`
       that currently registers `provider_anthropic`, `provider_openai`, `provider_gemini`,
       `provider_local` — insert it immediately after the `provider_openai` entry.
-- [ ] In that same file's `register_builtins_pr8_complete` test, update the hardcoded counts this
+- [x] In that same file's `register_builtins_pr8_complete` test, update the hardcoded counts this
       new entry invalidates: add `"internal:provider-deepseek"` to the expected-id array; change
       `assert_eq!(set.providers.len(), 4)` to `5`; change `assert_eq!(reg.len(), 33, ...)` to `34`
       (update the accompanying comment's arithmetic from "28 non-provider + 4 provider + 1 hook" to
       "28 non-provider + 5 provider + 1 hook"); change `assert_eq!(reg.provider_count(), 4, ...)`
       to `5`.
-- [ ] In `crates/otto/src/main.rs`'s `bootstrap_pool_host`, add
+- [x] In `crates/otto/src/main.rs`'s `bootstrap_pool_host`, add
       `provider_deepseek::ProviderDeepSeekPlugin` to the `use crate::plugin::builtin::{...}`
       import list and add `try_provider!(ProviderDeepSeekPlugin::new(), "DeepSeek", "deepseek");`
       immediately after the `ProviderOpenAiPlugin` line.
-- [ ] In both of `crates/otto/src/main.rs`'s reconnect `match` statements (the ones currently
+- [x] In both of `crates/otto/src/main.rs`'s reconnect `match` statements (the ones currently
       containing `"openai" => ProviderOpenAiPlugin::new().try_build_registration().await,` near
       the file's `/connect <id>` and reconnect-on-model-switch paths), add the corresponding `use`
       import for `ProviderDeepSeekPlugin` in that function's scope and a `"deepseek" =>
       ProviderDeepSeekPlugin::new().try_build_registration().await,` arm immediately after each
       existing `"openai"` arm.
-- [ ] In `crates/otto/src/providers.rs`, add a `ProviderSpec` entry to the `PROVIDERS` const,
+- [x] In `crates/otto/src/providers.rs`, add a `ProviderSpec` entry to the `PROVIDERS` const,
       inserted after the `"openai"` entry and before the `"local"` entry:
       ```rust
       ProviderSpec {
@@ -260,35 +260,35 @@ branch naming below matches the existing worktree branch name; do not rename it)
           api_key_required: true,
       },
       ```
-- [ ] In `crates/otto/src/migration.rs`, add `"deepseek"` to the `KNOWN_PROVIDERS` const array,
+- [x] In `crates/otto/src/migration.rs`, add `"deepseek"` to the `KNOWN_PROVIDERS` const array,
       after `"openai"`.
-- [ ] Run targeted validation after implementation: `cargo test -p otto -- build_connect_candidates`
+- [x] Run targeted validation after implementation: `cargo test -p otto -- build_connect_candidates`
       (expect pass); `cargo test -p otto -- register_builtins_pr8_complete` (expect pass with the
       updated counts); `cargo test -p otto -- migration::` (expect existing migration tests still
       pass — `KNOWN_PROVIDERS` growing by one entry must not change any fixed-count assertion; if
       any test hardcodes the four-provider list length, update it alongside this change);
       `cargo test -p otto -- providers::` (expect `effective_providers_includes_builtins` to still
       pass with five built-ins).
-- [ ] Grep for any other hardcoded provider-id enumeration that might need the same addition:
+- [x] Grep for any other hardcoded provider-id enumeration that might need the same addition:
       `rg -n '"anthropic".*"gemini".*"openai"|KNOWN_PROVIDERS|PROVIDERS: &\[' crates/otto/src` —
       confirm every match found is already covered by this task's edits, or extend this task's
       edit list if a new call site turns up.
-- [ ] Run full workspace tests: `cargo test --workspace`. Expect all tests to pass, including
+- [x] Run full workspace tests: `cargo test --workspace`. Expect all tests to pass, including
       `provider-deepseek`'s own suite from Task 1 and `provider_deepseek`'s plugin tests from
       Task 2.
-- [ ] Public-interface check: additive only — a new provider id surfaces in `/connect`, `/model`,
+- [x] Public-interface check: additive only — a new provider id surfaces in `/connect`, `/model`,
       `/use`, and `@provider:model` routing; no existing provider id, tool schema, or slash command
       changes shape.
-- [ ] Host-swap `RwLock` check: `main.rs`'s `bootstrap_pool_host` and reconnect match arms run
+- [x] Host-swap `RwLock` check: `main.rs`'s `bootstrap_pool_host` and reconnect match arms run
       before any `Arc<RwLock<Option<Arc<Host>>>>` guard is held (these are pre-host-construction /
       pool-registration paths) — verify no `.await` in this task's diff executes while holding
       such a guard; these edits are synchronous list/match additions plus an
       already-`.await`-based `try_build_registration()` call using the exact same pattern as the
       three sibling providers already in that code path.
-- [ ] Run full required validation: `cargo build --workspace --all-targets`; `cargo test
+- [x] Run full required validation: `cargo build --workspace --all-targets`; `cargo test
       --workspace`; `cargo clippy --workspace --all-targets`; `cargo fmt --all --check`. Expect all
       four commands to pass with `RUSTFLAGS=-D warnings` cleanliness preserved.
-- [ ] Format and commit: `cargo fmt --all` then
+- [x] Format and commit: `cargo fmt --all` then
       `git commit -m "otto: register DeepSeek across the provider catalog"`.
 
 ## Task 4: Document DeepSeek in README.md
@@ -296,27 +296,27 @@ branch naming below matches the existing worktree branch name; do not rename it)
 **Files:**
 - Modify: `README.md`
 
-- [ ] Update the provider-count prose from "three standalone provider MCP servers" to "four
+- [x] Update the provider-count prose from "three standalone provider MCP servers" to "four
       standalone provider MCP servers".
-- [ ] Update the `crates/otto` workspace-map table row to list
+- [x] Update the `crates/otto` workspace-map table row to list
       `otto-{anthropic,gemini,openai,deepseek}` instead of `otto-{anthropic,gemini,openai}`.
-- [ ] Add a `crates/provider-deepseek` row to the workspace-map table immediately after the
+- [x] Add a `crates/provider-deepseek` row to the workspace-map table immediately after the
       `crates/provider-openai` row: `| [\`crates/provider-deepseek\`](crates/provider-deepseek) |
       DeepSeek Chat Completions, same shape (OpenAI-compatible wire format). |`.
-- [ ] Grep for any provider-id enumeration in prose/examples that lists all built-ins (not
+- [x] Grep for any provider-id enumeration in prose/examples that lists all built-ins (not
       single-provider illustrative examples): `rg -n 'anthropic.*gemini.*openai|gemini.*openai.*local'
       README.md` — add a `deepseek` mention to each true enumeration found; leave single-provider
       illustrative examples (e.g. `@gemini explain this`) unchanged since they only need one
       example provider, not an exhaustive list.
-- [ ] Grep for a "standalone provider" binary-invocation section or env-var table that enumerates
+- [x] Grep for a "standalone provider" binary-invocation section or env-var table that enumerates
       `otto-anthropic`/`otto-gemini`/`otto-openai` and their env vars (`ANTHROPIC_API_KEY`,
       `GEMINI_API_KEY`, `OPENAI_API_KEY`, etc.): `rg -n 'otto-openai|OPENAI_BASE_URL|OTTO_OPENAI_LISTEN'
       README.md` — add the corresponding `otto-deepseek` / `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`
       / `OTTO_DEEPSEEK_LISTEN` row(s) to any such table/section found, and correct any "N shipping
       binaries" count in the same table if this addition changes it.
-- [ ] No test command applies to a documentation-only task; visually diff the rendered table
+- [x] No test command applies to a documentation-only task; visually diff the rendered table
       (`git diff README.md`) to confirm no unrelated row was altered.
-- [ ] Format and commit: `git commit -m "docs: document the DeepSeek provider in README"` (no
+- [x] Format and commit: `git commit -m "docs: document the DeepSeek provider in README"` (no
       `cargo fmt` needed — Markdown only).
 
 ## Task 5: Record the release follow-through required after merge
@@ -324,7 +324,7 @@ branch naming below matches the existing worktree branch name; do not rename it)
 **Files:**
 - No feature-branch code changes; this task records the mandatory release follow-through.
 
-- [ ] Note in the feature PR body and release handoff that a dedicated release PR must be opened
+- [x] Note in the feature PR body and release handoff that a dedicated release PR must be opened
       immediately after merge to bump `workspace.package.version` and all internal
       `workspace.dependencies` versions (including the new `provider-deepseek` entry) to
       `0.25.0`, add a `CHANGELOG.md` entry describing the new DeepSeek provider as an added

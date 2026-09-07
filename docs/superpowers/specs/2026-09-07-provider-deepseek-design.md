@@ -1,6 +1,6 @@
 # provider-deepseek Design
 
-> **Status:** DRAFT
+> **Status:** IMPLEMENTED
 
 **Ref:** savvagent/otto#57 — "Add provider for DeepSeek"
 
