@@ -39,6 +39,8 @@ plan implements it exactly.
 - `crates/otto-host/src/config.rs` — add `HttpAuth::OAuth` and redact it in `Debug`.
 - `crates/otto-host/src/tools.rs` — construct HTTP transports with either the default reqwest
   client or an OAuth `AuthClient`, and improve auth-failure status text.
+- `crates/otto/Cargo.toml` — add `axum` (already a workspace dependency) so the otto crate can host
+  the loopback OAuth callback listener.
 - `crates/otto/src/creds.rs` — typed load/save helpers for structured OAuth blobs while preserving
   raw bearer-token compatibility.
 - `crates/otto/src/config_file.rs` — accept `auth = "oauth"` for HTTP MCP servers.
@@ -78,10 +80,13 @@ plan implements it exactly.
 
 **Files:**
 - Create: `crates/otto/src/mcp_oauth.rs`
+- Modify: `crates/otto/Cargo.toml`
 - Modify: `crates/otto/src/creds.rs`
 - Modify: `crates/otto/src/config_file.rs`
 - Modify: `crates/otto/src/main.rs`
 
+- [ ] Add `axum = { workspace = true }` to `crates/otto/Cargo.toml` so the otto crate can host the
+      loopback callback listener without introducing a new dependency source.
 - [ ] In `crates/otto/src/creds.rs`, add typed helpers for serializing/deserializing structured OAuth
       blobs under `mcp:<server name>` while preserving raw-string bearer-token helpers for existing
       HTTP servers.
