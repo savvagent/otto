@@ -102,7 +102,9 @@ Success criteria:
   brand-new registry abstraction; it is richer HTTP auth wiring plus TUI-side OAuth state handling.
 - The workspace's `rmcp` dependency already contains a transport-auth subsystem implementing core
   OAuth discovery, PKCE helpers, refresh-token handling, and credential/state storage traits. Otto
-  should reuse that infrastructure rather than reimplementing RFC 7636/7591 mechanics from scratch.
+  should reuse that infrastructure for token/state management and transport auth, but **not** blindly
+  for DCR request construction where MCP-specific fields (notably `application_type = "native"`)
+  need stricter control than `rmcp` 1.6 currently exposes.
 
 ## Public-interface changes
 
@@ -139,6 +141,10 @@ Create a new TUI-side module (e.g. `crates/otto/src/mcp_oauth.rs`) that owns:
 - `PendingOAuthSession`: in-memory flow state for one `/mcp` authorization attempt, including the
   discovered metadata snapshot, expected issuer, whether `iss` is required, the loopback redirect
   URI, and a oneshot/receiver used by the local callback listener.
+- `DynamicRegistrationClient`: a tiny Otto-owned helper that POSTs the DCR JSON body directly with
+  `reqwest` so Otto can include `application_type = "native"` and any other required fields while
+  still handing the resulting client registration back to `AuthorizationManager` for the rest of the
+  flow.
 
 `creds.rs` remains the single OS-keyring boundary, but it grows typed helpers for loading/saving the
 structured OAuth blob in addition to the existing raw `mcp_save`/`mcp_load` bearer-token path.
@@ -172,8 +178,10 @@ reason suitable for `/mcp` status rows.
 
 ### 3. Resolve `auth = "oauth"` entries during host bootstrap
 
-`crates/otto/src/config_file.rs` stops rejecting `McpAuthMode::Oauth` in `validate()`. Instead,
-`crates/otto/src/main.rs::resolve_mcp_http_auth` becomes a three-way resolver:
+`crates/otto/src/config_file.rs` stops rejecting `McpAuthMode::Oauth` in `validate()`. Because OAuth
+metadata rediscovery and auth-client construction are async, `crates/otto/src/main.rs` must also
+reshape `resolve_configured_mcp_servers`/`resolve_mcp_http_auth` from a synchronous helper into an
+async bootstrap step. The resolver becomes a three-way async path:
 
 - `None` => `HttpAuth::None`
 - `Bearer` => current raw-token load from `mcp:<server name>`
@@ -221,8 +229,8 @@ Completion/poll flow:
 3. If a callback arrived with `error`, surface it directly.
 4. Validate `state` and `iss` (RFC 9207 rules using the stored expected issuer and the
    `authorization_response_iss_parameter_supported` metadata flag).
-5. Exchange the code through `AuthorizationSession::handle_callback`, which persists the resulting
-   token set via the keyring-backed credential store.
+5. Exchange the code through `AuthorizationManager::exchange_code_for_token`, which persists the
+   resulting token set via the keyring-backed credential store.
 6. Persist/update the registration binding blob, clear the in-memory pending session, and tell the
    user to restart Otto to apply the newly authorized server.
 
@@ -316,8 +324,9 @@ user can copy it manually.
 ## Risks & open questions
 
 - `rmcp`'s built-in auth layer provides most of the mechanics we need, but Otto still needs to
-  enforce a few stricter MCP requirements itself (notably fail-closed PKCE metadata checks and
-  callback `iss` validation). The implementation must not assume `rmcp` already covers those details.
+  enforce a few stricter MCP requirements itself (notably fail-closed PKCE metadata checks,
+  callback `iss` validation, and `application_type = "native"` in the DCR request). The
+  implementation must not assume `rmcp` already covers those details.
 - The current `/mcp` screen model is key-driven and intentionally simple. The final UX must stay
   understandable without introducing a full background task UI.
 - `ToolServerStatus` is a startup snapshot, not a live auth-health stream. The implementation should

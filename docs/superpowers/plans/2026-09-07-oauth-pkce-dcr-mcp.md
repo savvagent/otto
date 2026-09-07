@@ -44,8 +44,9 @@ plan implements it exactly.
 - `crates/otto/src/creds.rs` — typed load/save helpers for structured OAuth blobs while preserving
   raw bearer-token compatibility.
 - `crates/otto/src/config_file.rs` — accept `auth = "oauth"` for HTTP MCP servers.
-- `crates/otto/src/main.rs` — resolve OAuth-configured MCP servers into `HttpAuth::OAuth`, surface
-  startup skip notes, and thread the new module into host bootstrap.
+- `crates/otto/src/main.rs` — make configured-MCP resolution async, resolve OAuth-configured MCP
+  servers into `HttpAuth::OAuth`, surface startup skip notes, and thread the new module into host
+  bootstrap.
 - `crates/otto/src/plugin/builtin/mcp/mod.rs` — extend `McpManagerOps` with OAuth begin/poll/clear.
 - `crates/otto/src/plugin/builtin/mcp/screen.rs` — add HTTP auth-mode selection and authorize/check
   actions in the `/mcp` manager screen.
@@ -96,6 +97,9 @@ plan implements it exactly.
       `StoredMcpOAuthSecret`, `KeyringOAuthCredentialStore`, callback payload/state structs, startup
       auth-client builder, and helper functions for validating issuer binding and strict PKCE
       metadata requirements.
+- [ ] Refactor `crates/otto/src/main.rs` so configured MCP-server resolution is async end-to-end
+      (`resolve_configured_mcp_servers`, `resolve_mcp_http_auth`, and the bootstrap callers) before
+      wiring in metadata rediscovery; the sync shape used today is not sufficient for OAuth.
 - [ ] Update `crates/otto/src/main.rs::resolve_mcp_http_auth` so OAuth rows load the structured blob,
       rediscover metadata at startup, validate issuer binding, configure an `AuthorizationManager`,
       and emit `HttpAuth::OAuth { client }`; missing/malformed OAuth state must degrade gracefully to
@@ -117,15 +121,16 @@ plan implements it exactly.
 - Modify: `crates/otto/src/plugin/builtin/mcp/mod.rs`
 
 - [ ] In `crates/otto/src/mcp_oauth.rs`, implement OAuth begin/poll/cancel orchestration: metadata
-      discovery, dynamic client registration for a native/public client, loopback listener startup,
-      browser authorization URL creation, callback capture, RFC 9207 `iss` validation, and token
-      exchange via PKCE.
+      discovery, **Otto-owned reqwest DCR request construction** for a native/public client
+      (`application_type = "native"`), loopback listener startup, browser authorization URL
+      creation, callback capture, RFC 9207 `iss` validation, and token exchange via PKCE.
 - [ ] Reuse stored client registrations only when issuer matches and the stored redirect URI can be
       rebound exactly; otherwise perform fresh DCR and overwrite the stored registration on success.
 - [ ] Ensure the loopback listener binds only to `127.0.0.1`, accepts one callback, shuts down on
       completion/cancel, and never logs codes/tokens.
 - [ ] Extend `McpManagerOps` in `crates/otto/src/plugin/builtin/mcp/mod.rs` with OAuth begin/poll
-      methods and wire the real implementation through `RealMcpManagerOps` to the new module.
+      methods and an explicit pending-session cleanup path for delete/retry/close behavior; wire the
+      real implementation through `RealMcpManagerOps` to the new module.
 - [ ] Add focused tests for DCR request shape, callback validation (`state`, `iss`, OAuth error
       callbacks), success-path token persistence, and refresh-token persistence via the credential
       store.
