@@ -5978,6 +5978,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "provider-deepseek"
+version = "0.24.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "bytes",
+ "dotenvy",
+ "futures",
+ "otto-fence",
+ "otto-mcp",
+ "otto-protocol",
+ "reqwest 0.13.3",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "provider-gemini"
 version = "0.24.0"
 dependencies = [
