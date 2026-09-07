@@ -14,7 +14,9 @@ use otto_plugin::{
     TextMods, ThemeColor,
 };
 
-use super::provider_common::{BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps};
+use super::provider_common::{
+    BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps,
+};
 
 const PLUGIN_ID: &str = "internal:provider-gemini";
 const PROVIDER_ID: &str = "gemini";

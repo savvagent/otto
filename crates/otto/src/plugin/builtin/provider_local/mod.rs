@@ -17,7 +17,9 @@ use otto_plugin::{
     TextMods, ThemeColor,
 };
 
-use super::provider_common::{BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps};
+use super::provider_common::{
+    BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps,
+};
 
 const PLUGIN_ID: &str = "internal:provider-local";
 const PROVIDER_ID: &str = "local";

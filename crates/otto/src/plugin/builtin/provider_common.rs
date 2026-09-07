@@ -270,8 +270,8 @@ mod build_dynamic_caps_tests {
     use super::*;
     use async_trait::async_trait;
     use otto_protocol::{
-        CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ModelInfo,
-        ProviderError, StreamEvent,
+        CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ModelInfo, ProviderError,
+        StreamEvent,
     };
     use tokio::sync::mpsc;
 
@@ -341,11 +341,14 @@ mod build_dynamic_caps_tests {
             DynamicCapsOutcome::Ready(_, Some(note)) => {
                 assert!(note.contains("Test Provider"))
             }
-            other => panic!("expected Ready with fallback note, got {}", match other {
-                DynamicCapsOutcome::Rejected(_) => "Rejected",
-                DynamicCapsOutcome::Ready(_, None) => "Ready(None)",
-                _ => unreachable!(),
-            }),
+            other => panic!(
+                "expected Ready with fallback note, got {}",
+                match other {
+                    DynamicCapsOutcome::Rejected(_) => "Rejected",
+                    DynamicCapsOutcome::Ready(_, None) => "Ready(None)",
+                    _ => unreachable!(),
+                }
+            ),
         }
     }
 
@@ -378,11 +381,14 @@ mod build_dynamic_caps_tests {
         let outcome = build_dynamic_caps(&client, static_caps(), "Test Provider").await;
         match outcome {
             DynamicCapsOutcome::Ready(_, None) => {}
-            other => panic!("expected Ready(_, None), got {}", match other {
-                DynamicCapsOutcome::Rejected(_) => "Rejected",
-                DynamicCapsOutcome::Ready(_, Some(_)) => "Ready(Some)",
-                _ => unreachable!(),
-            }),
+            other => panic!(
+                "expected Ready(_, None), got {}",
+                match other {
+                    DynamicCapsOutcome::Rejected(_) => "Rejected",
+                    DynamicCapsOutcome::Ready(_, Some(_)) => "Ready(Some)",
+                    _ => unreachable!(),
+                }
+            ),
         }
     }
 }

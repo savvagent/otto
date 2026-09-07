@@ -14,7 +14,9 @@ use otto_plugin::{
     TextMods, ThemeColor,
 };
 
-use super::provider_common::{BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps};
+use super::provider_common::{
+    BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps,
+};
 
 const PLUGIN_ID: &str = "internal:provider-openai";
 const PROVIDER_ID: &str = "openai";
@@ -108,8 +110,8 @@ impl ProviderOpenAiPlugin {
                 None
             }
         };
-        let env_key_present = keyring_key.is_none()
-            && std::env::var("OPENAI_API_KEY").is_ok_and(|v| !v.is_empty());
+        let env_key_present =
+            keyring_key.is_none() && std::env::var("OPENAI_API_KEY").is_ok_and(|v| !v.is_empty());
         if keyring_key.is_none() && !env_key_present {
             return Ok(ProviderBuildOutcome::NoCredentials);
         }

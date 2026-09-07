@@ -2552,7 +2552,10 @@ async fn perform_connect(
         }
     };
     let reg = match reg_result {
-        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Ready(r, fallback_note)) => {
+        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Ready(
+            r,
+            fallback_note,
+        )) => {
             if let Some(note) = fallback_note {
                 app.push_note(note);
             }

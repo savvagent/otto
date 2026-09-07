@@ -23,7 +23,9 @@ use otto_plugin::{
     TextMods, ThemeColor,
 };
 
-use super::provider_common::{BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps};
+use super::provider_common::{
+    BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps,
+};
 
 /// Provider plugin id (used by `apply_effects` to look up the right shim
 /// when a [`Effect::RegisterProvider`] arrives).
