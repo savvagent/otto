@@ -1,7 +1,7 @@
 # Support OAuth 2.1 + PKCE + dynamic client registration for remote HTTP MCP servers — design
 
 Date: 2026-09-07
-Status: pending review
+Status: IMPLEMENTED
 Related: `savvagent/otto#49`
 Related: `docs/superpowers/specs/2026-09-05-mcp-servers-design.md`
 
@@ -320,6 +320,19 @@ user can copy it manually.
   authorize/check actions, and note generation.
 - Workspace validation before PR: `cargo build --workspace`, `cargo test --workspace`,
   `cargo clippy --workspace --all-targets`, `cargo fmt --all -- --check`.
+
+## Implementation notes
+
+- Otto reuses `rmcp`'s `AuthorizationManager`/`AuthClient` stack for discovery, PKCE, token
+  exchange, and refresh, but keeps dynamic client registration in Otto-owned `reqwest` code so the
+  registration payload can include `application_type = "native"` and other MCP-native-client
+  expectations explicitly.
+- Startup OAuth resolution is fully async in `crates/otto/src/main.rs`, matching the spec's final
+  critique round: Otto rediscoveres authorization metadata before constructing `HttpAuth::OAuth`
+  and skips invalid/missing OAuth state with actionable startup notes instead of aborting the whole
+  host bootstrap.
+- The shipped UX keeps insufficient-scope and refresh failures as clear manual reauthorization paths
+  surfaced in `/mcp` and startup notes; automatic scope step-up/retry remains out of scope.
 
 ## Risks & open questions
 

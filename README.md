@@ -143,7 +143,7 @@ provider has a key on file.
 | Command | What it does |
 |---|---|
 | `/connect [<provider>] [--rekey]` | Add a provider to the connection pool. Silent when the keyring already has a stored key — the API-key modal only opens when a key is missing or `--rekey` is passed. Multiple providers can be connected simultaneously; switch with `/use <provider>`. |
-| `/mcp` | Open the MCP-server manager. Lists configured user MCP servers, their transport (`stdio` or Streamable HTTP), and whether startup connected them successfully. `a` adds a server, `d` removes one, `r` refreshes the status snapshot; add/remove update `~/.otto/config.toml` and require a restart to take effect. |
+| `/mcp` | Open the MCP-server manager. Lists configured user MCP servers, their transport (`stdio` or Streamable HTTP), HTTP auth mode (`none` / `bearer` / `oauth`), and whether startup connected them successfully. `a` adds a server, `d` removes one, `r` refreshes the status snapshot, `o` starts OAuth authorization for the selected OAuth HTTP server, and `c` checks whether the browser callback completed. Add/remove and successful OAuth authorization still require a restart to take effect. |
 | `/disconnect <provider> [--force]` | Remove a provider from the pool. Default (drain) mode waits for any in-flight turn to finish. `--force` signals a cooperative cancel, waits 500 ms, then aborts. |
 | `/use <provider>` | Switch the active provider. As of v0.17.0 the conversation history is preserved across the switch — `tool_use_id`s are provider-namespaced so subsequent turns on the new provider can safely see prior tool calls. For one-off routing without changing the active provider, use the `@<provider>` prefix. |
 | `/model` | Open the model picker (no args), or switch directly: `/model gemini-2.5-pro`. As of v0.17.0 the picker lists every connected provider's models; selecting a model from a different provider switches the active provider too. Selection persists per provider to `~/.otto/models.toml`. |
@@ -715,12 +715,17 @@ For user-installed MCP servers, prefer config over rebuilding the binary.
 
 1. Open `/mcp` inside otto and add either:
    - a local stdio server (`name`, `command`, optional `args`, optional one-secret env var), or
-   - a remote Streamable HTTP server (`name`, `url`, optional bearer token).
+   - a remote Streamable HTTP server (`name`, `url`, auth mode `none` / `bearer` / `oauth`).
 2. Otto persists the raw entry into `~/.otto/config.toml` under `[[mcp_servers]]`.
 3. If a secret is provided, it is written to the OS keyring under service `otto`, account
    `mcp:<server name>` — never inline in TOML.
-4. Restart otto to apply the change. The `/mcp` screen shows whether startup connected the
-   server or skipped it (for example, missing secret or connection failure).
+4. For `auth = "oauth"`, press `o` in `/mcp` to open the authorization URL in your browser, then
+   press `c` after the provider redirects back to Otto's loopback callback listener. Otto stores
+   the OAuth client registration, token set, and later refreshes in the same `mcp:<server name>`
+   keyring slot as a structured JSON blob; bearer-token entries remain raw strings.
+5. Restart otto to apply the change. The `/mcp` screen shows whether startup connected the
+   server or skipped it (for example, missing secret, authorization required, issuer mismatch, or
+   token refresh failure).
 
 The equivalent TOML looks like:
 
@@ -737,10 +742,20 @@ name = "sentry"
 transport = "http"
 url = "https://mcp.sentry.dev/mcp"
 auth = "bearer"
+
+[[mcp_servers]]
+name = "remote-oauth"
+transport = "http"
+url = "https://example.com/mcp"
+auth = "oauth"
 ```
 
 `env = { ... = "keyring" }` and `auth = "bearer"` mean "load the secret from the keyring account
-`mcp:<server name>` during startup."
+`mcp:<server name>` during startup." `auth = "oauth"` means "load the OAuth registration + token
+state from the same keyring account, rediscover authorization metadata at startup, and connect with
+an OAuth-aware HTTP client." OAuth startup skips are fail-closed: Otto refuses to reuse stored OAuth
+state when the discovered issuer changes or the authorization server does not explicitly advertise
+PKCE `S256` support.
 
 
 ### `read_resource` (built-in)
@@ -973,7 +988,7 @@ args = []
 | `~/.otto/trusted-projects.json` | user-defined slash commands | Project-trust persistence; only "trust always" decisions are stored. |
 | `~/.otto/commands/` | user-defined slash commands | User-wide slash command markdown files. |
 | `.otto/commands/` (per project) | user-defined slash commands | Project-local slash command markdown files. |
-| OS keyring (`service=otto`, `account=<provider id>` or `mcp:<server name>`) | `/connect`, `/mcp` | Provider API keys and MCP-server bearer/env secrets. Never written to disk in plaintext. |
+| OS keyring (`service=otto`, `account=<provider id>` or `mcp:<server name>`) | `/connect`, `/mcp` | Provider API keys, MCP-server bearer/env secrets, and OAuth client/token state for `auth = "oauth"` MCP servers. Never written to disk in plaintext. |
 
 ## Project context: `OTTO.md`
 
