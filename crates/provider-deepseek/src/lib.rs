@@ -243,7 +243,14 @@ fn map_reqwest_error(e: reqwest::Error) -> ProviderError {
 /// JSON doesn't blow up the TUI note line.
 fn http_status_error(label: &str, status: reqwest::StatusCode, body: String) -> ProviderError {
     let truncated = if body.len() > 512 {
-        format!("{}…", &body[..512])
+        // `body` is untrusted upstream content and may contain multi-byte
+        // UTF-8 sequences; slicing at a raw byte offset can panic if 512
+        // lands mid-codepoint, so walk back to the nearest char boundary.
+        let mut end = 512;
+        while end > 0 && !body.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &body[..end])
     } else {
         body
     };
@@ -393,6 +400,38 @@ pub fn provider_for_tests(base_url: impl Into<String>) -> DeepSeekProvider {
 
 #[doc(hidden)]
 pub fn _events_phantom(_: StreamEvent) {}
+
+#[cfg(test)]
+mod http_status_error_tests {
+    use super::*;
+
+    /// A 512-byte truncation boundary landing mid-codepoint in a non-ASCII
+    /// error body must not panic — it must back off to the nearest char
+    /// boundary instead.
+    #[test]
+    fn truncates_multibyte_body_without_panicking() {
+        // Build a body whose 512th byte falls inside a 3-byte UTF-8
+        // sequence: 510 ASCII bytes followed by a run of "字" (3 bytes each).
+        let mut body = "a".repeat(510);
+        body.push_str(&"字".repeat(20));
+        assert!(body.len() > 512);
+
+        let err = http_status_error("test", reqwest::StatusCode::BAD_REQUEST, body);
+        assert!(err.message.contains("HTTP 400"));
+        assert!(err.message.contains('…'));
+    }
+
+    #[test]
+    fn short_body_passes_through_unmodified() {
+        let err = http_status_error(
+            "test",
+            reqwest::StatusCode::UNAUTHORIZED,
+            "invalid_api_key".into(),
+        );
+        assert!(err.message.contains("invalid_api_key"));
+        assert!(!err.message.contains('…'));
+    }
+}
 
 #[cfg(test)]
 mod list_models_tests {

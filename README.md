@@ -53,7 +53,7 @@ The workspace is a small set of focused crates:
 
 | Crate | Purpose |
 |---|---|
-| [`crates/otto`](crates/otto) | All eight shipping binaries (`otto` TUI plus the `otto-tool-{fs,bash,grep}` tool shims and the `otto-{anthropic,gemini,openai,deepseek}` provider shims). Owns `/connect`, `/mcp`, file picker, transcript persistence, the plugin runtime. |
+| [`crates/otto`](crates/otto) | All ten shipping binaries (`otto` TUI plus the `otto-tool-{fs,bash,grep,lsp,web}` tool shims and the `otto-{anthropic,gemini,openai,deepseek}` provider shims). Owns `/connect`, `/mcp`, file picker, transcript persistence, the plugin runtime. |
 | [`crates/otto-host`](crates/otto-host) | Agent engine consumed as a library. Drives the tool-use loop, manages provider/tool sessions, owns the OS-level sandbox and per-tool stderr capture, exposes `Host::run_turn` and `run_turn_streaming`. |
 | [`crates/otto-protocol`](crates/otto-protocol) | Pure-types crate: `CompleteRequest`, `CompleteResponse`, `StreamEvent`, content blocks, `ListModelsResponse`. SPP wire spec in [`SPEC.md`](crates/otto-protocol/SPEC.md). |
 | [`crates/otto-mcp`](crates/otto-mcp) | The `ProviderClient` / `ProviderHandler` traits and the `InProcessProviderClient` bridge that makes provider crates linkable as libraries. |
