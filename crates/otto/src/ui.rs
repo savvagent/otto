@@ -2,7 +2,7 @@
 
 use crate::app::{App, Entry, InputMode, TranscriptEntry, log_scroll_y};
 use crate::palette::Palette;
-use crate::providers::effective_providers;
+use crate::providers::{PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD, effective_providers};
 use crate::splash;
 use otto_host::ToolCallStatus;
 use otto_plugin::ContentBlockId;
@@ -397,49 +397,89 @@ pub fn render(
     if matches!(app.input_mode, InputMode::SelectingProvider) {
         let popup = centered_rect(60, 40, area);
         frame.render_widget(Clear, popup);
-        let items: Vec<ListItem> = effective_providers()
-            .into_iter()
-            .enumerate()
-            .map(|(i, spec)| {
-                let style = if i == app.provider_index {
-                    palette
-                        .base_style()
-                        .fg(palette.accent)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    palette.base_style()
-                };
-                let active_marker = if Some(spec.id) == app.active_provider_id {
-                    " (active)"
-                } else {
-                    ""
-                };
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{:<22}", spec.display_name), style),
-                    Span::styled(
-                        format!(" {}{}", spec.id, active_marker),
-                        palette.base_style().fg(palette.muted),
-                    ),
+        let show_query =
+            provider_selector_shows_query(effective_providers().len(), app.provider_query.as_str());
+        let filtered = app.filtered_providers();
+        let items: Vec<ListItem> = if filtered.is_empty() {
+            vec![ListItem::new(Line::from(vec![
+                Span::styled("No providers match", palette.base_style().fg(palette.muted)),
+                Span::styled(
+                    format!(" {}", app.provider_query),
+                    palette.base_style().fg(palette.accent),
+                ),
+            ]))]
+        } else {
+            filtered
+                .into_iter()
+                .enumerate()
+                .map(|(i, spec)| {
+                    let style = if i == app.provider_index {
+                        palette
+                            .base_style()
+                            .fg(palette.accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        palette.base_style()
+                    };
+                    let active_marker = if Some(spec.id) == app.active_provider_id {
+                        " (active)"
+                    } else {
+                        ""
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{:<22}", spec.display_name), style),
+                        Span::styled(
+                            format!(" {}{}", spec.id, active_marker),
+                            palette.base_style().fg(palette.muted),
+                        ),
+                    ]))
+                })
+                .collect()
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(palette.border).bg(palette.bg))
+            .padding(Padding::new(2, 2, 1, 0))
+            .title(Line::styled(
+                " Connect to provider ",
+                palette.base_style().fg(palette.fg),
+            ))
+            .title_bottom(Line::from(" [↑/↓] move  [Enter] select  [Esc] cancel ").right_aligned());
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+        let (query_area, list_area) = if show_query {
+            let sections = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(1)])
+                .split(inner);
+            (sections[0], sections[1])
+        } else {
+            (Rect::default(), inner)
+        };
+        if show_query {
+            let query_text = if app.provider_query.is_empty() {
+                "type to filter".to_string()
+            } else {
+                app.provider_query.clone()
+            };
+            let query_style = if app.provider_query.is_empty() {
+                palette.base_style().fg(palette.muted)
+            } else {
+                palette.base_style().fg(palette.fg)
+            };
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("Search: ", palette.base_style().fg(palette.muted)),
+                    Span::styled(query_text, query_style),
                 ]))
-            })
-            .collect();
+                .style(palette.base_style()),
+                query_area,
+            );
+        }
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(palette.border).bg(palette.bg))
-                    .padding(Padding::new(2, 2, 1, 0))
-                    .title(Line::styled(
-                        " Connect to provider ",
-                        palette.base_style().fg(palette.fg),
-                    ))
-                    .title_bottom(
-                        Line::from(" [↑/↓] move  [Enter] select  [Esc] cancel ").right_aligned(),
-                    ),
-            )
             .style(palette.base_style())
             .highlight_symbol("> ");
-        frame.render_widget(list, popup);
+        frame.render_widget(list, list_area);
     }
 
     if matches!(app.input_mode, InputMode::PermissionPrompt) {
@@ -1443,11 +1483,17 @@ fn footer_spinner_spans(tick: u64, palette: Palette) -> Vec<Span<'static>> {
     spans
 }
 
+fn provider_selector_shows_query(provider_count: usize, provider_query: &str) -> bool {
+    !provider_query.is_empty() || provider_count > PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::App;
     use crate::plugin::builtin::themes::catalog::Theme;
     use otto_plugin::{StyledLine, StyledSpan, TextMods, ThemeColor};
+    use std::path::PathBuf;
 
     fn span(text: &str) -> StyledSpan {
         StyledSpan {
@@ -1487,6 +1533,10 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect()
+    }
+
+    fn fresh_app() -> App {
+        App::new(String::new(), PathBuf::from("."), "en".to_string())
     }
 
     #[test]
@@ -1619,6 +1669,40 @@ mod tests {
         let empty: Vec<Line<'static>> = vec![];
         let out = compose_footer_ratatui_line([&l, &c, &empty], &rsep());
         assert_eq!(joined_ratatui(&out), "Anthropic · idle");
+    }
+
+    #[test]
+    fn provider_selector_query_row_is_hidden_for_short_catalog_without_query() {
+        assert!(!provider_selector_shows_query(
+            PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD,
+            "",
+        ));
+    }
+
+    #[test]
+    fn provider_selector_query_row_is_visible_for_long_catalogs() {
+        assert!(provider_selector_shows_query(
+            PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD + 1,
+            "",
+        ));
+    }
+
+    #[test]
+    fn provider_selector_query_row_is_visible_when_filtering_short_catalog() {
+        let mut app = fresh_app();
+        app.set_provider_query("opn");
+
+        assert!(provider_selector_shows_query(
+            effective_providers().len(),
+            app.provider_query.as_str(),
+        ));
+        assert_eq!(
+            app.filtered_providers()
+                .into_iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>(),
+            vec!["openai"],
+        );
     }
 
     #[test]

@@ -3867,14 +3867,30 @@ async fn run_app(
                 }
             }
             InputMode::SelectingProvider => match key.code {
-                KeyCode::Esc => app.input_mode = InputMode::Editing,
+                KeyCode::Esc if app.provider_query.is_empty() => {
+                    app.input_mode = InputMode::Editing
+                }
+                KeyCode::Esc => app.clear_provider_query(),
                 KeyCode::Up if app.provider_index > 0 => app.provider_index -= 1,
-                KeyCode::Down if app.provider_index + 1 < effective_providers().len() => {
+                KeyCode::Down if app.provider_index + 1 < app.filtered_providers().len() => {
                     app.provider_index += 1
                 }
+                KeyCode::Backspace if !app.provider_query.is_empty() => {
+                    let mut query = app.provider_query.clone();
+                    query.pop();
+                    app.set_provider_query(query);
+                }
+                KeyCode::Char(c)
+                    if !key.modifiers.intersects(
+                        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                    ) =>
+                {
+                    let mut query = app.provider_query.clone();
+                    query.push(c);
+                    app.set_provider_query(query);
+                }
                 KeyCode::Enter => {
-                    let idx = app.provider_index;
-                    if let Some(spec) = effective_providers().get(idx).copied() {
+                    if let Some(spec) = app.selected_provider() {
                         if !spec.api_key_required {
                             // Keyless provider — connect immediately without a
                             // stored or prompted API key.
@@ -3909,7 +3925,7 @@ async fn run_app(
                                     )
                                     .await;
                                 }
-                                Ok(None) => app.enter_api_key_for(idx),
+                                Ok(None) => app.enter_api_key_for_provider(spec, false),
                                 Err(e) => {
                                     app.push_note(
                                         rust_i18n::t!(
@@ -3918,12 +3934,10 @@ async fn run_app(
                                         )
                                         .to_string(),
                                     );
-                                    app.enter_api_key_for(idx);
+                                    app.enter_api_key_for_provider(spec, false);
                                 }
                             }
                         }
-                    } else {
-                        app.input_mode = InputMode::Editing;
                     }
                 }
                 _ => {}
