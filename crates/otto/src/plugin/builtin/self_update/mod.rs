@@ -330,39 +330,61 @@ impl Plugin for SelfUpdatePlugin {
             return Ok(vec![]);
         }
 
-        // Auto-install kicks off the moment the HostStarting check
-        // detects a new release, so /update is mostly a retry/status
-        // command. Resolve the action under the lock, then release it
-        // before any await — install can take several seconds.
-        let action = {
-            let guard = self.state.lock().unwrap();
-            match &*guard {
-                UpdateState::Available { current, latest }
-                | UpdateState::InstallFailed {
-                    current, latest, ..
-                } => Action::Install(current.clone(), latest.clone()),
-                UpdateState::Installing { latest, .. } => Action::Note(
-                    rust_i18n::t!(
-                        "self-update.note-install-in-progress",
-                        latest = latest.to_string()
-                    )
-                    .to_string(),
-                ),
-                UpdateState::Disabled => {
-                    Action::Note(rust_i18n::t!("self-update.note-disabled").to_string())
-                }
-                UpdateState::Updated { to, .. } => Action::Note(
-                    rust_i18n::t!("self-update.note-update-ok", latest = to.to_string())
+        // Auto-install still runs in the background, but `/update` is the
+        // user's explicit "check now" command. Preserve the non-reentrant
+        // states under the lock, then drop it before any await.
+        let pre_state = self.state.lock().unwrap().clone();
+        let action = match pre_state {
+            UpdateState::Installing { latest, .. } => Action::Note(
+                rust_i18n::t!(
+                    "self-update.note-install-in-progress",
+                    latest = latest.to_string()
+                )
+                .to_string(),
+            ),
+            UpdateState::Disabled => {
+                Action::Note(rust_i18n::t!("self-update.note-disabled").to_string())
+            }
+            UpdateState::Updated { to, .. } => Action::Note(
+                rust_i18n::t!("self-update.note-update-ok", latest = to.to_string()).to_string(),
+            ),
+            UpdateState::Unknown
+            | UpdateState::UpToDate
+            | UpdateState::CheckFailed
+            | UpdateState::Available { .. }
+            | UpdateState::InstallFailed { .. } => {
+                let live = check_for_update(
+                    env!("CARGO_PKG_VERSION"),
+                    self.install_method,
+                    self.fetcher.as_ref(),
+                )
+                .await;
+                publish_slash_check_state(&self.state, &live);
+                match live {
+                    UpdateState::Available { current, latest } => Action::Install(current, latest),
+                    UpdateState::Disabled => {
+                        Action::Note(rust_i18n::t!("self-update.note-disabled").to_string())
+                    }
+                    UpdateState::UpToDate => {
+                        Action::Note(rust_i18n::t!("self-update.note-no-update").to_string())
+                    }
+                    UpdateState::CheckFailed => {
+                        Action::Note(rust_i18n::t!("self-update.note-check-failed").to_string())
+                    }
+                    UpdateState::Installing { latest, .. } => Action::Note(
+                        rust_i18n::t!(
+                            "self-update.note-install-in-progress",
+                            latest = latest.to_string()
+                        )
                         .to_string(),
-                ),
-                UpdateState::UpToDate => {
-                    Action::Note(rust_i18n::t!("self-update.note-no-update").to_string())
-                }
-                UpdateState::Unknown => {
-                    Action::Note(rust_i18n::t!("self-update.note-checking").to_string())
-                }
-                UpdateState::CheckFailed => {
-                    Action::Note(rust_i18n::t!("self-update.note-check-failed").to_string())
+                    ),
+                    UpdateState::Updated { to, .. } => Action::Note(
+                        rust_i18n::t!("self-update.note-update-ok", latest = to.to_string())
+                            .to_string(),
+                    ),
+                    UpdateState::Unknown | UpdateState::InstallFailed { .. } => {
+                        Action::Note(rust_i18n::t!("self-update.note-checking").to_string())
+                    }
                 }
             }
         };
@@ -504,6 +526,38 @@ enum Action {
     Install(semver::Version, semver::Version),
 }
 
+fn publish_slash_check_state(state: &Arc<Mutex<UpdateState>>, live: &UpdateState) {
+    let published = match live {
+        UpdateState::Available { current, latest } => Some(UpdateState::Available {
+            current: current.clone(),
+            latest: latest.clone(),
+        }),
+        UpdateState::Disabled => Some(UpdateState::Disabled),
+        UpdateState::UpToDate => Some(UpdateState::UpToDate),
+        UpdateState::CheckFailed => Some(UpdateState::CheckFailed),
+        UpdateState::Unknown
+        | UpdateState::Installing { .. }
+        | UpdateState::Updated { .. }
+        | UpdateState::InstallFailed { .. } => None,
+    };
+
+    if let Some(next) = published {
+        *state.lock().unwrap() = next;
+    }
+}
+
+fn trusted_startup_cache_state(
+    current_version: &str,
+    entry: &cache::CacheEntry,
+) -> Option<UpdateState> {
+    match check::compare_versions(current_version, &entry.latest_tag) {
+        check::Comparison::Behind => Some(check::classify_tag(current_version, &entry.latest_tag)),
+        check::Comparison::Equal | check::Comparison::Ahead | check::Comparison::Unparseable => {
+            None
+        }
+    }
+}
+
 /// Run the installer for `latest` and update plugin `state` accordingly.
 /// Shared by the auto-install path in `on_event` and the retry path in
 /// `handle_slash`. Mutates `state` to [`UpdateState::Installing`] before
@@ -586,19 +640,16 @@ async fn run_check_once(
         cache_path
             .and_then(cache::load)
             .filter(|e| cache::is_fresh(e, cache::now_unix(), cache::DEFAULT_TTL_SECS))
-            .filter(|e| {
-                !matches!(
-                    check::compare_versions(current_version, &e.latest_tag),
-                    check::Comparison::Ahead | check::Comparison::Unparseable
-                )
+            .and_then(|entry| {
+                trusted_startup_cache_state(current_version, &entry).map(|state| (entry, state))
             })
     } else {
         None
     };
 
-    let result = if let Some(entry) = cached_fresh {
+    let result = if let Some((entry, trusted)) = cached_fresh {
         tracing::debug!(tag = %entry.latest_tag, "self-update: using cached tag");
-        check::classify_tag(current_version, &entry.latest_tag)
+        trusted
     } else {
         let fresh = check_for_update(current_version, install_method, fetcher.as_ref()).await;
         if let Some(path) = cache_path {
@@ -723,6 +774,15 @@ mod tests {
         }
     }
 
+    struct ErrorFetcher(&'static str);
+
+    #[async_trait]
+    impl ReleasesFetcher for ErrorFetcher {
+        async fn latest_tag(&self) -> anyhow::Result<String> {
+            Err(anyhow::anyhow!(self.0))
+        }
+    }
+
     /// In-test releases fetcher that returns a fixed tag and counts
     /// how many times `latest_tag()` is invoked. Used by tests that
     /// need to assert the periodic loop is actually running ticks.
@@ -839,9 +899,17 @@ mod tests {
         installer: Arc<StubInstaller>,
         state: UpdateState,
     ) -> SelfUpdatePlugin {
+        locked_plugin_with_state_and_fetcher(Arc::new(FixedFetcher("v0.11.0")), installer, state)
+    }
+
+    fn locked_plugin_with_state_and_fetcher(
+        fetcher: Arc<dyn ReleasesFetcher>,
+        installer: Arc<StubInstaller>,
+        state: UpdateState,
+    ) -> SelfUpdatePlugin {
         let _lock = HOME_LOCK.lock().unwrap();
         rust_i18n::set_locale("en");
-        let p = plugin_with_default_config(Arc::new(FixedFetcher("v0.11.0")), installer);
+        let p = plugin_with_default_config(fetcher, installer);
         *p.state.lock().unwrap() = state;
         p
     }
@@ -1132,11 +1200,12 @@ mod tests {
     #[tokio::test]
     async fn slash_update_when_available_runs_installer_and_transitions_to_updated() {
         let installer = Arc::new(StubInstaller::ok());
-        let mut plugin = locked_plugin_with_state(
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(FixedFetcher("v99.99.99")),
             installer.clone(),
             UpdateState::Available {
-                current: Version::parse("0.10.0").unwrap(),
-                latest: Version::parse("0.11.0").unwrap(),
+                current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                latest: Version::parse("99.99.98").unwrap(),
             },
         );
 
@@ -1148,8 +1217,8 @@ mod tests {
 
         match plugin.state() {
             UpdateState::Updated { from, to } => {
-                assert_eq!(from.to_string(), "0.10.0");
-                assert_eq!(to.to_string(), "0.11.0");
+                assert_eq!(from.to_string(), env!("CARGO_PKG_VERSION"));
+                assert_eq!(to.to_string(), "99.99.99");
             }
             other => panic!("expected Updated state, got {other:?}"),
         }
@@ -1158,11 +1227,12 @@ mod tests {
     #[tokio::test]
     async fn slash_update_when_install_fails_transitions_to_install_failed() {
         let installer = Arc::new(StubInstaller::err("network down"));
-        let mut plugin = locked_plugin_with_state(
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(FixedFetcher("v99.99.99")),
             installer,
             UpdateState::Available {
-                current: Version::parse("0.10.0").unwrap(),
-                latest: Version::parse("0.11.0").unwrap(),
+                current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                latest: Version::parse("99.99.98").unwrap(),
             },
         );
 
@@ -1182,7 +1252,7 @@ mod tests {
 
         match plugin.state() {
             UpdateState::InstallFailed { latest, error, .. } => {
-                assert_eq!(latest.to_string(), "0.11.0");
+                assert_eq!(latest.to_string(), "99.99.99");
                 assert!(error.contains("network down"), "got error: {error}");
             }
             other => panic!("expected InstallFailed state, got {other:?}"),
@@ -1192,11 +1262,12 @@ mod tests {
     #[tokio::test]
     async fn slash_update_when_install_failed_retries_install() {
         let installer = Arc::new(StubInstaller::ok());
-        let mut plugin = locked_plugin_with_state(
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(FixedFetcher("v99.99.99")),
             installer.clone(),
             UpdateState::InstallFailed {
-                current: Version::parse("0.10.0").unwrap(),
-                latest: Version::parse("0.11.0").unwrap(),
+                current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                latest: Version::parse("99.99.98").unwrap(),
                 error: "previous failure".into(),
             },
         );
@@ -1236,8 +1307,11 @@ mod tests {
 
     #[tokio::test]
     async fn slash_update_when_no_update_returns_no_update_note() {
-        let mut plugin =
-            locked_plugin_with_state(Arc::new(StubInstaller::ok()), UpdateState::UpToDate);
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(FixedFetcher(concat!("v", env!("CARGO_PKG_VERSION")))),
+            Arc::new(StubInstaller::ok()),
+            UpdateState::UpToDate,
+        );
 
         let effects = plugin.handle_slash("update", vec![]).await.unwrap();
         assert_eq!(effects.len(), 1);
@@ -1245,23 +1319,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn slash_update_when_unknown_returns_checking_note() {
-        let mut plugin =
-            locked_plugin_with_state(Arc::new(StubInstaller::ok()), UpdateState::Unknown);
+    async fn slash_update_rechecks_live_and_installs_when_newer() {
+        let installer = Arc::new(StubInstaller::ok());
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(FixedFetcher("v99.99.99")),
+            installer.clone(),
+            UpdateState::Unknown,
+        );
+
         let effects = plugin.handle_slash("update", vec![]).await.unwrap();
-        assert_eq!(effects.len(), 1);
-        match &effects[0] {
-            Effect::PushNote { line } => {
-                assert!(line.spans[0].text.contains("Still checking"));
+
+        assert_eq!(installer.invocation_count(), 1);
+        assert_eq!(effects.len(), 2);
+        match plugin.state() {
+            UpdateState::Updated { from, to } => {
+                assert_eq!(from.to_string(), env!("CARGO_PKG_VERSION"));
+                assert_eq!(to.to_string(), "99.99.99");
             }
-            other => panic!("expected PushNote, got {other:?}"),
+            other => panic!("expected Updated state, got {other:?}"),
         }
     }
 
     #[tokio::test]
     async fn slash_update_when_check_failed_returns_check_failed_note() {
-        let mut plugin =
-            locked_plugin_with_state(Arc::new(StubInstaller::ok()), UpdateState::CheckFailed);
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(ErrorFetcher("network down")),
+            Arc::new(StubInstaller::ok()),
+            UpdateState::CheckFailed,
+        );
         let effects = plugin.handle_slash("update", vec![]).await.unwrap();
         assert_eq!(effects.len(), 1);
         match &effects[0] {
@@ -1633,14 +1718,14 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn first_tick_uses_cache_subsequent_tick_bypasses() {
+    async fn first_tick_equal_cache_revalidates_live() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_path = tmp.path().join("update-check.json");
         let interval = Duration::from_millis(50);
 
-        // Pre-write a fresh cache entry with the current version as the tag,
-        // so it is a startup cache HIT (not stale-vs-current) and classifies
-        // to UpToDate.
+        // Pre-write a fresh cache entry equal to the running version.
+        // This used to suppress the startup fetch even if GitHub had
+        // published a newer release after the cache entry was written.
         let current = env!("CARGO_PKG_VERSION");
         cache::save(
             &cache_path,
@@ -1667,20 +1752,63 @@ mod tests {
         };
 
         p.on_event(HostEvent::HostStarting).await.unwrap();
-        // Force the timer driver to fire the immediate startup tick.
         advance_and_yield(Duration::ZERO).await;
         assert_eq!(
             fetcher.invocation_count(),
-            0,
-            "first tick must use the on-disk cache when fresh and not stale"
+            1,
+            "equal-version startup cache must trigger an immediate live fetch on the first tick"
+        );
+        let final_state =
+            advance_until_state(&p, interval, |s| matches!(s, UpdateState::Updated { .. })).await;
+
+        match final_state {
+            UpdateState::Updated { to, .. } => assert_eq!(to.to_string(), "99.99.99"),
+            other => unreachable!("predicate guarantees Updated: {other:?}"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn first_tick_uses_cache_when_cached_tag_is_newer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache_path = tmp.path().join("update-check.json");
+        let interval = Duration::from_millis(50);
+
+        cache::save(
+            &cache_path,
+            &cache::CacheEntry {
+                schema_version: 1,
+                checked_at_unix: cache::now_unix(),
+                latest_tag: "v99.99.99".into(),
+            },
         );
 
-        // Second tick must bypass the cache and hit the fetcher.
-        advance_and_yield(interval).await;
-        assert!(
-            fetcher.invocation_count() >= 1,
-            "subsequent tick must bypass cache and call the fetcher, got {}",
-            fetcher.invocation_count()
+        let fetcher = Arc::new(CountingFetcher::new("v100.0.0"));
+        let installer = Arc::new(StubInstaller::ok());
+
+        let mut p = {
+            let _lock = HOME_LOCK.lock().unwrap();
+            rust_i18n::set_locale("en");
+            plugin_with_default_config(
+                Arc::clone(&fetcher) as Arc<dyn ReleasesFetcher>,
+                Arc::clone(&installer) as Arc<dyn Installer>,
+            )
+            .with_cache_path_override(cache_path)
+            .with_install_method(InstallMethod::Installed)
+            .with_periodic_interval(interval)
+        };
+
+        p.on_event(HostEvent::HostStarting).await.unwrap();
+        let final_state =
+            advance_until_state(&p, interval, |s| matches!(s, UpdateState::Updated { .. })).await;
+
+        match final_state {
+            UpdateState::Updated { to, .. } => assert_eq!(to.to_string(), "99.99.99"),
+            other => unreachable!("predicate guarantees Updated: {other:?}"),
+        }
+        assert_eq!(
+            fetcher.invocation_count(),
+            0,
+            "a cached newer tag should remain a startup fast path"
         );
     }
 
