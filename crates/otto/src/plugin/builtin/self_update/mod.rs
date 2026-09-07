@@ -546,7 +546,7 @@ fn publish_slash_check_state(state: &Arc<Mutex<UpdateState>>, live: &UpdateState
     }
 }
 
-fn trusted_startup_cache_state(
+fn cached_startup_banner_state(
     current_version: &str,
     entry: &cache::CacheEntry,
 ) -> Option<UpdateState> {
@@ -578,10 +578,35 @@ async fn run_install(
     let starting_note =
         rust_i18n::t!("self-update.note-updating", latest = latest.to_string()).to_string();
 
-    *state.lock().unwrap() = UpdateState::Installing {
-        current: current.clone(),
-        latest: latest.clone(),
-    };
+    {
+        let mut guard = state.lock().unwrap();
+        match &*guard {
+            UpdateState::Installing {
+                latest: active_latest,
+                ..
+            } => {
+                return vec![note_effect(
+                    rust_i18n::t!(
+                        "self-update.note-install-in-progress",
+                        latest = active_latest.to_string()
+                    )
+                    .to_string(),
+                )];
+            }
+            UpdateState::Updated { to, .. } if *to == latest => {
+                return vec![note_effect(
+                    rust_i18n::t!("self-update.note-update-ok", latest = to.to_string())
+                        .to_string(),
+                )];
+            }
+            _ => {
+                *guard = UpdateState::Installing {
+                    current: current.clone(),
+                    latest: latest.clone(),
+                };
+            }
+        }
+    }
 
     match apply_update(installer.as_ref(), current.clone(), latest.clone()).await {
         Ok(new_state) => {
@@ -636,40 +661,39 @@ async fn run_check_once(
     // Subsequent ticks always bypass the cache so the periodic loop
     // actually contacts GitHub and can detect new releases published
     // after startup.
-    let cached_fresh = if is_first_tick {
+    let cached_banner = if is_first_tick {
         cache_path
             .and_then(cache::load)
             .filter(|e| cache::is_fresh(e, cache::now_unix(), cache::DEFAULT_TTL_SECS))
-            .and_then(|entry| {
-                trusted_startup_cache_state(current_version, &entry).map(|state| (entry, state))
-            })
+            .and_then(|entry| cached_startup_banner_state(current_version, &entry))
     } else {
         None
     };
 
-    let result = if let Some((entry, trusted)) = cached_fresh {
-        tracing::debug!(tag = %entry.latest_tag, "self-update: using cached tag");
-        trusted
-    } else {
-        let fresh = check_for_update(current_version, install_method, fetcher.as_ref()).await;
-        if let Some(path) = cache_path {
-            if let Some(tag) = match &fresh {
-                UpdateState::Available { latest, .. } => Some(format!("v{latest}")),
-                UpdateState::UpToDate => Some(format!("v{current_version}")),
-                _ => None,
-            } {
-                cache::save(
-                    path,
-                    &cache::CacheEntry {
-                        schema_version: 1,
-                        checked_at_unix: cache::now_unix(),
-                        latest_tag: tag,
-                    },
-                );
-            }
+    if let Some(cached) = cached_banner.clone() {
+        tracing::debug!("self-update: seeding startup banner from cache before live revalidation");
+        if let Ok(mut guard) = state.lock() {
+            *guard = cached;
         }
-        fresh
-    };
+    }
+
+    let result = check_for_update(current_version, install_method, fetcher.as_ref()).await;
+    if let Some(path) = cache_path {
+        if let Some(tag) = match &result {
+            UpdateState::Available { latest, .. } => Some(format!("v{latest}")),
+            UpdateState::UpToDate => Some(format!("v{current_version}")),
+            _ => None,
+        } {
+            cache::save(
+                path,
+                &cache::CacheEntry {
+                    schema_version: 1,
+                    checked_at_unix: cache::now_unix(),
+                    latest_tag: tag,
+                },
+            );
+        }
+    }
 
     // Decide what to publish + whether to install based on the pre-tick state.
     //
@@ -1768,7 +1792,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn first_tick_uses_cache_when_cached_tag_is_newer() {
+    async fn first_tick_cached_newer_tag_still_revalidates_live() {
         let tmp = tempfile::tempdir().unwrap();
         let cache_path = tmp.path().join("update-check.json");
         let interval = Duration::from_millis(50);
@@ -1798,17 +1822,18 @@ mod tests {
         };
 
         p.on_event(HostEvent::HostStarting).await.unwrap();
+        advance_and_yield(Duration::ZERO).await;
         let final_state =
             advance_until_state(&p, interval, |s| matches!(s, UpdateState::Updated { .. })).await;
 
         match final_state {
-            UpdateState::Updated { to, .. } => assert_eq!(to.to_string(), "99.99.99"),
+            UpdateState::Updated { to, .. } => assert_eq!(to.to_string(), "100.0.0"),
             other => unreachable!("predicate guarantees Updated: {other:?}"),
         }
         assert_eq!(
             fetcher.invocation_count(),
-            0,
-            "a cached newer tag should remain a startup fast path"
+            1,
+            "startup should still revalidate live even when the cache already shows an update"
         );
     }
 
