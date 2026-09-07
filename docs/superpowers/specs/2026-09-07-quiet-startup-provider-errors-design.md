@@ -1,7 +1,7 @@
 # Quiet startup provider auto-connect noise; validate keys and attribute provider errors — design
 
 Date: 2026-09-07
-Status: pending review
+Status: IMPLEMENTED
 Related: `savvagent/otto#14`
 
 ## Problem
@@ -405,26 +405,41 @@ instead of registering a falsely-healthy provider, and make any turn-time
 provider failure name the provider that produced it.
 
 - [ ] Launching with a valid, working key and no other providers configured
-      produces no startup notes in the transcript.
+      produces no startup notes in the transcript. *(Not manually verified —
+      no live API keys available in this environment; covered indirectly by
+      the `apply_pending_pool_add`/`try_provider!` gating logic and its unit
+      tests.)*
 - [ ] Launching with an Anthropic key that has no billing credit (or is
       otherwise rejected by `list_models`) does **not** register Anthropic as
       the active provider; the header shows disconnected /
       `not-connected-startup`, and a `tracing::warn` log records the reason.
+      *(Not manually verified — no live API keys; covered by
+      `build_dynamic_caps`/`try_build_registration` unit tests.)*
 - [ ] The same rejection, from a Gemini or OpenAI key, is also detected (not
       masked as `ErrorKind::Network`) after the step-0 classification fix.
+      *(Covered by `provider-gemini`/`provider-openai` unit tests; not
+      manually verified against live APIs.)*
 - [ ] Running `/connect anthropic` (or gemini/openai) with a key that gets
       rejected by `list_models` shows `Connect to anthropic failed: <reason>`
       instead of the misleading "key was saved but couldn't be read back"
-      message.
+      message. *(Not manually verified — no live API keys.)*
 - [ ] Setting `ANTHROPIC_API_KEY` (or `GEMINI_API_KEY`/`GOOGLE_API_KEY`,
       `OPENAI_API_KEY`) with no corresponding keyring entry results in that
-      provider auto-connecting at startup.
-- [ ] Setting `[startup] verbose = true` in `~/.otto/config.toml` restores
-      the previous per-provider chatter in the transcript.
-- [ ] A turn-time provider failure renders as
+      provider auto-connecting at startup. *(Implemented in all four shims;
+      not manually verified end-to-end, and no dedicated unit test seam was
+      added for this — a known coverage gap, see the plan's "Implementation
+      notes" section.)*
+- [x] Setting `[startup] verbose = true` in `~/.otto/config.toml` restores
+      the previous per-provider chatter in the transcript. *(Verified by code
+      review of the `show_notes` gating in `apply_pending_pool_add` and the
+      `try_provider!` macro; not manually smoke-tested against a live
+      provider.)*
+- [x] A turn-time provider failure renders as
       `Error: <Provider display name> rejected the request: <upstream message>`
-      instead of `Error: provider error: <Kind>: <message>`.
-- [ ] `cargo test --workspace` and `cargo clippy --workspace --all-targets`
+      instead of `Error: provider error: <Kind>: <message>`. Verified by
+      `host_error_tests::provider_error_display_includes_provider_name` in
+      `otto-host/src/session.rs`.
+- [x] `cargo test --workspace` and `cargo clippy --workspace --all-targets`
       stay green.
 
 ## Error Handling & Edge Cases
