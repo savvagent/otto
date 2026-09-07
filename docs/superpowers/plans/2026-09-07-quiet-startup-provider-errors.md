@@ -21,8 +21,9 @@
 - `crates/provider-openai/src/lib.rs` — same extraction for OpenAI.
 - `crates/otto/src/plugin/builtin/provider_common.rs` — `DynamicCapsOutcome` enum + `build_dynamic_caps` branching.
 - `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`, `provider_gemini/mod.rs`, `provider_openai/mod.rs`, `provider_local/mod.rs` — `ProviderBuildOutcome` enum + `try_build_registration` changes; cloud shims gain env-var fallback (1a).
-- `crates/otto/src/main.rs` — `HostBoot`/`App` gain `startup_verbose: bool`; `bootstrap_pool_host`'s `try_provider!` macro, `perform_connect`, `apply_pending_pool_add` (gains `startup: bool` param) all updated for the new outcome enums and verbose gating.
-- `crates/otto/src/config_file.rs` — `StartupSection::verbose: bool` (default `false`).
+- `crates/otto/src/main.rs` — `HostBoot` gains `startup_verbose: bool`; `bootstrap_pool_host`'s `try_provider!` macro, `perform_connect`, `apply_pending_pool_add` (gains `startup: bool` param) all updated for the new outcome enums and verbose gating.
+- `crates/otto/src/app.rs` — `App` gains `startup_verbose: bool`, set from `HostBoot` at construction.
+- `crates/otto/src/config_file.rs` — `StartupSection::verbose: bool` (default `false`); existing `StartupSection { .. }` literals updated.
 - `crates/otto-host/src/pool.rs` — `ProviderLease::display_name()` accessor.
 - `crates/otto-host/src/session.rs` — `HostError::Provider` tuple → struct variant, `Display` impl, the one construction site.
 - `README.md` — one-line mention of `[startup] verbose`.
@@ -135,7 +136,7 @@ still fall back to the static catalog. Callers are updated in the next
 commit."
 ```
 
-(Note: this commit will not compile standalone since callers aren't updated yet — Task 3 must land in the same PR before merge; keep both commits on the branch and let CI validate the combined state, or squash at merge time per repo convention. If the repo's bacon/CI setup requires every commit to build, combine Task 2+3 into one commit instead.)
+(Note: this commit will not compile standalone since callers aren't updated yet — the workspace does not build cleanly again until Task 5's commit lands (Tasks 2, 3, 4, and 5 together form the minimal buildable sequence: `DynamicCapsOutcome` → `ProviderBuildOutcome` shims → `startup_verbose` plumbing → `main.rs` call-site rewiring). Keep the intermediate non-compiling commits on the branch and let CI validate the combined state at the end of Task 5, or squash at merge time per repo convention. If the repo's bacon/CI setup requires every commit to build, combine Tasks 2-5 into fewer commits instead.)
 
 ---
 
@@ -173,9 +174,9 @@ pub(crate) enum ProviderBuildOutcome {
 
 - [ ] **Step 4: Update the three cloud shims (Anthropic, Gemini, OpenAI)**
 
-For each: change `try_build_registration`'s return type to `Result<ProviderBuildOutcome, String>`. Map `build_dynamic_caps`'s new `DynamicCapsOutcome::Rejected(reason)` → `Ok(ProviderBuildOutcome::Rejected(reason))`; `DynamicCapsOutcome::Ready(caps, note)` → `Ok(ProviderBuildOutcome::Ready(registration_with(caps), note))`. Where `creds::load` currently short-circuits to `Ok(None)`, change to `Ok(NoCredentials)` for now (env-var fallback is Task 4, done next so this task stays reviewable in isolation).
+For each: change `try_build_registration`'s return type to `Result<ProviderBuildOutcome, String>`. Map `build_dynamic_caps`'s new `DynamicCapsOutcome::Rejected(reason)` → `Ok(ProviderBuildOutcome::Rejected(reason))`; `DynamicCapsOutcome::Ready(caps, note)` → `Ok(ProviderBuildOutcome::Ready(registration_with(caps), note))`. Where `creds::load` currently short-circuits to `Ok(None)`, change to `Ok(NoCredentials)` for now (env-var fallback is Task 6, done later once the workspace builds again, so this task stays reviewable in isolation).
 
-Run `cargo build -p otto 2>&1 | tail -40` — expect remaining errors confined to `main.rs`'s three call sites (Task 5) — confirm no errors from the shim files themselves.
+Run `cargo build -p otto 2>&1 | tail -40` — expect remaining errors confined to `main.rs`'s three call sites (fixed in Task 5) — confirm no errors from the shim files themselves.
 
 - [ ] **Step 5: Commit**
 
@@ -190,58 +191,28 @@ key from a present-but-rejected one. main.rs call sites updated next."
 
 ---
 
-## Task 4: Env-var credential recognition (step 1a)
-
-**Files:**
-- Modify: `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`, `provider_gemini/mod.rs`, `provider_openai/mod.rs`
-
-- [ ] **Step 1: Add a failing test (red)**
-
-For each of the three cloud shims, add a test that: clears/mocks the keyring lookup to return `Ok(None)`, sets the vendor env var (e.g. `ANTHROPIC_API_KEY`) to a non-empty value via `std::env::set_var` (test-scoped, restore after), and asserts `try_build_registration` does not short-circuit to `NoCredentials` (use a test double / mock `list_models` returning success to reach `Ready`, or at minimum assert the code path calls `.build()` rather than returning early — check existing test infra in these files for the right mocking seam first). Run `cargo test -p otto provider_anthropic:: provider_gemini:: provider_openai:: 2>&1 | tail -40` — expect new tests to fail.
-
-- [ ] **Step 2: Implement (green)**
-
-In each shim, where `creds::load(PROVIDER_ID)` returns `Ok(None)` **or `Err(_)`** (log the `Err` case via `tracing::warn!` — a keyring backend fault must not silently block an env-only setup, but should still be diagnosable), check whether `std::env::var(<VENDOR_ENV_VAR>)` yields a **non-empty** string (matching the builder's own non-empty criterion) before returning `NoCredentials`. If non-empty, call `.build()` without `.api_key(..)` so the provider builder's existing env fallback (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `OPENAI_API_KEY`) resolves it, then proceed through the same `build_dynamic_caps` validation as the keyring path.
-
-Run `cargo test -p otto provider_anthropic:: provider_gemini:: provider_openai:: 2>&1 | tail -40` — expect green.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add crates/otto/src/plugin/builtin/provider_anthropic/mod.rs crates/otto/src/plugin/builtin/provider_gemini/mod.rs crates/otto/src/plugin/builtin/provider_openai/mod.rs
-git commit -m "feat(otto): recognize env-var-only credentials at auto-discovery
-
-try_build_registration previously short-circuited to NoCredentials
-whenever the keyring had no entry, even if the vendor's env var
-(ANTHROPIC_API_KEY etc.) was set — the provider builders already support
-that fallback but the TUI shim never reached it. A keyring backend error
-is now treated the same as \"no entry\" for this fallback check only, and
-is still logged."
-```
-
----
-
-## Task 5: `StartupSection::verbose` + `HostBoot`/`App` plumbing
+## Task 4: `StartupSection::verbose` + `HostBoot`/`App` plumbing
 
 **Files:**
 - Modify: `crates/otto/src/config_file.rs`
 - Modify: `crates/otto/src/main.rs`
+- Modify: `crates/otto/src/app.rs`
 
 - [ ] **Step 1: Add the config field**
 
-In `crates/otto/src/config_file.rs`, add `verbose: bool` (default `false`, `#[serde(default)]`) to `StartupSection`, next to `connect_timeout_ms`/`startup_providers`. Add/extend a round-trip serialization test confirming `[startup] verbose = true` parses correctly and the field defaults to `false` when omitted.
+In `crates/otto/src/config_file.rs`, add `verbose: bool` (default `false`, `#[serde(default)]`) to `StartupSection`, next to `connect_timeout_ms`/`startup_providers`. Grep `StartupSection {` across `crates/otto/src/config_file.rs` (existing literals around lines ~830 and ~871 construct `StartupSection` explicitly, e.g. in `Default` impls and tests) and update every explicit struct literal to include `verbose: false` (or switch the literal to `..Default::default()` where that's already the pattern used for other fields). Add/extend a round-trip serialization test confirming `[startup] verbose = true` parses correctly and the field defaults to `false` when omitted.
 
-Run `cargo test -p otto config_file 2>&1 | tail -20` — expect green.
+Run `cargo test -p otto config_file 2>&1 | tail -20` — expect green (this step must not leave any `StartupSection { .. }` literal missing the new field, or the crate won't compile).
 
 - [ ] **Step 2: Add `startup_verbose` to `HostBoot` and `App`**
 
-In `crates/otto/src/main.rs`: add `pub startup_verbose: bool` to `HostBoot` (~line 221-233); set it inside `bootstrap_pool_host` (~line 495) from the `config_file: &ConfigFile` parameter it already receives (`config_file.startup.verbose`). Add a matching `startup_verbose: bool` field to `App` (in `crates/otto/src/app.rs`); set it in `build_app_with_host` from `initial.as_ref().map(|b| b.startup_verbose).unwrap_or(false)`.
+In `crates/otto/src/main.rs`: add `pub startup_verbose: bool` to `HostBoot` (~line 221-233); set it inside `bootstrap_pool_host` (~line 495) from the `config_file: &ConfigFile` parameter it already receives (`config_file.startup.verbose`). In `crates/otto/src/app.rs`, add a matching `startup_verbose: bool` field to the `App` struct (near its other startup-derived fields) and initialize it in `App::new`; then in `main.rs`'s `build_app_with_host`, set `app.startup_verbose` from `initial.as_ref().map(|b| b.startup_verbose).unwrap_or(false)` after `App::new(...)` is called.
 
 Run `cargo build -p otto 2>&1 | tail -20` — expect green (additive fields only).
 
 - [ ] **Step 3: Gate the `try_provider!` macro's notes**
 
-In `bootstrap_pool_host`'s `try_provider!` macro, wrap the existing `deferred_notes.push(...)` calls for `notes.startup-build-failed`, `notes.startup-timeout`, `notes.list-models-fell-back`, `notes.list-models-empty`, and the new `Rejected`-reason note behind `if config_file.startup.verbose { ... }`, keeping the existing unconditional `tracing::warn!`/`tracing::debug!` calls. Leave `notes.not-connected-startup` unconditional.
+In `bootstrap_pool_host`'s `try_provider!` macro, wrap the existing `deferred_notes.push(...)` calls for `notes.startup-build-failed`, `notes.startup-timeout`, `notes.list-models-fell-back`, `notes.list-models-empty`, and the new `Rejected`-reason note behind `if config_file.startup.verbose { ... }`, keeping the existing unconditional `tracing::warn!`/`tracing::debug!` calls. Leave `notes.not-connected-startup` unconditional. (Note: the `Rejected`-reason note itself is wired in Task 5, once `try_provider!` is updated to match on `ProviderBuildOutcome` — this step only needs to gate the *existing* four note kinds; revisit this gating when Task 5 adds the fifth.)
 
 - [ ] **Step 4: Commit**
 
@@ -250,22 +221,25 @@ git add crates/otto/src/config_file.rs crates/otto/src/main.rs crates/otto/src/a
 git commit -m "feat(otto): add [startup] verbose config flag; gate startup notes
 
 Per-provider auto-connect notes (build failures, timeouts, catalog
-fallback, rejected keys) are now only pushed into the transcript when
+fallback) are now only pushed into the transcript when
 [startup] verbose = true (default false). They remain fully logged via
 tracing::warn regardless. HostBoot/App carry startup_verbose forward so
-the async pool-add drain (apply_pending_pool_add) can apply the same gate."
+the async pool-add drain (apply_pending_pool_add, Task 5) can apply the
+same gate."
 ```
 
 ---
 
-## Task 6: Update the three `main.rs` call sites for `ProviderBuildOutcome`
+## Task 5: Update `main.rs` call sites for `ProviderBuildOutcome`
+
+**Depends on Task 3 (introduces `ProviderBuildOutcome`) and Task 4 (introduces `config_file.startup.verbose` / `app.startup_verbose`).** Tasks 2, 3, and this task together are the minimal set that must land before `cargo build --workspace` succeeds again — Task 3's shim changes alone do not compile until this task's call-site updates land, since `try_provider!`, `perform_connect`, and `apply_pending_pool_add` still match on the old `Result<Option<...>, String>` shape until this task runs. Land Tasks 2, 3, 4, and 5 as one buildable sequence (separate commits are fine; each commit does not need to compile in isolation, but the branch must build after Task 5's commit).
 
 **Files:**
 - Modify: `crates/otto/src/main.rs`
 
 - [ ] **Step 1: `try_provider!` macro (startup)**
 
-Update the macro body to match on `ProviderBuildOutcome`: `NoCredentials` → unchanged (skip, no note). `Rejected(reason)` → do not add to `providers`; `tracing::warn!(provider = ..., reason = %reason, "provider key rejected at startup")`; push a `notes.startup-build-failed`-shaped note (reusing the existing locale key/format) gated behind `config_file.startup.verbose` (per Task 5 Step 3). `Ready(reg, note)` → unchanged existing handling (register + optional gated fallback note).
+Update the macro body to match on `ProviderBuildOutcome`: `NoCredentials` → unchanged (skip, no note). `Rejected(reason)` → do not add to `providers`; `tracing::warn!(provider = ..., reason = %reason, "provider key rejected at startup")`; push a `notes.startup-build-failed`-shaped note (reusing the existing locale key/format) gated behind `config_file.startup.verbose` (per Task 4 Step 3 — this is the fifth gated note kind referenced there). `Ready(reg, note)` → unchanged existing handling (register + optional gated fallback note).
 
 - [ ] **Step 2: `perform_connect` (explicit `/connect`)**
 
@@ -286,7 +260,7 @@ The startup call (~line 3071, immediately after the `HostStarting` dispatch insi
 
 - [ ] **Step 5: Build and fix remaining compile errors**
 
-Run `cargo build --workspace 2>&1 | tail -60`. Fix any remaining type mismatches at these three call sites and anywhere else the old `Result<Option<...>, String>` shape was matched on directly (grep `try_build_registration` and `build_dynamic_caps` across `crates/otto/src` to confirm no stragglers).
+Run `cargo build --workspace 2>&1 | tail -60`. Fix any remaining type mismatches at these call sites and anywhere else the old `Result<Option<...>, String>`/tuple shape was matched on directly (grep `try_build_registration` and `build_dynamic_caps` across `crates/otto/src` to confirm no stragglers). This is the point at which the workspace must build cleanly again.
 
 - [ ] **Step 6: Run existing tests**
 
@@ -305,6 +279,45 @@ misleading 'key not found' message. apply_pending_pool_add gains a
 startup: bool so its one startup-triggered call site (right after
 HostStarting) stays quiet by default while the three runtime call sites
 (slash commands, bound actions) keep today's always-shown /connect UX."
+```
+
+---
+
+## Task 6: Env-var credential recognition (step 1a)
+
+**Depends on Task 5 (workspace must build cleanly with `ProviderBuildOutcome` wired through before adding a new branch to it).**
+
+**Files:**
+- Modify: `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`, `provider_gemini/mod.rs`, `provider_openai/mod.rs`
+
+- [ ] **Step 1: Establish a test seam before writing tests**
+
+The cloud shims currently construct concrete providers against their real default API URLs and invoke `list_models` directly with no injectable seam — the existing `provider_common.rs` keyring mock and each plugin's `with_test_client`-style helpers only affect rendering/plugin-level tests, not `try_build_registration` itself. Before writing the env-var tests below, add a minimal seam: factor the "resolve credential source, then call `.build()` and validate via `build_dynamic_caps`" logic behind a small internal function that accepts an injectable `list_models` result (or an injectable base URL pointed at a local mock HTTP server, mirroring the Axum-based mock-server pattern already used in `provider-anthropic`/`provider-gemini`/`provider-openai`'s own crate-level tests). Keep this seam test-only (`#[cfg(test)]`) and scoped to each shim file; do not change the public `try_build_registration` signature beyond what Task 3 already introduced.
+
+- [ ] **Step 2: Add failing tests (red)**
+
+For each of the three cloud shims, using the Step 1 seam, add a test that: clears/mocks the keyring lookup to return `Ok(None)`, sets the vendor env var(s) to a non-empty value via `std::env::set_var` (test-scoped; serialize these tests or use a per-test env-var guard, since `std::env::set_var` is process-global and cloud-shim tests may run concurrently — check existing tests in these files for a `#[serial]`-style pattern or add one), and asserts `try_build_registration` reaches `Ready` via the mocked `list_models` success (not `NoCredentials`). For Gemini specifically, add **two** tests: one setting only `GEMINI_API_KEY`, one setting only `GOOGLE_API_KEY` — both must be recognized, since `provider-gemini`'s builder falls back to either.
+
+Run `cargo test -p otto provider_anthropic:: provider_gemini:: provider_openai:: 2>&1 | tail -40` — expect the new tests to fail.
+
+- [ ] **Step 3: Implement (green)**
+
+In each shim, where `creds::load(PROVIDER_ID)` returns `Ok(None)` **or `Err(_)`** (log the `Err` case via `tracing::warn!` — a keyring backend fault must not silently block an env-only setup, but should still be diagnosable), check whether the vendor's env var(s) yield a **non-empty** string before returning `NoCredentials`: Anthropic checks `ANTHROPIC_API_KEY`; OpenAI checks `OPENAI_API_KEY`; Gemini checks whether **either** `GEMINI_API_KEY` **or** `GOOGLE_API_KEY` is non-empty (matching the builder's own two-variable fallback order). If a non-empty value is present, call `.build()` without `.api_key(..)` so the provider builder's existing env fallback resolves it, then proceed through the same `build_dynamic_caps` validation as the keyring path.
+
+Run `cargo test -p otto provider_anthropic:: provider_gemini:: provider_openai:: 2>&1 | tail -40` — expect green.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add crates/otto/src/plugin/builtin/provider_anthropic/mod.rs crates/otto/src/plugin/builtin/provider_gemini/mod.rs crates/otto/src/plugin/builtin/provider_openai/mod.rs
+git commit -m "feat(otto): recognize env-var-only credentials at auto-discovery
+
+try_build_registration previously short-circuited to NoCredentials
+whenever the keyring had no entry, even if the vendor's env var(s)
+(ANTHROPIC_API_KEY, GEMINI_API_KEY/GOOGLE_API_KEY, OPENAI_API_KEY) were
+set — the provider builders already support that fallback but the TUI
+shim never reached it. A keyring backend error is now treated the same
+as \"no entry\" for this fallback check only, and is still logged."
 ```
 
 ---
