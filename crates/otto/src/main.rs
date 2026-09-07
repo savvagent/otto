@@ -521,8 +521,9 @@ async fn bootstrap_pool_host(
     }
 
     use crate::plugin::builtin::{
-        provider_anthropic::ProviderAnthropicPlugin, provider_gemini::ProviderGeminiPlugin,
-        provider_local::ProviderLocalPlugin, provider_openai::ProviderOpenAiPlugin,
+        provider_anthropic::ProviderAnthropicPlugin, provider_deepseek::ProviderDeepSeekPlugin,
+        provider_gemini::ProviderGeminiPlugin, provider_local::ProviderLocalPlugin,
+        provider_openai::ProviderOpenAiPlugin,
     };
 
     let timeout_dur = Duration::from_millis(config_file.startup.connect_timeout_ms);
@@ -573,6 +574,7 @@ async fn bootstrap_pool_host(
     try_provider!(ProviderAnthropicPlugin::new(), "Anthropic", "anthropic");
     try_provider!(ProviderGeminiPlugin::new(), "Gemini", "gemini");
     try_provider!(ProviderOpenAiPlugin::new(), "OpenAI", "openai");
+    try_provider!(ProviderDeepSeekPlugin::new(), "DeepSeek", "deepseek");
     try_provider!(ProviderLocalPlugin::new(), "Local (Ollama)", "local");
 
     if providers.is_empty() {
@@ -1680,8 +1682,9 @@ pub(crate) async fn apply_pending_model_change(
 /// `App::registered_providers` and never the host pool.
 pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot) {
     use crate::plugin::builtin::{
-        provider_anthropic::ProviderAnthropicPlugin, provider_gemini::ProviderGeminiPlugin,
-        provider_local::ProviderLocalPlugin, provider_openai::ProviderOpenAiPlugin,
+        provider_anthropic::ProviderAnthropicPlugin, provider_deepseek::ProviderDeepSeekPlugin,
+        provider_gemini::ProviderGeminiPlugin, provider_local::ProviderLocalPlugin,
+        provider_openai::ProviderOpenAiPlugin,
     };
 
     let Some(pending) = app.pending_pool_add.take() else {
@@ -1720,6 +1723,7 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot) 
         }
         "gemini" => ProviderGeminiPlugin::new().try_build_registration().await,
         "openai" => ProviderOpenAiPlugin::new().try_build_registration().await,
+        "deepseek" => ProviderDeepSeekPlugin::new().try_build_registration().await,
         "local" => ProviderLocalPlugin::new().try_build_registration().await,
         other => {
             tracing::warn!(
@@ -2448,8 +2452,9 @@ async fn perform_connect(
     app: &mut App,
 ) {
     use crate::plugin::builtin::{
-        provider_anthropic::ProviderAnthropicPlugin, provider_gemini::ProviderGeminiPlugin,
-        provider_local::ProviderLocalPlugin, provider_openai::ProviderOpenAiPlugin,
+        provider_anthropic::ProviderAnthropicPlugin, provider_deepseek::ProviderDeepSeekPlugin,
+        provider_gemini::ProviderGeminiPlugin, provider_local::ProviderLocalPlugin,
+        provider_openai::ProviderOpenAiPlugin,
     };
 
     // 1. Persist the key so the plugin can read it back via keyring.
@@ -2475,6 +2480,7 @@ async fn perform_connect(
         }
         "gemini" => ProviderGeminiPlugin::new().try_build_registration().await,
         "openai" => ProviderOpenAiPlugin::new().try_build_registration().await,
+        "deepseek" => ProviderDeepSeekPlugin::new().try_build_registration().await,
         "local" => ProviderLocalPlugin::new().try_build_registration().await,
         other => {
             app.push_note(rust_i18n::t!("notes.connect-unknown-provider", id = other).to_string());

@@ -120,6 +120,9 @@ pub mod provider_openai;
 /// Google Gemini provider shim: keyring-backed `internal:provider-gemini`.
 pub mod provider_gemini;
 
+/// DeepSeek provider shim: keyring-backed `internal:provider-deepseek`.
+pub mod provider_deepseek;
+
 /// Local (Ollama) provider shim: keyless `internal:provider-local`.
 pub mod provider_local;
 

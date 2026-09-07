@@ -47,6 +47,10 @@ path = "src/bin/otto-gemini.rs"
 name = "otto-openai"
 path = "src/bin/otto-openai.rs"
 
+[[bin]]
+name = "otto-deepseek"
+path = "src/bin/otto-deepseek.rs"
+
 [dependencies]
 otto-host = { workspace = true }
 otto-plugin = { workspace = true }
@@ -55,6 +59,7 @@ otto-canvas = { workspace = true }
 otto-protocol = { workspace = true }
 otto-mcp = { workspace = true }
 provider-anthropic = { workspace = true }
+provider-deepseek = { workspace = true }
 provider-gemini = { workspace = true }
 provider-local = { workspace = true }
 provider-openai = { workspace = true }
@@ -135,7 +140,7 @@ license-file = ["../../LICENSE", "0"]
 extended-description = """\
 A fast, MCP-first terminal coding agent. Ships the otto TUI plus its \
 bundled stdio MCP tool servers (fs, bash, grep, lsp, web) and standalone \
-provider shims (anthropic, gemini, openai)."""
+provider shims (anthropic, gemini, openai, deepseek)."""
 depends = "$auto"
 section = "utils"
 priority = "optional"
@@ -149,6 +154,7 @@ assets = [
     ["../../target/release/otto-anthropic", "usr/bin/otto-anthropic", "755"],
     ["../../target/release/otto-gemini", "usr/bin/otto-gemini", "755"],
     ["../../target/release/otto-openai", "usr/bin/otto-openai", "755"],
+    ["../../target/release/otto-deepseek", "usr/bin/otto-deepseek", "755"],
     ["../../README.md", "usr/share/doc/otto/README.md", "644"],
 ]
 
@@ -168,5 +174,6 @@ assets = [
     { source = "../../target/release/otto-anthropic", dest = "/usr/bin/otto-anthropic", mode = "755" },
     { source = "../../target/release/otto-gemini", dest = "/usr/bin/otto-gemini", mode = "755" },
     { source = "../../target/release/otto-openai", dest = "/usr/bin/otto-openai", mode = "755" },
+    { source = "../../target/release/otto-deepseek", dest = "/usr/bin/otto-deepseek", mode = "755" },
     { source = "../../README.md", dest = "/usr/share/doc/otto/README.md", mode = "644" },
 ]

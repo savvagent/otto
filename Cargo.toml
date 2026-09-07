@@ -9,6 +9,7 @@ members = [
     "crates/otto-mcp",
     "crates/otto-host",
     "crates/provider-anthropic",
+    "crates/provider-deepseek",
     "crates/provider-gemini",
     "crates/provider-local",
     "crates/provider-openai",
@@ -40,6 +41,7 @@ otto-protocol = { path = "crates/otto-protocol", version = "0.24.0" }
 otto-mcp = { path = "crates/otto-mcp", version = "0.24.0" }
 otto-host = { path = "crates/otto-host", version = "0.24.0" }
 provider-anthropic = { path = "crates/provider-anthropic", version = "0.24.0" }
+provider-deepseek = { path = "crates/provider-deepseek", version = "0.24.0" }
 provider-gemini = { path = "crates/provider-gemini", version = "0.24.0" }
 provider-local = { path = "crates/provider-local", version = "0.24.0" }
 provider-openai = { path = "crates/provider-openai", version = "0.24.0" }

@@ -103,6 +103,7 @@ pub(crate) fn register_builtins(
         ProviderEntry::new(builtin::provider_openai::ProviderOpenAiPlugin::new()),
         ProviderEntry::new(builtin::provider_gemini::ProviderGeminiPlugin::new()),
         ProviderEntry::new(builtin::provider_local::ProviderLocalPlugin::new()),
+        ProviderEntry::new(builtin::provider_deepseek::ProviderDeepSeekPlugin::new()),
     ];
 
     let plugins: Vec<Box<dyn otto_plugin::Plugin>> = vec![
@@ -300,15 +301,16 @@ mod tests {
             "internal:provider-openai",
             "internal:provider-gemini",
             "internal:provider-local",
+            "internal:provider-deepseek",
         ] {
             assert!(
                 provider_ids.contains(&expected.to_string()),
                 "missing provider id: {expected}"
             );
         }
-        assert_eq!(set.providers.len(), 4);
+        assert_eq!(set.providers.len(), 5);
 
-        // Registry shape: non-provider plugins PLUS 4 provider plugins
+        // Registry shape: non-provider plugins PLUS 5 provider plugins
         // PLUS 1 hook plugin (HookEntry's `as_plugin` view is inserted
         // into the same id-keyed plugins map by `PluginRegistry::new`).
         //
@@ -327,17 +329,18 @@ mod tests {
         // sub-project B (user-hooks) moves to `hook_entries` (not counted
         // in the plugins Vec) but still surfaces in the registry's plugins
         // map via the dual-Arc HookEntry, contributing 1 more registry
-        // entry; total registry size is 28 + 4 + 1 = 33.
+        // entry; the DeepSeek provider shim adds a 5th provider plugin;
+        // total registry size is 28 + 5 + 1 = 34.
         let reg = PluginRegistry::new(set);
         assert_eq!(
             reg.len(),
-            33,
-            "registry should have 28 non-provider + 4 provider + 1 hook plugin"
+            34,
+            "registry should have 28 non-provider + 5 provider + 1 hook plugin"
         );
         assert_eq!(
             reg.provider_count(),
-            4,
-            "registry should have 4 provider plugins"
+            5,
+            "registry should have 5 provider plugins"
         );
 
         // The user-hooks plugin still resolves through `reg.get(&pid)`
@@ -356,6 +359,7 @@ mod tests {
             "internal:provider-openai",
             "internal:provider-gemini",
             "internal:provider-local",
+            "internal:provider-deepseek",
         ] {
             let pid = PluginId::new(pid_str).unwrap();
             assert!(
