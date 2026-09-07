@@ -7,7 +7,7 @@
 ## Problem
 
 Otto ships built-in providers for Anthropic, Google Gemini, OpenAI, and local Ollama. DeepSeek
-(`deepseek-chat` / `deepseek-reasoner`) is a popular, inexpensive hosted model family that is not
+(`deepseek-v4-flash` / `deepseek-v4-pro`) is a popular, inexpensive hosted model family that is not
 currently selectable via `/connect`. DeepSeek's `POST /chat/completions` endpoint is
 wire-compatible with OpenAI's Chat Completions API (bearer auth, same request/response/SSE shape),
 so this is an additive "one more provider" change, not a new transport or turn-loop concept.
@@ -20,12 +20,30 @@ existing analog since DeepSeek's API is OpenAI-compatible).
 
 ## Non-goals
 
-- No special handling of `deepseek-reasoner`'s `reasoning_content` field in the chat-completion
-  response — it is out of scope for this change; a future spec can add reasoning-content surfacing
-  if wanted. This change treats DeepSeek's SSE/JSON shape as a plain OpenAI-compatible responder.
+- No "thinking"/extended-reasoning support. DeepSeek's current API (verified against
+  `api-docs.deepseek.com` at spec time) exposes reasoning as an opt-in per-request `"thinking":
+  {"type": "enabled"}` field plus `reasoning_effort`, not a separate always-reasoning model.
+  DeepSeek requires any assistant turn produced under `"thinking": {"type": "enabled"}` to have its
+  `reasoning_content` replayed on the next request once tools are in play, or the API returns
+  HTTP 400. This translator **never sets `thinking.type = "enabled"`** and never emits a
+  `reasoning_effort` field, so DeepSeek never returns `reasoning_content` and the replay
+  requirement never applies. A future spec can add thinking-mode support (and the accompanying
+  `reasoning_content` replay-through-tool-calls plumbing) if wanted; it is explicitly out of scope
+  here.
 - No changes to `Host`, `ToolRegistry`, the SPP wire format, or any other provider.
 - No changes to the host-swap `RwLock` discipline or the `rmcp` `ProgressDispatcher` pattern beyond
   replicating the existing (correct) pattern already used by `provider-openai`/`provider-gemini`.
+
+## Known Spec Review Notes
+
+- A spec-critique dispatch flagged the repo as still using `crates/savvagent`/`savvagent-*`
+  naming and workspace version `0.23.1`. That is the state of the main checkout's working tree
+  (behind `origin/main` by the in-flight `otto` rename at spec time); this feature's worktree was
+  created from `origin/main`, which already contains the completed rename
+  (`docs/superpowers/plans/2026-09-07-rename-savvagent-to-otto.md`) — `crates/otto`,
+  `otto-openai`, and workspace version `0.24.0` are all confirmed present there. Treat that
+  critique finding as an environment-visibility false positive, not a planning gap — the `otto`
+  naming throughout this spec is correct for the branch this work lands on.
 
 ## Design
 
@@ -45,13 +63,14 @@ Mirrors `crates/provider-openai` file-for-file:
 - `src/lib.rs` — `DeepSeekProvider` / `DeepSeekProviderBuilder`, `DEFAULT_BASE_URL =
   "https://api.deepseek.com"`, `CHAT_COMPLETIONS_PATH = "/chat/completions"` (no `/v1` prefix —
   DeepSeek's endpoint is `https://api.deepseek.com/chat/completions`, confirmed against DeepSeek's
-  published API reference), `DEFAULT_MODEL = "deepseek-chat"`. Builder reads `DEEPSEEK_API_KEY`
-  from the environment when no explicit key is supplied — same pattern as
-  `OpenAiProviderBuilder::build` reading `OPENAI_API_KEY`.
-  - `list_models` calls `GET /models` (DeepSeek does not have OpenAI's `/v1/models` non-chat model
-    clutter — its catalog only contains `deepseek-chat` and `deepseek-reasoner` — so no filtering
-    by id prefix is needed, unlike `provider-openai`'s `gpt-`/`o1-`/`o3-`/`o4-` allowlist; return
-    every model DeepSeek's endpoint lists).
+  published API reference), `DEFAULT_MODEL = "deepseek-v4-flash"`. Builder reads
+  `DEEPSEEK_API_KEY` from the environment when no explicit key is supplied — same pattern as
+  `OpenAiProviderBuilder::build` reading `OPENAI_API_KEY`. The translator never sets
+  `"thinking": {"type": "enabled"}` or `reasoning_effort` on the outgoing request (see Non-goals) —
+  it is a plain, non-thinking OpenAI-compatible request/response shape.
+  - `list_models` calls `GET /models` (DeepSeek's catalog is small and does not have OpenAI's
+    non-chat clutter — no filtering by id prefix is needed, unlike `provider-openai`'s
+    `gpt-`/`o1-`/`o3-`/`o4-` allowlist; return every model DeepSeek's endpoint lists).
   - `run()` reads `DEEPSEEK_API_KEY`, `OTTO_DEEPSEEK_LISTEN` (default
     `127.0.0.1:8790` — next free port after `provider-openai`'s `8789`), and `DEEPSEEK_BASE_URL`
     from the environment for the standalone binary.
@@ -87,14 +106,14 @@ Mirrors `provider_openai/mod.rs` (which itself mirrors `provider_anthropic/mod.r
   `active: bool` shape, `new()`, `#[cfg(test)] with_test_client`, `#[cfg(test)]
   set_active_for_render`.
 - `capabilities()` returns a static `ProviderCapabilities` with two models:
-  - `deepseek-chat` — display "DeepSeek Chat", no vision, no audio, 64,000 context window (per
-    DeepSeek's published API limits), `CostTier::Cheap`.
-  - `deepseek-reasoner` — display "DeepSeek Reasoner", no vision, no audio, 64,000 context window,
+  - `deepseek-v4-flash` — display "DeepSeek V4 Flash", no vision, no audio, 128,000 context window
+    (per DeepSeek's published API limits), `CostTier::Cheap`.
+  - `deepseek-v4-pro` — display "DeepSeek V4 Pro", no vision, no audio, 128,000 context window,
     `CostTier::Standard`.
-  - Default model id: `"deepseek-chat"`.
+  - Default model id: `"deepseek-v4-flash"`.
 - `try_build_registration` — same keyring-read → builder → `InProcessProviderClient` →
   `build_dynamic_caps` → `ProviderRegistration` shape as `provider_openai`'s, with model aliases
-  `"deepseek"` → `deepseek-chat` and `"deepseek-reasoner"` → `deepseek-reasoner`.
+  `"deepseek"` → `deepseek-v4-flash` and `"deepseek-pro"` → `deepseek-v4-pro`.
 - `try_connect_from_keyring`, `Plugin` impl (`manifest`, `handle_slash`, `on_event`,
   `render_slot`), and `BuiltinProviderPlugin::take_client` — copied verbatim from
   `provider_openai`'s shape with the constants above substituted.
@@ -128,7 +147,7 @@ Mirrors `provider_openai/mod.rs` (which itself mirrors `provider_anthropic/mod.r
       id: "deepseek",
       display_name: "DeepSeek",
       api_key_env: "DEEPSEEK_API_KEY",
-      default_model: "deepseek-chat",
+      default_model: "deepseek-v4-flash",
       api_key_required: true,
   },
   ```
