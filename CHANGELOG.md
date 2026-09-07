@@ -8,6 +8,26 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.25.1 - 2026-09-07
+
+### Fixed
+
+- Startup provider auto-connect no longer pushes "build failed"/"timeout"/"rejected" notes into
+  the transcript by default — only `tracing` log entries. A normal launch with a healthy key stays
+  quiet; opt back into the previous chatter with `[startup] verbose = true` in `~/.otto/config.toml`.
+- A present-but-rejected provider key (bad key, no billing credit, rate-limited, org disabled, ...)
+  is now detected via `list_models` at connect time instead of being registered as a
+  falsely-healthy provider. This required fixing `provider-gemini`/`provider-openai`'s `list_models`
+  error classification, which previously mapped all HTTP error statuses to `ErrorKind::Network`,
+  masking auth/permission/rate-limit errors as generic connectivity issues.
+- `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `OPENAI_API_KEY`, and `DEEPSEEK_API_KEY`
+  are now recognized as a fallback credential source (in addition to the keyring) at startup and
+  via `/connect`, not just when the provider server binaries run standalone.
+- Turn-time provider failures now name the offending provider, e.g. `Error: Anthropic rejected the
+  request: <message>` instead of the unattributed `Error: provider error: Authentication: <message>`.
+- `provider-deepseek`'s shim (added in 0.25.0, before this fix) is updated to the same
+  `ProviderBuildOutcome`-based registration flow as the other four built-in providers. (#14)
+
 ## 0.25.0 - 2026-09-07
 
 ### Added
