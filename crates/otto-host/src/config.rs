@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use otto_mcp::ProviderClient;
 use otto_protocol::ProviderId;
+use rmcp::transport::auth::AuthClient;
 
 use crate::capabilities::{ModelAlias, ProviderCapabilities};
 use crate::permissions::PermissionPolicy;
@@ -35,6 +36,13 @@ pub enum HttpAuth {
         /// The bearer token, without the `Bearer ` prefix.
         token: String,
     },
+    /// Use an OAuth-aware HTTP client that can attach access tokens and
+    /// refresh them through the auth manager as needed.
+    OAuth {
+        /// Preconfigured OAuth-capable client; its debug surface is already
+        /// redacted upstream, so we never print token material here.
+        client: AuthClient<reqwest::Client>,
+    },
 }
 
 impl std::fmt::Debug for HttpAuth {
@@ -49,6 +57,7 @@ impl std::fmt::Debug for HttpAuth {
                 .debug_struct("Bearer")
                 .field("token", &"<redacted>")
                 .finish(),
+            HttpAuth::OAuth { client } => f.debug_struct("OAuth").field("client", client).finish(),
         }
     }
 }
@@ -569,6 +578,27 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn tool_endpoint_http_constructs_with_oauth_auth() {
+        let manager = rmcp::transport::auth::AuthorizationManager::new("https://example.com/mcp")
+            .await
+            .expect("oauth manager");
+        let ep = ToolEndpoint::Http {
+            name: "example".to_string(),
+            url: "https://example.com/mcp".to_string(),
+            auth: HttpAuth::OAuth {
+                client: AuthClient::new(reqwest::Client::new(), manager),
+            },
+        };
+        match ep {
+            ToolEndpoint::Http {
+                auth: HttpAuth::OAuth { .. },
+                ..
+            } => {}
+            _ => panic!("expected Http variant with oauth"),
+        }
+    }
+
     #[test]
     fn tool_endpoint_stdio_carries_name_and_env() {
         let mut env = HashMap::new();
@@ -598,6 +628,20 @@ mod tests {
         let rendered = format!("{auth:?}");
         assert!(!rendered.contains("super-secret-token"));
         assert!(rendered.contains("<redacted>"));
+    }
+
+    #[tokio::test]
+    async fn http_auth_oauth_debug_never_prints_tokens() {
+        let manager = rmcp::transport::auth::AuthorizationManager::new("https://example.com/mcp")
+            .await
+            .expect("oauth manager");
+        let auth = HttpAuth::OAuth {
+            client: AuthClient::new(reqwest::Client::new(), manager),
+        };
+        let rendered = format!("{auth:?}");
+        assert!(rendered.contains("OAuth"));
+        assert!(!rendered.contains("access_token"));
+        assert!(!rendered.contains("refresh_token"));
     }
 
     #[test]
