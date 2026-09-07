@@ -1,7 +1,7 @@
 # Rename project from otto to otto — design
 
 Date: 2026-09-07
-Status: pending review
+Status: IMPLEMENTED
 Related: `savvagent/otto#51`
 
 ## Problem
