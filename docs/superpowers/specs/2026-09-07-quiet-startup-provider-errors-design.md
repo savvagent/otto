@@ -247,6 +247,25 @@ Fix: give `apply_pending_pool_add` a `startup: bool` parameter.
   dedup-with-bootstrap check runs) — the gating change must not reorder
   this, only make the push conditional.
 
+**Plumbing the verbose flag to where it's needed.** `bootstrap_pool_host`
+(`main.rs:495`) already receives `config_file: &ConfigFile` and is the right
+place to read `config_file.startup.verbose`, but the startup call to
+`apply_pending_pool_add` at ~line 3071 runs later, inside `run_app`, after
+`ConfigFile` has been consumed by `bootstrap_app_and_host` and is out of
+scope — `App` does not otherwise retain it. Fix: add
+`startup_verbose: bool` to `HostBoot` (`main.rs:221-233`), set it in
+`bootstrap_pool_host` from the `config_file` it already has; add a
+matching `startup_verbose: bool` field to `App`, set in
+`build_app_with_host` from `initial.as_ref().map(|b|
+b.startup_verbose).unwrap_or(false)` (the `None`/no-host-built case has no
+providers to be noisy about, so `false` is a safe default there). The
+startup call site then passes `app.startup_verbose` as the verbose gate;
+the three runtime call sites don't need it at all, since their `startup`
+argument is `false` and the gate short-circuits on `!startup`. No other
+runtime consumer needs the live `ConfigFile` after bootstrap, so this one
+bool is the only plumbing required — no config reload, and no need to
+retain the full `ConfigFile` on `App`.
+
 This keeps the "one host, one pool, one source of truth" invariant intact:
 `apply_pending_pool_add` still always attempts the pool add (so a
 silently-connected provider ends up routable via `/model`), it only stops
