@@ -180,14 +180,36 @@ pub(crate) fn caps_from_list_models(
 /// `/model` picker may be stale.
 ///
 /// `tracing::warn` still records the underlying error for log readers.
+/// Outcome of validating a provider's live model catalog via `list_models`.
+pub(crate) enum DynamicCapsOutcome {
+    /// Capabilities to register with, plus an optional note about why a
+    /// fallback (static catalog) was used.
+    Ready(ProviderCapabilities, Option<String>),
+    /// The stored credential was rejected (or rate-limited/quota-exhausted)
+    /// by `list_models`; the provider must not be registered. Carries a
+    /// human-readable reason suitable for a user-facing note.
+    Rejected(String),
+}
+
+/// Validate a provider's credentials by calling `list_models` and decide
+/// whether the provider is usable.
+///
+/// - `Ok(models)` → [`DynamicCapsOutcome::Ready`] with the live catalog (or
+///   the static fallback if the response was empty).
+/// - `Err(e)` where `e.kind` is [`otto_protocol::ErrorKind::Network`] or
+///   [`otto_protocol::ErrorKind::NotImplemented`] → treated as transient /
+///   not-applicable; falls back to the static catalog, same as today.
+/// - Any other `Err(e)` (e.g. `Authentication`, `RateLimited`,
+///   `PermissionDenied`) → [`DynamicCapsOutcome::Rejected`]; the caller must
+///   not register this provider.
 pub(crate) async fn build_dynamic_caps(
     client: &(dyn ProviderClient + Send + Sync),
     static_fallback: ProviderCapabilities,
     display_name: &str,
-) -> (ProviderCapabilities, Option<String>) {
+) -> DynamicCapsOutcome {
     match client.list_models().await {
         Ok(resp) => match caps_from_list_models(resp, &static_fallback) {
-            Some(dynamic) => (dynamic, None),
+            Some(dynamic) => DynamicCapsOutcome::Ready(dynamic, None),
             None => {
                 tracing::warn!(
                     provider = display_name,
@@ -195,14 +217,19 @@ pub(crate) async fn build_dynamic_caps(
                 );
                 let note =
                     rust_i18n::t!("notes.list-models-empty", name = display_name).to_string();
-                (static_fallback, Some(note))
+                DynamicCapsOutcome::Ready(static_fallback, Some(note))
             }
         },
-        Err(e) => {
+        Err(e)
+            if matches!(
+                e.kind,
+                otto_protocol::ErrorKind::Network | otto_protocol::ErrorKind::NotImplemented
+            ) =>
+        {
             tracing::warn!(
                 provider = display_name,
                 error = %e,
-                "list_models failed; falling back to static catalog"
+                "list_models failed (transient/unsupported); falling back to static catalog"
             );
             let note = rust_i18n::t!(
                 "notes.list-models-fell-back",
@@ -210,7 +237,137 @@ pub(crate) async fn build_dynamic_caps(
                 err = e.message.clone()
             )
             .to_string();
-            (static_fallback, Some(note))
+            DynamicCapsOutcome::Ready(static_fallback, Some(note))
+        }
+        Err(e) => {
+            tracing::warn!(
+                provider = display_name,
+                error = %e,
+                "list_models rejected the stored credential"
+            );
+            DynamicCapsOutcome::Rejected(e.message.clone())
+        }
+    }
+}
+
+#[cfg(test)]
+mod build_dynamic_caps_tests {
+    use super::*;
+    use async_trait::async_trait;
+    use otto_protocol::{
+        CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ModelInfo,
+        ProviderError, StreamEvent,
+    };
+    use tokio::sync::mpsc;
+
+    /// Test double whose `list_models` result is configurable per test.
+    struct FakeClient {
+        result: Result<ListModelsResponse, ProviderError>,
+    }
+
+    #[async_trait]
+    impl ProviderClient for FakeClient {
+        async fn complete(
+            &self,
+            _: CompleteRequest,
+            _: Option<mpsc::Sender<StreamEvent>>,
+        ) -> Result<CompleteResponse, ProviderError> {
+            unreachable!("not exercised by build_dynamic_caps tests")
+        }
+        async fn list_models(&self) -> Result<ListModelsResponse, ProviderError> {
+            self.result.clone()
+        }
+    }
+
+    fn static_caps() -> ProviderCapabilities {
+        ProviderCapabilities::new(
+            vec![ModelCapabilities {
+                id: "static-model".into(),
+                display_name: "Static Model".into(),
+                supports_vision: false,
+                supports_audio: false,
+                context_window: 8_192,
+                cost_tier: CostTier::Standard,
+            }],
+            "static-model".into(),
+        )
+        .expect("static caps must build")
+    }
+
+    #[tokio::test]
+    async fn authentication_error_is_rejected_not_faked_as_ready() {
+        let client = FakeClient {
+            result: Err(ProviderError {
+                kind: ErrorKind::Authentication,
+                message: "invalid api key".into(),
+                retry_after_ms: None,
+                provider_code: None,
+            }),
+        };
+        let outcome = build_dynamic_caps(&client, static_caps(), "Test Provider").await;
+        match outcome {
+            DynamicCapsOutcome::Rejected(reason) => assert!(reason.contains("invalid api key")),
+            DynamicCapsOutcome::Ready(..) => panic!("expected Rejected, got Ready"),
+        }
+    }
+
+    #[tokio::test]
+    async fn network_error_falls_back_to_ready() {
+        let client = FakeClient {
+            result: Err(ProviderError {
+                kind: ErrorKind::Network,
+                message: "connection refused".into(),
+                retry_after_ms: None,
+                provider_code: None,
+            }),
+        };
+        let outcome = build_dynamic_caps(&client, static_caps(), "Test Provider").await;
+        match outcome {
+            DynamicCapsOutcome::Ready(_, Some(note)) => {
+                assert!(note.contains("Test Provider"))
+            }
+            other => panic!("expected Ready with fallback note, got {}", match other {
+                DynamicCapsOutcome::Rejected(_) => "Rejected",
+                DynamicCapsOutcome::Ready(_, None) => "Ready(None)",
+                _ => unreachable!(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn not_implemented_error_falls_back_to_ready() {
+        let client = FakeClient {
+            result: Err(ProviderError {
+                kind: ErrorKind::NotImplemented,
+                message: "no catalog endpoint".into(),
+                retry_after_ms: None,
+                provider_code: None,
+            }),
+        };
+        let outcome = build_dynamic_caps(&client, static_caps(), "Test Provider").await;
+        assert!(matches!(outcome, DynamicCapsOutcome::Ready(..)));
+    }
+
+    #[tokio::test]
+    async fn success_response_is_ready_with_no_note() {
+        let client = FakeClient {
+            result: Ok(ListModelsResponse {
+                models: vec![ModelInfo {
+                    id: "static-model".into(),
+                    display_name: Some("Static Model".into()),
+                    context_window: None,
+                }],
+                default_model_id: Some("static-model".into()),
+            }),
+        };
+        let outcome = build_dynamic_caps(&client, static_caps(), "Test Provider").await;
+        match outcome {
+            DynamicCapsOutcome::Ready(_, None) => {}
+            other => panic!("expected Ready(_, None), got {}", match other {
+                DynamicCapsOutcome::Rejected(_) => "Rejected",
+                DynamicCapsOutcome::Ready(_, Some(_)) => "Ready(Some)",
+                _ => unreachable!(),
+            }),
         }
     }
 }
