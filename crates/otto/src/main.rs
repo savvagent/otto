@@ -3925,7 +3925,7 @@ async fn run_app(
                                     )
                                     .await;
                                 }
-                                Ok(None) => app.enter_api_key_for_provider(spec, false),
+                                Ok(None) => app.enter_api_key_for(spec, false),
                                 Err(e) => {
                                     app.push_note(
                                         rust_i18n::t!(
@@ -3934,7 +3934,7 @@ async fn run_app(
                                         )
                                         .to_string(),
                                     );
-                                    app.enter_api_key_for_provider(spec, false);
+                                    app.enter_api_key_for(spec, false);
                                 }
                             }
                         }

@@ -1799,24 +1799,13 @@ impl App {
         self.input_mode = InputMode::SelectingProvider;
     }
 
-    /// Advance from provider selection to API-key entry, or cancel if `idx` is OOB.
+    /// Enter API-key capture for the already-selected provider.
     ///
     /// The placeholder text reflects whether a credential is already
     /// stored in the keyring: when present, the user can press Enter on
     /// an empty input to reuse it; otherwise the placeholder just hints
     /// at the env-var name.
-    pub fn enter_api_key_for(&mut self, idx: usize) {
-        let Some(spec) = effective_providers().get(idx).copied() else {
-            self.input_mode = InputMode::Editing;
-            return;
-        };
-        let has_stored = matches!(crate::creds::load(spec.id), Ok(Some(_)));
-        self.enter_api_key_for_provider(spec, has_stored);
-    }
-
-    /// Enter API-key capture for the already-selected provider.
-    #[allow(dead_code)]
-    pub fn enter_api_key_for_provider(&mut self, spec: &'static ProviderSpec, has_stored: bool) {
+    pub fn enter_api_key_for(&mut self, spec: &'static ProviderSpec, has_stored: bool) {
         self.pending_provider = Some(spec);
         let mut ta = TextArea::default();
         ta.set_mask_char('●');
@@ -2706,13 +2695,13 @@ mod tests {
             .find(|spec| spec.id == "openai")
             .expect("openai provider should exist");
 
-        app.enter_api_key_for_provider(spec, false);
+        app.enter_api_key_for(spec, false);
         assert_eq!(
             app.api_key_textarea.placeholder_text(),
             rust_i18n::t!("prompt.api-key.paste-new", env = spec.api_key_env),
         );
 
-        app.enter_api_key_for_provider(spec, true);
+        app.enter_api_key_for(spec, true);
         assert_eq!(
             app.api_key_textarea.placeholder_text(),
             rust_i18n::t!(

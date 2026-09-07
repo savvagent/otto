@@ -215,17 +215,20 @@ async fn apply_one(app: &mut App, eff: Effect, depth: u8) -> Result<(), String> 
         Effect::Quit => app.request_quit(),
         Effect::PromptApiKey { provider_id } => {
             // Resolve the id against the static provider catalog; the
-            // legacy `enter_api_key_for` flow needs the static spec for
-            // the env-var placeholder and the keyring write that follows
-            // on submit. Unknown ids fall back to a styled note rather
+            // selector/API-key flow needs the static spec for the
+            // env-var placeholder and the keyring write that follows on
+            // submit. Unknown ids fall back to a styled note rather
             // than panicking so plugin authors can't crash the TUI by
             // emitting `PromptApiKey` for a provider that's not in the
             // built-in catalog yet.
             match crate::providers::effective_providers()
                 .into_iter()
-                .position(|p| p.id == provider_id.as_str())
+                .find(|p| p.id == provider_id.as_str())
             {
-                Some(idx) => app.enter_api_key_for(idx),
+                Some(spec) => {
+                    let has_stored = matches!(crate::creds::load(spec.id), Ok(Some(_)));
+                    app.enter_api_key_for(spec, has_stored);
+                }
                 None => app.push_styled_note(otto_plugin::StyledLine::plain(
                     rust_i18n::t!(
                         "notes.prompt-api-key-unknown-provider",
