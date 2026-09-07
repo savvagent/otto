@@ -224,10 +224,7 @@ mod tests {
             .list_models()
             .await
             .expect_err("default impl errors");
-        assert!(matches!(
-            err.kind,
-            otto_protocol::ErrorKind::NotImplemented
-        ));
+        assert!(matches!(err.kind, otto_protocol::ErrorKind::NotImplemented));
         assert!(
             err.message.contains("list_models"),
             "message: {}",

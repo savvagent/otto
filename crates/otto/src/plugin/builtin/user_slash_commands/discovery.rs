@@ -137,10 +137,7 @@ pub fn walk_all(project_root: &Path, home: &Path) -> Index {
             project_root.join(".claude").join("commands"),
             Origin::ProjectClaude,
         ),
-        (
-            home.join(".otto").join("commands"),
-            Origin::UserOtto,
-        ),
+        (home.join(".otto").join("commands"), Origin::UserOtto),
         (home.join(".claude").join("commands"), Origin::UserClaude),
     ];
     let mut index = Index::default();

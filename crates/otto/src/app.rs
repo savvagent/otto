@@ -186,10 +186,10 @@ impl std::fmt::Debug for CanvasRegistry {
     }
 }
 
+use otto_host::{NetOverride, SandboxConfig, ToolCallStatus, TranscriptFile, TurnEvent};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders};
 use ratatui_explorer::{FileExplorer, FileExplorerBuilder, Theme};
-use otto_host::{NetOverride, SandboxConfig, ToolCallStatus, TranscriptFile, TurnEvent};
 use serde_json::Value;
 use tui_textarea::{TextArea, WrapMode};
 
@@ -631,8 +631,7 @@ pub struct App {
     /// into [`otto_host::Host`] so the tool loop can talk through
     /// them. Boxed-trait-object so the same map can hold the
     /// per-provider client implementations side by side.
-    pub registered_providers:
-        std::collections::HashMap<String, Box<dyn otto_mcp::ProviderClient>>,
+    pub registered_providers: std::collections::HashMap<String, Box<dyn otto_mcp::ProviderClient>>,
 
     /// Model catalog cache for the `/model` picker. Refreshed after
     /// each `/connect` and `/model <id>` by calling `host.list_models()`
@@ -668,10 +667,8 @@ pub struct App {
     /// (currently only `internal:user-agents` registers `task`, but the
     /// vector keeps the door open for future registrants without a
     /// follow-up refactor).
-    pub pending_in_process_tools: Vec<(
-        otto_protocol::ToolDef,
-        otto_plugin::InProcessToolHandlerArc,
-    )>,
+    pub pending_in_process_tools:
+        Vec<(otto_protocol::ToolDef, otto_plugin::InProcessToolHandlerArc)>,
 
     /// Queued by `Effect::ReloadRoutingRules`; drained by
     /// `main.rs::apply_pending_routing_reload`.
@@ -1272,11 +1269,7 @@ impl App {
     /// Appends `fragment` to the `source_preview` buffer of the
     /// `Entry::Canvas` that was created for `id`. No-op if the entry
     /// is not found or has already been finalized (`source_preview` is `None`).
-    pub fn handle_html_block_delta(
-        &mut self,
-        id: otto_plugin::ContentBlockId,
-        fragment: &str,
-    ) {
+    pub fn handle_html_block_delta(&mut self, id: otto_plugin::ContentBlockId, fragment: &str) {
         if let Some(Entry::Canvas {
             source_preview,
             id: entry_id,
@@ -2132,8 +2125,7 @@ pub fn collect_transcript_entries(dir: &std::path::Path) -> Vec<TranscriptEntry>
                 (sa, msgs)
             }
             serde_json::Value::Array(_) => {
-                let Ok(msgs) =
-                    serde_json::from_value::<Vec<otto_protocol::Message>>(root.clone())
+                let Ok(msgs) = serde_json::from_value::<Vec<otto_protocol::Message>>(root.clone())
                 else {
                     continue;
                 };

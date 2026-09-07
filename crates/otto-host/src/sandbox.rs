@@ -1085,10 +1085,9 @@ mod tests {
                 "OTTO_TOOL_FS_ROOT=/foo should survive bwrap rewrite, got envs={envs:?}"
             );
             assert!(
-                envs.iter().any(
-                    |(k, v)| k == std::ffi::OsStr::new("OTTO_TOOL_BASH_ROOT")
-                        && v.as_deref() == Some(std::ffi::OsStr::new("/bar"))
-                ),
+                envs.iter()
+                    .any(|(k, v)| k == std::ffi::OsStr::new("OTTO_TOOL_BASH_ROOT")
+                        && v.as_deref() == Some(std::ffi::OsStr::new("/bar"))),
                 "OTTO_TOOL_BASH_ROOT=/bar should survive bwrap rewrite, got envs={envs:?}"
             );
         }

@@ -234,10 +234,9 @@ fn render_environment(out: &mut String, env: &PromptEnv<'_>) {
     ));
     let version_line = match &env.app_version {
         AppVersion::App(v) => format!("- Otto version: {v}"),
-        AppVersion::HostCrateFallback => format!(
-            "- Otto host crate version: {}",
-            env!("CARGO_PKG_VERSION")
-        ),
+        AppVersion::HostCrateFallback => {
+            format!("- Otto host crate version: {}", env!("CARGO_PKG_VERSION"))
+        }
     };
     out.push_str(&version_line);
 }

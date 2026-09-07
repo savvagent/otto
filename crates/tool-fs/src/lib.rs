@@ -1585,11 +1585,7 @@ mod tests {
         let leftovers: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with(".otto-tmp.")
-            })
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".otto-tmp."))
             .collect();
         assert!(leftovers.is_empty(), "leftover tmp file: {leftovers:?}");
     }

@@ -73,8 +73,7 @@ pub async fn run(input: SearchInput) -> Result<SearchOutput, WebToolError> {
         .unwrap_or(DEFAULT_MAX_RESULTS)
         .clamp(1, 50);
 
-    if let Ok(key) =
-        std::env::var("OTTO_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
+    if let Ok(key) = std::env::var("OTTO_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
     {
         return brave_search(&input.query, max_results, &key).await;
     }

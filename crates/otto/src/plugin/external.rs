@@ -101,8 +101,7 @@ pub(crate) async fn register_builtins_with_external(
     };
 
     let result =
-        match otto_plugin_wasm::register::register_external(Some(&project_root), home, theme)
-            .await
+        match otto_plugin_wasm::register::register_external(Some(&project_root), home, theme).await
         {
             Ok(r) => r,
             Err(e) => {

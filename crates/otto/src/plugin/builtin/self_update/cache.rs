@@ -42,11 +42,7 @@ pub fn cache_path() -> Option<PathBuf> {
     if raw.is_empty() {
         return None;
     }
-    Some(
-        PathBuf::from(raw)
-            .join(".otto")
-            .join("update-check.json"),
-    )
+    Some(PathBuf::from(raw).join(".otto").join("update-check.json"))
 }
 
 /// Return current time as unix-seconds, defaulting to 0 if the clock is

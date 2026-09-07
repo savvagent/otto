@@ -254,10 +254,7 @@ pub async fn handle_focused_canvas_key(
     // is owned afterwards so no borrow of `app` is held across
     // `apply_canvas_effects` (mirrors the mouse handler).
     let dispatch_result = if let Some(renderer) = app.canvas_registry.get_mut(id) {
-        match renderer
-            .dispatch(otto_plugin::InputEvent::Key(key))
-            .await
-        {
+        match renderer.dispatch(otto_plugin::InputEvent::Key(key)).await {
             Ok(outcome) => Some(Ok((outcome.effects, outcome.dirty))),
             Err(err) => Some(Err(err)),
         }

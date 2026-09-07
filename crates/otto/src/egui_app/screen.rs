@@ -118,9 +118,7 @@ pub fn modal_geometry(
 /// `Event::Text` becomes one `Char`; an `Event::Key` is forwarded only when it
 /// is NOT a plain unmodified printable char (i.e. navigation/control keys, or
 /// any key carrying ctrl/alt/meta — accelerators egui does not echo as Text).
-pub fn portable_keys_from_events(
-    events: &[egui::Event],
-) -> Vec<otto_plugin::KeyEventPortable> {
+pub fn portable_keys_from_events(events: &[egui::Event]) -> Vec<otto_plugin::KeyEventPortable> {
     let mut out = Vec::new();
     for ev in events {
         let Some(k) = egui_event_to_portable(ev) else {

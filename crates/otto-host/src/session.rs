@@ -543,8 +543,7 @@ impl Host {
                     Arc::new(RmcpProviderClient::connect(url).await?)
                 }
             };
-            let id =
-                otto_protocol::ProviderId::new("default").expect("\"default\" is a valid id");
+            let id = otto_protocol::ProviderId::new("default").expect("\"default\" is a valid id");
             let caps = ProviderCapabilities::new(
                 vec![ModelCapabilities {
                     id: config.model.clone(),
@@ -2026,9 +2025,7 @@ impl Host {
     /// Snapshot every connected provider's `(id, capabilities)`. Used by
     /// the TUI's `/model` picker to show models across the whole pool,
     /// not just the active provider's catalog.
-    pub async fn pool_snapshot(
-        &self,
-    ) -> Vec<(otto_protocol::ProviderId, ProviderCapabilities)> {
+    pub async fn pool_snapshot(&self) -> Vec<(otto_protocol::ProviderId, ProviderCapabilities)> {
         let pool = self.pool.read().await;
         pool.iter()
             .map(|(id, entry)| (id.clone(), entry.capabilities().clone()))

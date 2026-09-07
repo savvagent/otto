@@ -24,8 +24,8 @@ use std::path::Path;
 use std::str::FromStr;
 
 use crate::config_file::{ConfigFile, ThemeSection};
-use ratatui_themes::ThemeName;
 use otto_plugin::{ThemeColor, ThemeEntry, ThemePalette};
+use ratatui_themes::ThemeName;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// One of the TUI's selectable themes.

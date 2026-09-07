@@ -643,9 +643,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_link_click_returns_open_url_effect() {
-        use otto_plugin::{
-            InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable,
-        };
+        use otto_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
         let mut c = HtmlCanvas::new(
             ContentBlockId(10),
             "<!doctype html><body><a href='https://example.com' style='display:block;width:100px;height:50px'>x</a></body>",
@@ -674,9 +672,7 @@ mod tests {
 
     #[tokio::test]
     async fn dispatch_drops_events_when_frozen() {
-        use otto_plugin::{
-            InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable,
-        };
+        use otto_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
         let mut c = HtmlCanvas::new(
             ContentBlockId(11),
             "<!doctype html><body><a href='x'>x</a></body>",
@@ -713,9 +709,7 @@ mod tests {
     /// first click and is empty again after the second.
     #[tokio::test]
     async fn details_toggle_persists_across_dispatch_via_state_log() {
-        use otto_plugin::{
-            InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable,
-        };
+        use otto_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
         let mut c = HtmlCanvas::new(
             ContentBlockId(12),
             "<!doctype html><body><details><summary style='display:block;width:80px;height:20px'>s</summary><p>body</p></details></body>",
@@ -778,9 +772,7 @@ mod tests {
 
     #[tokio::test]
     async fn snapshot_captures_open_details_after_toggle() {
-        use otto_plugin::{
-            InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable,
-        };
+        use otto_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
         let mut c = HtmlCanvas::new(
             ContentBlockId(21),
             "<!doctype html><body><details><summary style='display:block;width:80px;height:20px'>s</summary><p>y</p></details></body>",
@@ -831,9 +823,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_state_round_trips_open_details() {
-        use otto_plugin::{
-            InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable,
-        };
+        use otto_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
         // Build canvas A, toggle a <details> open, snapshot it.
         let mut a = HtmlCanvas::new(
             ContentBlockId(30),

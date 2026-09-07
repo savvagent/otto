@@ -62,9 +62,7 @@ use crate::engine::{EPOCH_TICK, shared_engine};
 use crate::error::WasmPluginError;
 use crate::host_imports::{log as log_host, theme};
 use crate::manifest::PluginManifest as DiskManifest;
-use crate::static_world::{
-    self, PluginStatic, PluginStaticImports, otto::plugin::types as wit,
-};
+use crate::static_world::{self, PluginStatic, PluginStaticImports, otto::plugin::types as wit};
 use crate::strikes::{StrikeCounter, StrikeOutcome};
 
 /// Per-store state that lives inside the wasmtime [`Store`]. The host

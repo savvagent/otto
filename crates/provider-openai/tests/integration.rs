@@ -22,6 +22,7 @@ use axum::{
     routing::post,
 };
 use futures::stream;
+use otto_protocol::{CompleteRequest, CompleteResponse, STREAM_EVENT_KIND, StreamEvent};
 use provider_openai::{OpenAiMcpServer, provider_for_tests};
 use rmcp::{
     ClientHandler, ServiceExt,
@@ -38,7 +39,6 @@ use rmcp::{
         },
     },
 };
-use otto_protocol::{CompleteRequest, CompleteResponse, STREAM_EVENT_KIND, StreamEvent};
 use serde_json::json;
 use tokio::sync::mpsc;
 

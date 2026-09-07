@@ -9,6 +9,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
+use otto_mcp::{EmitError, ProviderHandler, StreamEmitter};
+use otto_protocol::{
+    self as spp, COMPLETE_TOOL_NAME, CompleteRequest, LIST_MODELS_TOOL_NAME, STREAM_EVENT_KIND,
+    StreamEvent,
+};
 use rmcp::{
     ErrorData, Peer, RoleServer, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -17,11 +22,6 @@ use rmcp::{
         ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     tool, tool_handler, tool_router,
-};
-use otto_mcp::{EmitError, ProviderHandler, StreamEmitter};
-use otto_protocol::{
-    self as spp, COMPLETE_TOOL_NAME, CompleteRequest, LIST_MODELS_TOOL_NAME, STREAM_EVENT_KIND,
-    StreamEvent,
 };
 
 use crate::GeminiProvider;

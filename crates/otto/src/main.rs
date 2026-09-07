@@ -64,12 +64,12 @@ use app::{
     parse_bash_command,
 };
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
-use providers::{ProviderSpec, effective_providers};
 use otto_host::{
     BashNetworkChoice, Host, HostConfig, HttpAuth, LegacyModelResolution, PermissionDecision,
     ProviderEndpoint, ProviderRegistration, ProviderView, SandboxConfig, SandboxMode,
     ToolCallStatus, ToolEndpoint, TranscriptError, TurnEvent, resolve_legacy_model,
 };
+use providers::{ProviderSpec, effective_providers};
 use tokio::sync::{RwLock, mpsc};
 
 /// Wrapped-line step for one PageUp/PageDown press on the conversation log.
@@ -420,8 +420,7 @@ pub(crate) async fn build_app_with_host(
         // `mod splash` rather than the `internal:splash` plugin's
         // Screen; gate the hardcoded path on the plugin's enabled
         // state so toggling `splash` in /plugins actually disables it.
-        let splash_id =
-            otto_plugin::PluginId::new("internal:splash").expect("valid built-in id");
+        let splash_id = otto_plugin::PluginId::new("internal:splash").expect("valid built-in id");
         if !registry.is_enabled(&splash_id) {
             app.show_splash = false;
         }
@@ -503,8 +502,7 @@ async fn bootstrap_pool_host(
     // connects to a remote provider binary instead of using the in-process
     // pool. No pool, no policy, no timeout wrapping.
     if let Ok(url) = std::env::var("OTTO_PROVIDER_URL") {
-        let model =
-            std::env::var("OTTO_MODEL").unwrap_or_else(|_| "claude-haiku-4-5".to_string());
+        let model = std::env::var("OTTO_MODEL").unwrap_or_else(|_| "claude-haiku-4-5".to_string());
         match start_host_remote(url, model.clone(), project_root.to_path_buf(), tool_bins).await {
             Ok(host) => {
                 let notes = host.take_startup_notes();
@@ -2850,10 +2848,7 @@ async fn dispatch_failed_turn_end_on_exit(
 /// stays visible in the conversation log with its `source` field
 /// populated even when no renderer is available (e.g. when the plugin
 /// is disabled or the index hasn't been built yet).
-pub(crate) async fn create_canvas_renderer(
-    app: &mut App,
-    canvas_id: otto_plugin::ContentBlockId,
-) {
+pub(crate) async fn create_canvas_renderer(app: &mut App, canvas_id: otto_plugin::ContentBlockId) {
     // Extract the finalized source from the entry.
     let source = match app
         .entries
@@ -2936,11 +2931,7 @@ pub(crate) async fn create_canvas_renderer(
 /// the canvas entry in the conversation log is unaffected. Disable
 /// auto-export by toggling the `internal:html-canvas` plugin off via
 /// `~/.otto/plugins.toml`.
-pub(crate) fn auto_export_canvas(
-    app: &App,
-    canvas_id: otto_plugin::ContentBlockId,
-    turn_id: u32,
-) {
+pub(crate) fn auto_export_canvas(app: &App, canvas_id: otto_plugin::ContentBlockId, turn_id: u32) {
     use crate::app::Entry;
     use crate::plugin::builtin::html_canvas::auto_export::{
         auto_export_path, canvases_dir, write_canvas,
@@ -3039,12 +3030,9 @@ async fn run_app(
 
     // Emit `HostEvent::HostStarting` exactly once. Subscribers (e.g.
     // future providers' auto-probe wiring) get one shot at startup.
-    if let Err(e) = crate::plugin::effects::dispatch_host_event(
-        app,
-        otto_plugin::HostEvent::HostStarting,
-        0,
-    )
-    .await
+    if let Err(e) =
+        crate::plugin::effects::dispatch_host_event(app, otto_plugin::HostEvent::HostStarting, 0)
+            .await
     {
         tracing::warn!(error = %e, "HostStarting dispatch failed");
     }

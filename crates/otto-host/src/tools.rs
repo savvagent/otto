@@ -28,6 +28,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use otto_protocol::ToolDef;
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     model::{CallToolRequestParams, ResourceUpdatedNotificationParam},
@@ -37,7 +38,6 @@ use rmcp::{
         streamable_http_client::StreamableHttpClientTransportConfig,
     },
 };
-use otto_protocol::ToolDef;
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -1832,8 +1832,8 @@ mod tool_call_outcome_tests {
 
     #[test]
     fn html_resource_becomes_html_block() {
-        use rmcp::model::{Content, ResourceContents};
         use otto_protocol::ContentBlock;
+        use rmcp::model::{Content, ResourceContents};
 
         let html_resource = Content::resource(ResourceContents::TextResourceContents {
             uri: "canvas://x".into(),
@@ -1859,8 +1859,8 @@ mod tool_call_outcome_tests {
 
     #[test]
     fn text_only_result_produces_single_text_block() {
-        use rmcp::model::Content;
         use otto_protocol::ContentBlock;
+        use rmcp::model::Content;
         let result = CallToolResult::success(vec![Content::text("plain".to_string())]);
         let blocks = tool_result_to_blocks(&result);
         assert_eq!(blocks.len(), 1);

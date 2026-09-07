@@ -6,6 +6,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::StreamExt;
+use otto_mcp::ProviderClient;
+use otto_protocol::{
+    COMPLETE_TOOL_NAME, CompleteRequest, CompleteResponse, ErrorKind, LIST_MODELS_TOOL_NAME,
+    ListModelsResponse, ProviderError, STREAM_EVENT_KIND, StreamEvent,
+};
 use rmcp::{
     ClientHandler, RoleClient, ServiceExt,
     handler::client::progress::ProgressDispatcher,
@@ -17,11 +22,6 @@ use rmcp::{
     transport::{
         StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
     },
-};
-use otto_mcp::ProviderClient;
-use otto_protocol::{
-    COMPLETE_TOOL_NAME, CompleteRequest, CompleteResponse, ErrorKind, LIST_MODELS_TOOL_NAME,
-    ListModelsResponse, ProviderError, STREAM_EVENT_KIND, StreamEvent,
 };
 use tokio::sync::mpsc;
 

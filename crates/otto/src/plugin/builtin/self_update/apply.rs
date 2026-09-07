@@ -28,7 +28,7 @@ use semver::Version;
 
 use super::UpdateState;
 
-const REPO_OWNER: &str = "otto";
+const REPO_OWNER: &str = "savvagent";
 const REPO_NAME: &str = "otto";
 
 #[cfg(target_os = "windows")]
@@ -237,9 +237,7 @@ mod tests {
     fn installer_url_targets_the_correct_release_asset() {
         let url = installer_url(&Version::parse("0.13.0").unwrap());
         assert!(
-            url.starts_with(
-                "https://github.com/savvagent/otto/releases/download/v0.13.0/"
-            ),
+            url.starts_with("https://github.com/savvagent/otto/releases/download/v0.13.0/"),
             "url should target the savvagent/otto release for the requested tag: {url}"
         );
         assert!(

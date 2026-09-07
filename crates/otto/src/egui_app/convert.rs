@@ -5,10 +5,10 @@
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontFamily, FontId};
-use ratatui::style::Color;
 use otto_plugin::{
     KeyCodePortable, KeyEventPortable, KeyMods, StyledLine, StyledSpan, TextMods, ThemeColor,
 };
+use ratatui::style::Color;
 
 use crate::palette::Palette;
 use crate::plugin::builtin::themes::xterm_colors::xterm_256_rgb;
@@ -392,20 +392,14 @@ mod tests {
         };
         let p = egui_event_to_portable(&ev).expect("ctrl-s maps");
         assert!(p.modifiers.ctrl);
-        assert!(matches!(
-            p.code,
-            otto_plugin::KeyCodePortable::Char('s')
-        ));
+        assert!(matches!(p.code, otto_plugin::KeyCodePortable::Char('s')));
     }
 
     #[test]
     fn text_event_maps_to_char() {
         let ev = egui::Event::Text("x".into());
         let p = egui_event_to_portable(&ev).expect("text maps");
-        assert!(matches!(
-            p.code,
-            otto_plugin::KeyCodePortable::Char('x')
-        ));
+        assert!(matches!(p.code, otto_plugin::KeyCodePortable::Char('x')));
     }
 
     #[test]

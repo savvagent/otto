@@ -4,6 +4,8 @@ use crate::app::{App, Entry, InputMode, TranscriptEntry, log_scroll_y};
 use crate::palette::Palette;
 use crate::providers::effective_providers;
 use crate::splash;
+use otto_host::ToolCallStatus;
+use otto_plugin::ContentBlockId;
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -15,8 +17,6 @@ use ratatui::{
         Wrap,
     },
 };
-use otto_host::ToolCallStatus;
-use otto_plugin::ContentBlockId;
 use tui_spinner::CircleSpinner;
 
 /// Rows reserved in the conversation paragraph for each `Entry::Canvas`

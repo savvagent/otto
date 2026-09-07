@@ -177,16 +177,8 @@ otto = "^0.18"
         std::fs::create_dir_all(project.join(".otto/plugins")).unwrap();
         std::fs::create_dir_all(home.join(".otto/plugins")).unwrap();
 
-        write_plugin(
-            &project.join(".otto/plugins"),
-            "acme.demo",
-            "plugin-static",
-        );
-        write_plugin(
-            &home.join(".otto/plugins"),
-            "acme.demo",
-            "plugin-static",
-        );
+        write_plugin(&project.join(".otto/plugins"), "acme.demo", "plugin-static");
+        write_plugin(&home.join(".otto/plugins"), "acme.demo", "plugin-static");
 
         let d = discover(Some(&project), Some(&home));
         assert_eq!(d.plugins.len(), 1);
@@ -200,11 +192,7 @@ otto = "^0.18"
         std::fs::create_dir_all(project.join(".otto/plugins")).unwrap();
         std::fs::create_dir_all(project.join(".claude/plugins")).unwrap();
 
-        write_plugin(
-            &project.join(".otto/plugins"),
-            "acme.demo",
-            "plugin-static",
-        );
+        write_plugin(&project.join(".otto/plugins"), "acme.demo", "plugin-static");
         write_plugin(
             &project.join(".claude/plugins"),
             "acme.demo",
@@ -221,11 +209,7 @@ otto = "^0.18"
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
         std::fs::create_dir_all(project.join(".otto/plugins")).unwrap();
-        write_plugin(
-            &project.join(".otto/plugins"),
-            "good.demo",
-            "plugin-static",
-        );
+        write_plugin(&project.join(".otto/plugins"), "good.demo", "plugin-static");
 
         let bad_dir = project.join(".otto/plugins/bad.demo");
         std::fs::create_dir_all(&bad_dir).unwrap();

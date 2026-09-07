@@ -139,8 +139,7 @@ impl Plugin for UserSlashCommandsPlugin {
             id: PluginId::new("internal:user-slash-commands").expect("valid built-in id"),
             name: "User slash commands".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            description: "User-defined commands from .otto/commands/ and .claude/commands/"
-                .into(),
+            description: "User-defined commands from .otto/commands/ and .claude/commands/".into(),
             kind: PluginKind::Core,
             contributions,
         }

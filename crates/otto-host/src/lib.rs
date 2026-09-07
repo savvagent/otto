@@ -51,6 +51,7 @@ pub use config::{
     ToolEndpoint,
 };
 pub use default_prompt::AppVersion;
+pub use otto_protocol::{ListModelsResponse, ModelInfo, ToolDef};
 pub use permissions::{
     ArgPattern, BashNetworkChoice, BashNetworkPolicy, FrontMatterPermissions, PermissionDecision,
     PermissionPolicy, PermissionsToml, Rule, SerializableRule, Verdict,
@@ -59,7 +60,6 @@ pub use sandbox::{
     SCHEMA_VERSION, SandboxConfig, SandboxLoadStatus, SandboxMode, SandboxWrapper,
     ToolSandboxOverride, apply_sandbox,
 };
-pub use otto_protocol::{ListModelsResponse, ModelInfo, ToolDef};
 pub use session::{
     BASH_NETWORK_PROMPT_SUMMARY, BashNetResolveError, CancellationReason, Host, HostError,
     TRANSCRIPT_SCHEMA_VERSION, ToolCall, ToolCallStatus, TranscriptError, TranscriptFile,

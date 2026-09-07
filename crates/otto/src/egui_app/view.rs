@@ -290,9 +290,7 @@ fn paint_log(state: &mut OttoApp, ctx: &egui::Context, palette: &Palette) {
                     if let Some(snap) = entry_snapshot {
                         match snap {
                             EntrySnap::User(t) => paint_role_block(ui, palette, "you", &t),
-                            EntrySnap::Assistant(t) => {
-                                paint_role_block(ui, palette, "otto", &t)
-                            }
+                            EntrySnap::Assistant(t) => paint_role_block(ui, palette, "otto", &t),
                             EntrySnap::Tool(name) => {
                                 let render = model.tool_entries.get(tool_cursor);
                                 tool_cursor += 1;

@@ -436,9 +436,7 @@ mod hook_entry_tests {
     }
 
     impl BuiltinHookPlugin for StubHookPlugin {
-        fn take_pre_tool_gate(
-            &mut self,
-        ) -> Option<std::sync::Arc<dyn otto_host::PreToolUseGate>> {
+        fn take_pre_tool_gate(&mut self) -> Option<std::sync::Arc<dyn otto_host::PreToolUseGate>> {
             None
         }
     }

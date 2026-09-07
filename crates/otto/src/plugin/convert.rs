@@ -4,13 +4,13 @@
 //! free of any ratatui dependency.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::{
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
-};
 use otto_plugin::{
     KeyCodePortable, KeyEventPortable, KeyMods, Region, StyledLine, StyledSpan, TextMods,
     ThemeColor,
+};
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
 };
 
 /// Convert crossterm [`KeyModifiers`] into the WIT-portable [`KeyMods`].
@@ -282,10 +282,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let evt = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
         let p = super::key_event_to_portable(evt);
-        assert!(matches!(
-            p.code,
-            otto_plugin::KeyCodePortable::Char('s')
-        ));
+        assert!(matches!(p.code, otto_plugin::KeyCodePortable::Char('s')));
         assert!(p.modifiers.ctrl);
         assert!(!p.modifiers.alt);
     }

@@ -15,12 +15,7 @@ use std::path::{Path, PathBuf};
 /// Layout: `~/.otto/logs/tools/<binary-basename>.log`.
 fn tools_log_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
-    Some(
-        PathBuf::from(home)
-            .join(".otto")
-            .join("logs")
-            .join("tools"),
-    )
+    Some(PathBuf::from(home).join(".otto").join("logs").join("tools"))
 }
 
 /// Open (creating, append) a per-tool stderr log file for `command`.

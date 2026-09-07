@@ -16,9 +16,7 @@
 
 use std::sync::Arc;
 
-use otto_plugin::{
-    Effect, KeyCodePortable, KeyEventPortable, KeyMods, Plugin, Region, ScreenArgs,
-};
+use otto_plugin::{Effect, KeyCodePortable, KeyEventPortable, KeyMods, Plugin, Region, ScreenArgs};
 use otto_plugin_wasm::adapter::InteractiveAdapter;
 use otto_plugin_wasm::host_imports::theme;
 use otto_plugin_wasm::manifest::PluginManifest;

@@ -206,11 +206,7 @@ impl PluginManifest {
         }
 
         validate_version_range(&m.plugin.otto).map_err(|reason| {
-            WasmPluginError::VersionMismatch(
-                m.plugin.id.clone(),
-                m.plugin.otto.clone(),
-                reason,
-            )
+            WasmPluginError::VersionMismatch(m.plugin.id.clone(), m.plugin.otto.clone(), reason)
         })?;
 
         // [security] is provider-world only.

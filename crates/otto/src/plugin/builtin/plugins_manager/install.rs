@@ -25,10 +25,10 @@
 
 use std::path::Path;
 
-use reqwest::Client;
 use otto_plugin::{Effect, PluginError, ScreenArgs, StyledLine};
 use otto_plugin_wasm::manifest::PluginManifest;
 use otto_plugin_wasm::trust::tree_hash;
+use reqwest::Client;
 
 const MAX_TOML_BYTES: usize = 64 * 1024;
 const MAX_WASM_BYTES: usize = 32 * 1024 * 1024;

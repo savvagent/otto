@@ -163,11 +163,7 @@ mod tests {
     fn invalid_slug_skipped() {
         let project = tempdir().unwrap();
         let user = tempdir().unwrap();
-        write_agent(
-            &project.path().join(".otto/agents"),
-            "BadCaps",
-            MINIMAL,
-        );
+        write_agent(&project.path().join(".otto/agents"), "BadCaps", MINIMAL);
         let agents = discover(project.path(), user.path());
         assert!(agents.is_empty());
     }

@@ -229,9 +229,7 @@ impl McpManagerScreen {
             .write_server(&entry)
             .await
             .map_err(PluginError::Internal)?;
-        let mut effects = vec![Self::push_note_effect(
-            "Restart otto to apply changes.",
-        )];
+        let mut effects = vec![Self::push_note_effect("Restart otto to apply changes.")];
         if let Some(secret) = secret {
             if let Err(err) = self.ops.save_secret(&name, &secret).await {
                 effects.push(Self::push_note_effect(format!(
@@ -274,9 +272,7 @@ impl McpManagerScreen {
         self.skip_notes.remove(&name);
         self.statuses.retain(|status| status.name != name);
         self.rebuild_rows();
-        let mut effects = vec![Self::push_note_effect(
-            "Restart otto to apply changes.",
-        )];
+        let mut effects = vec![Self::push_note_effect("Restart otto to apply changes.")];
         if let Err(err) = self.ops.delete_secret(&name).await {
             effects.push(Self::push_note_effect(format!(
                 "server removed; stale credential could not be deleted: {err}"

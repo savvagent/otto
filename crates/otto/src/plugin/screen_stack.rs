@@ -67,9 +67,7 @@ impl Default for ScreenStack {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use otto_plugin::{
-        Effect, KeyEventPortable, PluginError, Region, ScreenLayout, StyledLine,
-    };
+    use otto_plugin::{Effect, KeyEventPortable, PluginError, Region, ScreenLayout, StyledLine};
 
     struct DummyScreen(String);
 

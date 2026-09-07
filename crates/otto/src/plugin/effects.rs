@@ -635,8 +635,7 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
                 .clone()
         };
         let rows = build_plugins_manager_rows(&reg).await;
-        let screen: Box<dyn otto_plugin::Screen> =
-            Box::new(PluginsManagerScreen::with_rows(rows));
+        let screen: Box<dyn otto_plugin::Screen> = Box::new(PluginsManagerScreen::with_rows(rows));
         (screen, layout)
     } else if id == "palette" {
         let layout = {
@@ -652,8 +651,7 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
                 .clone()
         };
         let commands = build_palette_commands(&reg, &idx).await;
-        let screen: Box<dyn otto_plugin::Screen> =
-            Box::new(PaletteScreen::with_commands(commands));
+        let screen: Box<dyn otto_plugin::Screen> = Box::new(PaletteScreen::with_commands(commands));
         (screen, layout)
     } else if id == crate::plugin::builtin::prompt_keybindings::SCREEN_ID {
         // Build the dynamic plugin-contributed section from the live

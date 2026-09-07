@@ -20,6 +20,7 @@
 
 use std::time::Duration;
 
+use otto_host::{SandboxConfig, SandboxLoadStatus, SandboxMode};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -27,7 +28,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
-use otto_host::{SandboxConfig, SandboxLoadStatus, SandboxMode};
 
 /// How long the splash lingers before auto-dismissing.
 pub const SPLASH_DURATION: Duration = Duration::from_secs(3);
