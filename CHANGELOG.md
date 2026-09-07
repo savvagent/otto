@@ -8,6 +8,14 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.25.2 - 2026-09-07
+
+### Added
+
+- `.github/skills/creating-github-issues/` — a repo-appropriate, GitHub-Issues-only ticket-creation
+  skill (type label, duplicate check, no fabricated priority/estimate fields), replacing the need
+  for the personal JIRA-default `creating-tickets` skill in this repo. (#55)
+
 ## 0.25.1 - 2026-09-07
 
 ### Fixed
