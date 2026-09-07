@@ -8,6 +8,15 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.25.0 - 2026-09-07
+
+### Added
+
+- DeepSeek as a fifth built-in provider (`crates/provider-deepseek`), covering the OpenAI-compatible
+  Chat Completions API at `https://api.deepseek.com` (`deepseek-v4-flash` default,
+  `deepseek-v4-pro`), the `otto-deepseek` standalone MCP-server binary, and the
+  `DEEPSEEK_API_KEY`/`DEEPSEEK_BASE_URL`/`OTTO_DEEPSEEK_LISTEN` environment variables. (#57)
+
 ## 0.24.0 - 2026-09-07
 
 ### Changed
