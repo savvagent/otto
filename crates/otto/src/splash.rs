@@ -33,18 +33,18 @@ use ratatui::{
 pub const SPLASH_DURATION: Duration = Duration::from_secs(3);
 
 const LOGO: &[&str] = &[
-    "███████╗ █████╗ ██╗   ██╗██╗   ██╗ █████╗  ██████╗ ███████╗███╗   ██╗████████╗",
-    "██╔════╝██╔══██╗██║   ██║██║   ██║██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝",
-    "███████╗███████║██║   ██║██║   ██║███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ",
-    "╚════██║██╔══██║╚██╗ ██╔╝╚██╗ ██╔╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ",
-    "███████║██║  ██║ ╚████╔╝  ╚████╔╝ ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ",
-    "╚══════╝╚═╝  ╚═╝  ╚═══╝    ╚═══╝  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ",
+    " ██████╗   ████████╗  ████████╗   ██████╗  ",
+    "██╔═══██╗  ╚══██╔══╝  ╚══██╔══╝  ██╔═══██╗ ",
+    "██║   ██║     ██║        ██║     ██║   ██║ ",
+    "██║   ██║     ██║        ██║     ██║   ██║ ",
+    "╚██████╔╝     ██║        ██║     ╚██████╔╝ ",
+    " ╚═════╝      ╚═╝        ╚═╝      ╚═════╝  ",
 ];
 
 const TAGLINE: &str = "the savvy MCP-native terminal coding agent";
 const HINT: &str = "press any key to continue";
 
-const LOGO_WIDTH: u16 = 78;
+const LOGO_WIDTH: u16 = 43;
 
 /// What the splash shows for the sandbox indicator. Derived once at startup
 /// (and refreshed on `/connect`) so the splash never re-reads disk per frame.
