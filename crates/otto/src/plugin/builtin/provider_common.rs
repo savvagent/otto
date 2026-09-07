@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use otto_host::{CostTier, ModelCapabilities, ProviderCapabilities};
+use otto_host::{CostTier, ModelCapabilities, ProviderCapabilities, ProviderRegistration};
 use otto_mcp::ProviderClient;
 use otto_plugin::Plugin;
 use otto_protocol::ListModelsResponse;
@@ -180,6 +180,21 @@ pub(crate) fn caps_from_list_models(
 /// `/model` picker may be stale.
 ///
 /// `tracing::warn` still records the underlying error for log readers.
+/// Outcome of a provider shim's `try_build_registration`: distinguishes
+/// "no credentials at all" from "credentials present but rejected" from
+/// "ready to register" so callers (startup, `/connect`, pool-add) can give
+/// each case the right user-facing treatment instead of collapsing them
+/// into a single `Option`.
+pub(crate) enum ProviderBuildOutcome {
+    /// No key in the keyring and none in the environment fallback.
+    NoCredentials,
+    /// A key was found but `list_models` rejected it (bad key, no credit,
+    /// rate-limited, org disabled, ...). Carries a human-readable reason.
+    Rejected(String),
+    /// A working client was built; optional fallback-catalog note.
+    Ready(ProviderRegistration, Option<String>),
+}
+
 /// Outcome of validating a provider's live model catalog via `list_models`.
 pub(crate) enum DynamicCapsOutcome {
     /// Capabilities to register with, plus an optional note about why a

@@ -17,7 +17,7 @@ use otto_plugin::{
     TextMods, ThemeColor,
 };
 
-use super::provider_common::{BuiltinProviderPlugin, build_dynamic_caps};
+use super::provider_common::{BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps};
 
 const PLUGIN_ID: &str = "internal:provider-local";
 const PROVIDER_ID: &str = "local";
@@ -85,19 +85,23 @@ impl ProviderLocalPlugin {
 
     /// Attempt to build a [`ProviderRegistration`] from the local Ollama
     /// endpoint. Unlike the cloud providers, no keyring lookup is needed;
-    /// the call always tries to build a client. Returns `Ok(None)` when the
-    /// builder fails (Ollama not running) — not an error, the user can start
-    /// `ollama serve` and run `/connect local` later.
-    pub(crate) async fn try_build_registration(
-        &self,
-    ) -> Result<Option<(ProviderRegistration, Option<String>)>, String> {
+    /// the call always tries to build a client. Returns
+    /// [`ProviderBuildOutcome::NoCredentials`] when the builder fails
+    /// (Ollama not running) — not an error, the user can start
+    /// `ollama serve` and run `/connect local` later. `provider_local` has
+    /// no API key concept, so this is the only "not available" case; a
+    /// [`ProviderBuildOutcome::Rejected`] here would only occur if Ollama's
+    /// `/api/tags` itself returned an auth/quota-shaped error, which
+    /// shouldn't happen for a keyless local endpoint but is handled
+    /// uniformly with the cloud shims regardless.
+    pub(crate) async fn try_build_registration(&self) -> Result<ProviderBuildOutcome, String> {
         let provider = match provider_local::OllamaProvider::builder().build() {
             Ok(p) => p,
             Err(e) => {
                 tracing::warn!(error = %e, "ollama provider build failed at startup");
                 // Treat a failed build as "not available" rather than a hard
                 // error — Ollama might simply not be running yet.
-                return Ok(None);
+                return Ok(ProviderBuildOutcome::NoCredentials);
             }
         };
         let client: Arc<dyn ProviderClient + Send + Sync> =
@@ -107,7 +111,12 @@ impl ProviderLocalPlugin {
         // single-entry placeholder when Ollama isn't reachable or has
         // no models pulled yet.
         let (caps, note) =
-            build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await;
+            match build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await {
+                DynamicCapsOutcome::Ready(caps, note) => (caps, note),
+                DynamicCapsOutcome::Rejected(reason) => {
+                    return Ok(ProviderBuildOutcome::Rejected(reason));
+                }
+            };
         let reg = ProviderRegistration::new(
             otto_protocol::ProviderId::new(PROVIDER_ID)
                 .expect("PROVIDER_ID is a valid provider id"),
@@ -115,7 +124,7 @@ impl ProviderLocalPlugin {
             client,
             caps,
         );
-        Ok(Some((reg, note)))
+        Ok(ProviderBuildOutcome::Ready(reg, note))
     }
 
     /// Try to construct an in-process Ollama client. Returns `Some(())` on

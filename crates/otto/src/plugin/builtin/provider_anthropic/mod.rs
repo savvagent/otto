@@ -23,7 +23,7 @@ use otto_plugin::{
     TextMods, ThemeColor,
 };
 
-use super::provider_common::{BuiltinProviderPlugin, build_dynamic_caps};
+use super::provider_common::{BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps};
 
 /// Provider plugin id (used by `apply_effects` to look up the right shim
 /// when a [`Effect::RegisterProvider`] arrives).
@@ -135,34 +135,55 @@ impl ProviderAnthropicPlugin {
         .expect("static provider capabilities are valid")
     }
 
-    /// Attempt to build a [`ProviderRegistration`] from the keyring and the
-    /// plugin's static capability metadata.
+    /// Attempt to build a [`ProviderRegistration`] from the keyring (or the
+    /// `ANTHROPIC_API_KEY` environment fallback) and the plugin's static
+    /// capability metadata.
     ///
-    /// Returns `Ok(None)` when credentials are absent — this is not an error;
-    /// the user can run `/connect anthropic` later. Returns `Ok(Some((reg,
-    /// note)))` when the client was built successfully; the `note` is `Some`
-    /// when the model catalog fell back to the static list and the caller
-    /// should surface it to the user. Returns `Err(_)` for hard failures
-    /// (keyring backend error or TLS init failure) that warrant a warning log.
-    pub(crate) async fn try_build_registration(
-        &self,
-    ) -> Result<Option<(ProviderRegistration, Option<String>)>, String> {
-        let key = match crate::creds::load(PROVIDER_ID) {
-            Ok(Some(k)) => k,
-            Ok(None) => return Ok(None),
-            Err(e) => return Err(format!("keyring read: {e}")),
+    /// Returns [`ProviderBuildOutcome::NoCredentials`] when no key is found
+    /// in either the keyring or the environment — this is not an error; the
+    /// user can run `/connect anthropic` later.
+    /// Returns [`ProviderBuildOutcome::Rejected`] when a key was found but
+    /// `list_models` rejected it (bad key, no credit, rate-limited, org
+    /// disabled, ...) — the provider must not be registered.
+    /// Returns [`ProviderBuildOutcome::Ready`] when the client was built and
+    /// validated successfully; the note is `Some` when the model catalog
+    /// fell back to the static list.
+    /// Returns `Err(_)` for hard failures (keyring backend error or TLS init
+    /// failure) that warrant a warning log.
+    pub(crate) async fn try_build_registration(&self) -> Result<ProviderBuildOutcome, String> {
+        let keyring_key = match crate::creds::load(PROVIDER_ID) {
+            Ok(Some(k)) => Some(k),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(provider = PROVIDER_ID, error = %e,
+                    "keyring read failed; falling back to environment credential check");
+                None
+            }
         };
-        let provider = provider_anthropic::AnthropicProvider::builder()
-            .api_key(&key)
-            .build()
-            .map_err(|e| format!("client build: {e}"))?;
+        let env_key_present = keyring_key.is_none()
+            && std::env::var("ANTHROPIC_API_KEY").is_ok_and(|v| !v.is_empty());
+        if keyring_key.is_none() && !env_key_present {
+            return Ok(ProviderBuildOutcome::NoCredentials);
+        }
+        let mut builder = provider_anthropic::AnthropicProvider::builder();
+        if let Some(key) = &keyring_key {
+            builder = builder.api_key(key);
+        }
+        // else: keyring had no entry but ANTHROPIC_API_KEY is set — build()
+        // resolves it from the environment itself.
+        let provider = builder.build().map_err(|e| format!("client build: {e}"))?;
         let client: Arc<dyn ProviderClient + Send + Sync> =
             Arc::new(InProcessProviderClient::new(Arc::new(provider)));
         // Prefer the live catalog from the provider's /v1/models endpoint;
-        // fall back to the curated static list on any error so a network
-        // hiccup or revoked key doesn't block startup.
+        // fall back to the curated static list on a transient/unsupported
+        // error, or reject the provider outright on an auth/quota error.
         let (caps, note) =
-            build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await;
+            match build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await {
+                DynamicCapsOutcome::Ready(caps, note) => (caps, note),
+                DynamicCapsOutcome::Rejected(reason) => {
+                    return Ok(ProviderBuildOutcome::Rejected(reason));
+                }
+            };
         let reg = ProviderRegistration::new(
             otto_protocol::ProviderId::new(PROVIDER_ID)
                 .expect("PROVIDER_ID is a valid provider id"),
@@ -187,7 +208,7 @@ impl ProviderAnthropicPlugin {
                 model: "claude-haiku-4-5".into(),
             },
         ]);
-        Ok(Some((reg, note)))
+        Ok(ProviderBuildOutcome::Ready(reg, note))
     }
 
     /// Test-only helper that pre-installs a stub client without going
