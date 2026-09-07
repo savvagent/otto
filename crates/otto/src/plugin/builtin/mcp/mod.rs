@@ -26,11 +26,25 @@ pub(crate) trait McpManagerOps: Send + Sync {
     async fn remove_server(&self, name: &str) -> Result<bool, String>;
     async fn save_secret(&self, name: &str, secret: &str) -> Result<(), String>;
     async fn delete_secret(&self, name: &str) -> Result<(), String>;
+    async fn begin_oauth(
+        &self,
+        name: &str,
+        url: &str,
+        requested_scopes: &[String],
+    ) -> Result<crate::mcp_oauth::BeginAuthorizationResult, String>;
+    async fn poll_oauth(
+        &self,
+        name: &str,
+    ) -> Result<crate::mcp_oauth::PollAuthorizationResult, String>;
+    async fn clear_oauth(&self, name: &str) -> Result<(), String>;
 }
 
 struct RealMcpManagerOps {
     host_slot: HostSlot,
     config_path: PathBuf,
+    pending_oauth: tokio::sync::Mutex<
+        std::collections::HashMap<String, crate::mcp_oauth::PendingMcpOAuthSession>,
+    >,
 }
 
 impl RealMcpManagerOps {
@@ -38,6 +52,7 @@ impl RealMcpManagerOps {
         Self {
             host_slot,
             config_path: crate::config_file::ConfigFile::default_path(),
+            pending_oauth: tokio::sync::Mutex::new(std::collections::HashMap::new()),
         }
     }
 }
@@ -60,6 +75,7 @@ impl McpManagerOps for RealMcpManagerOps {
     }
 
     async fn remove_server(&self, name: &str) -> Result<bool, String> {
+        self.clear_oauth(name).await?;
         crate::mcp_config_writer::remove_server(&self.config_path, name)
             .map_err(|err| format!("failed to update {}: {err}", self.config_path.display()))
     }
@@ -72,6 +88,53 @@ impl McpManagerOps for RealMcpManagerOps {
     async fn delete_secret(&self, name: &str) -> Result<(), String> {
         crate::creds::mcp_delete(name)
             .map_err(|err| format!("failed to delete keyring secret for `{name}`: {err}"))
+    }
+
+    async fn begin_oauth(
+        &self,
+        name: &str,
+        url: &str,
+        requested_scopes: &[String],
+    ) -> Result<crate::mcp_oauth::BeginAuthorizationResult, String> {
+        self.clear_oauth(name).await?;
+        let (session, result) =
+            crate::mcp_oauth::begin_authorization(name, url, requested_scopes).await?;
+        self.pending_oauth
+            .lock()
+            .await
+            .insert(name.to_string(), session);
+        Ok(result)
+    }
+
+    async fn poll_oauth(
+        &self,
+        name: &str,
+    ) -> Result<crate::mcp_oauth::PollAuthorizationResult, String> {
+        let Some(mut session) = self.pending_oauth.lock().await.remove(name) else {
+            return Ok(crate::mcp_oauth::PollAuthorizationResult::NotStarted);
+        };
+        let result = session.poll().await?;
+        match result {
+            crate::mcp_oauth::PollAuthorizationResult::Pending { .. } => {
+                self.pending_oauth
+                    .lock()
+                    .await
+                    .insert(name.to_string(), session);
+            }
+            crate::mcp_oauth::PollAuthorizationResult::Completed { .. }
+            | crate::mcp_oauth::PollAuthorizationResult::Failed { .. }
+            | crate::mcp_oauth::PollAuthorizationResult::NotStarted => {
+                session.shutdown().await;
+            }
+        }
+        Ok(result)
+    }
+
+    async fn clear_oauth(&self, name: &str) -> Result<(), String> {
+        if let Some(session) = self.pending_oauth.lock().await.remove(name) {
+            session.shutdown().await;
+        }
+        Ok(())
     }
 }
 
@@ -187,6 +250,26 @@ mod tests {
         }
 
         async fn delete_secret(&self, _name: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        async fn begin_oauth(
+            &self,
+            _name: &str,
+            _url: &str,
+            _requested_scopes: &[String],
+        ) -> Result<crate::mcp_oauth::BeginAuthorizationResult, String> {
+            Err("not implemented in stub".into())
+        }
+
+        async fn poll_oauth(
+            &self,
+            _name: &str,
+        ) -> Result<crate::mcp_oauth::PollAuthorizationResult, String> {
+            Ok(crate::mcp_oauth::PollAuthorizationResult::NotStarted)
+        }
+
+        async fn clear_oauth(&self, _name: &str) -> Result<(), String> {
             Ok(())
         }
     }

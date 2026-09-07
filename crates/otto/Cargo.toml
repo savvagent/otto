@@ -102,7 +102,7 @@ tui-textarea.workspace = true
 ratatui-explorer.workspace = true
 keyring.workspace = true
 reqwest.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["query"] }
 rmcp.workspace = true
 self_update.workspace = true
 semver.workspace = true

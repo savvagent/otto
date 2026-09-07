@@ -246,10 +246,21 @@ pub(crate) struct McpManagerSeed {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum McpServerAuthSummary {
+    #[default]
+    None,
+    Bearer,
+    Oauth,
+}
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct McpServerSummary {
     pub name: String,
     pub transport: &'static str,
+    pub target: String,
+    pub auth: McpServerAuthSummary,
 }
 
 /// Resolve the bundled tool binaries. Cheap, local, and `Send`.
@@ -773,13 +784,31 @@ async fn resolve_configured_mcp_servers(
     let mut endpoints = Vec::new();
 
     for entry in &config_file.mcp_servers {
-        let (name, transport) = match entry {
-            config_file::McpServerEntry::Stdio { name, .. } => (name.clone(), "stdio"),
-            config_file::McpServerEntry::Http { name, .. } => (name.clone(), "http"),
+        let (name, transport, target, auth) = match entry {
+            config_file::McpServerEntry::Stdio { name, command, .. } => (
+                name.clone(),
+                "stdio",
+                command.clone(),
+                McpServerAuthSummary::None,
+            ),
+            config_file::McpServerEntry::Http {
+                name, url, auth, ..
+            } => (
+                name.clone(),
+                "http",
+                url.clone(),
+                match auth {
+                    config_file::McpAuthMode::None => McpServerAuthSummary::None,
+                    config_file::McpAuthMode::Bearer => McpServerAuthSummary::Bearer,
+                    config_file::McpAuthMode::Oauth => McpServerAuthSummary::Oauth,
+                },
+            ),
         };
         configured.push(McpServerSummary {
             name: name.clone(),
             transport,
+            target,
+            auth,
         });
 
         if let Err(reason) = entry.validate(&seen_names) {
@@ -4321,6 +4350,8 @@ mod mcp_bootstrap_tests {
         assert!(seed.skip_notes.is_empty());
         assert_eq!(seed.configured[0].name, "fixture");
         assert_eq!(seed.configured[0].transport, "stdio");
+        assert_eq!(seed.configured[0].target, "/bin/echo");
+        assert_eq!(seed.configured[0].auth, McpServerAuthSummary::None);
         assert_eq!(endpoints.len(), 1);
         match &endpoints[0] {
             ToolEndpoint::Stdio {
@@ -4357,6 +4388,8 @@ mod mcp_bootstrap_tests {
         assert_eq!(seed.configured.len(), 1);
         assert_eq!(seed.configured[0].name, "remote");
         assert_eq!(seed.configured[0].transport, "http");
+        assert_eq!(seed.configured[0].target, "https://example.test/mcp");
+        assert_eq!(seed.configured[0].auth, McpServerAuthSummary::Bearer);
         assert_eq!(seed.skip_notes.len(), 1);
         assert_eq!(seed.skip_notes[0].0, "remote");
         assert!(seed.skip_notes[0].1.contains("missing keyring secret"));
@@ -4381,6 +4414,7 @@ mod mcp_bootstrap_tests {
 
         assert!(endpoints.is_empty());
         assert_eq!(seed.configured.len(), 1);
+        assert_eq!(seed.configured[0].auth, McpServerAuthSummary::Oauth);
         assert_eq!(seed.skip_notes.len(), 1);
         assert_eq!(seed.skip_notes[0].0, "remote-oauth-missing");
         assert!(seed.skip_notes[0].1.contains("open /mcp to authorize"));
