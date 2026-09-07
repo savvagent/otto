@@ -18,7 +18,7 @@
 - None.
 
 **Modified files**
-- `crates/otto/src/plugin/builtin/self_update/mod.rs` — change first-tick cache trust policy, make `/update` do a live re-check, and add regression tests for stale-cache startup and slash-command installs.
+- `crates/otto/src/plugin/builtin/self_update/mod.rs` — seed the startup banner from cache while still live-revalidating before install, make `/update` do a live re-check, serialize installer entry, and add regression tests.
 - `README.md` — document that `/update` performs a live re-check before deciding whether to install.
 
 ## Task 1: Lock in the self-update regressions with tests
@@ -39,8 +39,8 @@
 - Modify: `crates/otto/src/plugin/builtin/self_update/mod.rs`
 - Modify: `README.md`
 
-- [ ] Implement the first-tick cache policy in `crates/otto/src/plugin/builtin/self_update/mod.rs` so cached results are trusted only when they already prove a newer release exists; equal-version cache entries must trigger an immediate live `check_for_update` instead of publishing `UpToDate` from cache.
-- [ ] Refactor `/update` in `crates/otto/src/plugin/builtin/self_update/mod.rs` so, unless updates are disabled, the command performs a live `check_for_update`, publishes the resulting state, and runs `run_install` when the fetched result is `Available`; preserve the existing in-progress/dev/disabled/restart-needed notes for those states.
+- [ ] Implement the first-tick cache policy in `crates/otto/src/plugin/builtin/self_update/mod.rs` so cached equal-version entries trigger an immediate live `check_for_update`, and cached newer-version entries only seed the banner state while the same startup tick revalidates live before install.
+- [ ] Refactor `/update` in `crates/otto/src/plugin/builtin/self_update/mod.rs` so, unless updates are disabled, the command performs a live `check_for_update`, publishes the resulting state, and runs `run_install` when the fetched result is `Available`; preserve the existing in-progress/dev/disabled/restart-needed notes for those states and ensure concurrent callers cannot enter the installer twice.
 - [ ] Update `README.md`'s `/update` row to document the live re-check semantics and the corrected startup-detection behavior.
 - [ ] Run `cargo test -p otto --bin otto plugin::builtin::self_update::tests -- --nocapture`. Expected result: self-update plugin tests pass, including the new regressions.
 - [ ] Public-interface check: confirm the slash command name, `OTTO_NO_UPDATE_CHECK`, `--no-update-check`, cache file path, and `[update]` config shape stay unchanged; note only the behavior correction in the task ledger and PR body.
