@@ -176,8 +176,6 @@ about auto-connect discovery, and is out of scope here.
 
 ### 2. Quiet the startup path by default
 
-### 2. Quiet the startup path by default
-
 Per-provider auto-connect notes (`notes.startup-build-failed`,
 `notes.startup-timeout`, `notes.list-models-fell-back`,
 `notes.list-models-empty`, and the new rejected-key case) stop being pushed
