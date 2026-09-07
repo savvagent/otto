@@ -92,6 +92,12 @@ pub struct StartupSection {
     pub startup_providers: Vec<String>,
     #[serde(default = "default_timeout")]
     pub connect_timeout_ms: u64,
+    /// When `true`, restores the pre-quiet-startup behavior: every
+    /// per-provider auto-connect note (build failures, timeouts, catalog
+    /// fallback, rejected keys) is pushed into the transcript instead of
+    /// only being logged via `tracing::warn`. Defaults to `false`.
+    #[serde(default)]
+    pub verbose: bool,
 }
 
 impl Default for StartupSection {
@@ -100,6 +106,7 @@ impl Default for StartupSection {
             policy: StartupPolicyKind::default(),
             startup_providers: Vec::new(),
             connect_timeout_ms: default_timeout(),
+            verbose: false,
         }
     }
 }
@@ -831,6 +838,7 @@ name = "not-a-real-theme"
                 policy: StartupPolicyKind::LastUsed,
                 startup_providers: vec!["anthropic".into()],
                 connect_timeout_ms: 5000,
+                verbose: false,
             },
             &MigrationSection { v1_done: true },
         )
@@ -872,6 +880,7 @@ code = "en"
                 policy: StartupPolicyKind::OptIn,
                 startup_providers: vec!["anthropic".into()],
                 connect_timeout_ms: 3000,
+                verbose: false,
             },
             &MigrationSection { v1_done: true },
         )
@@ -904,6 +913,7 @@ code = "en"
                 policy: StartupPolicyKind::OptIn,
                 startup_providers: vec!["anthropic".into()],
                 connect_timeout_ms: 3000,
+                verbose: false,
             },
             &MigrationSection { v1_done: true },
         )
