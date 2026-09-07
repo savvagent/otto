@@ -1,0 +1,432 @@
+//! `internal:provider-deepseek` — keyring-backed DeepSeek shim. Mirrors
+//! `provider_openai`; see that module for the design notes.
+
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use otto_host::{
+    CostTier, ModelAlias, ModelCapabilities, ProviderCapabilities, ProviderRegistration,
+};
+use otto_mcp::{InProcessProviderClient, ProviderClient};
+use otto_plugin::{
+    Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
+    PluginKind, ProviderId, ProviderSpec, Region, SlashSpec, SlotSpec, StyledLine, StyledSpan,
+    TextMods, ThemeColor,
+};
+
+use super::provider_common::{BuiltinProviderPlugin, build_dynamic_caps};
+
+const PLUGIN_ID: &str = "internal:provider-deepseek";
+const PROVIDER_ID: &str = "deepseek";
+const DISPLAY_NAME: &str = "DeepSeek";
+
+/// DeepSeek provider shim.
+pub(crate) struct ProviderDeepSeekPlugin {
+    client: Option<Box<dyn ProviderClient>>,
+    /// Set to `true` while this provider is the host's active provider.
+    active: bool,
+}
+
+impl ProviderDeepSeekPlugin {
+    /// Construct a new shim with no client yet.
+    pub(crate) fn new() -> Self {
+        Self {
+            client: None,
+            active: false,
+        }
+    }
+
+    /// Test-only helper that pre-installs a stub client without going
+    /// through the keyring.
+    #[cfg(test)]
+    pub(crate) fn with_test_client(client: Box<dyn ProviderClient>) -> Self {
+        Self {
+            client: Some(client),
+            active: false,
+        }
+    }
+
+    /// Test-only seam: directly set the active flag without going through
+    /// `on_event`.
+    #[cfg(test)]
+    pub(crate) fn set_active_for_render(&mut self, active: bool) {
+        self.active = active;
+    }
+
+    /// Capability metadata for all DeepSeek models the plugin supports.
+    pub(crate) fn capabilities() -> ProviderCapabilities {
+        ProviderCapabilities::new(
+            vec![
+                ModelCapabilities {
+                    id: "deepseek-v4-flash".into(),
+                    display_name: "DeepSeek V4 Flash".into(),
+                    supports_vision: false,
+                    supports_audio: false,
+                    context_window: 128_000,
+                    cost_tier: CostTier::Cheap,
+                },
+                ModelCapabilities {
+                    id: "deepseek-v4-pro".into(),
+                    display_name: "DeepSeek V4 Pro".into(),
+                    supports_vision: false,
+                    supports_audio: false,
+                    context_window: 128_000,
+                    cost_tier: CostTier::Standard,
+                },
+            ],
+            "deepseek-v4-flash".into(),
+        )
+        .expect("static provider capabilities are valid")
+    }
+
+    /// Attempt to build a [`ProviderRegistration`] from the keyring and the
+    /// plugin's static capability metadata. Returns `Ok(None)` when
+    /// credentials are absent.
+    pub(crate) async fn try_build_registration(
+        &self,
+    ) -> Result<Option<(ProviderRegistration, Option<String>)>, String> {
+        let key = match crate::creds::load(PROVIDER_ID) {
+            Ok(Some(k)) => k,
+            Ok(None) => return Ok(None),
+            Err(e) => return Err(format!("keyring read: {e}")),
+        };
+        let provider = provider_deepseek::DeepSeekProvider::builder()
+            .api_key(&key)
+            .build()
+            .map_err(|e| format!("client build: {e}"))?;
+        let client: Arc<dyn ProviderClient + Send + Sync> =
+            Arc::new(InProcessProviderClient::new(Arc::new(provider)));
+        // Prefer the live /models catalog so the picker reflects the
+        // account's actually-available models. Falls back to the curated
+        // static list on any error.
+        let (caps, note) =
+            build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await;
+        let reg = ProviderRegistration::new(
+            otto_protocol::ProviderId::new(PROVIDER_ID)
+                .expect("PROVIDER_ID is a valid provider id"),
+            DISPLAY_NAME,
+            client,
+            caps,
+        )
+        .with_aliases(vec![
+            ModelAlias {
+                alias: "deepseek".into(),
+                provider: ProviderId::new("deepseek").expect("static alias provider id is valid"),
+                model: "deepseek-v4-flash".into(),
+            },
+            ModelAlias {
+                alias: "deepseek-pro".into(),
+                provider: ProviderId::new("deepseek").expect("static alias provider id is valid"),
+                model: "deepseek-v4-pro".into(),
+            },
+        ]);
+        Ok(Some((reg, note)))
+    }
+
+    fn try_connect_from_keyring(&mut self) -> Option<()> {
+        if self.client.is_some() {
+            return Some(());
+        }
+        let key = match crate::creds::load(PROVIDER_ID) {
+            Ok(Some(k)) => k,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::warn!(provider = PROVIDER_ID, error = %e,
+                    "keyring read failed; treating as missing credentials");
+                return None;
+            }
+        };
+        let provider = match provider_deepseek::DeepSeekProvider::builder()
+            .api_key(&key)
+            .build()
+        {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(provider = PROVIDER_ID, error = %e,
+                    "provider client build failed despite credentials present");
+                return None;
+            }
+        };
+        let client: Box<dyn ProviderClient> =
+            Box::new(InProcessProviderClient::new(Arc::new(provider)));
+        self.client = Some(client);
+        Some(())
+    }
+}
+
+impl Default for ProviderDeepSeekPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Plugin for ProviderDeepSeekPlugin {
+    fn manifest(&self) -> Manifest {
+        let mut contributions = Contributions::default();
+        contributions.providers = vec![ProviderSpec {
+            id: ProviderId::new(PROVIDER_ID).expect("valid provider id"),
+            display_name: DISPLAY_NAME.into(),
+            requires_credential: true,
+            in_process: true,
+        }];
+        contributions.slash_commands = vec![SlashSpec {
+            name: format!("connect {PROVIDER_ID}"),
+            summary: format!("Connect to {DISPLAY_NAME}"),
+            args_hint: None,
+            requires_arg: false,
+            suppress_prompt_segments: vec![],
+        }];
+        contributions.slots = vec![SlotSpec {
+            slot_id: "home.footer.left".into(),
+            priority: 110,
+        }];
+        contributions.hooks = vec![HookKind::HostStarting, HookKind::ActiveProviderChanged];
+
+        Manifest {
+            id: PluginId::new(PLUGIN_ID).expect("valid built-in id"),
+            name: DISPLAY_NAME.into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            description: "DeepSeek provider (V4 family)".into(),
+            kind: PluginKind::Optional,
+            contributions,
+        }
+    }
+
+    async fn handle_slash(
+        &mut self,
+        _: &str,
+        args: Vec<String>,
+    ) -> Result<Vec<Effect>, PluginError> {
+        let rekey = args.iter().any(|a| a == "--rekey");
+        if !rekey && self.try_connect_from_keyring().is_some() {
+            // Stored key worked; register without opening the modal.
+            return Ok(vec![Effect::RegisterProvider {
+                id: ProviderId::new(PROVIDER_ID).expect("valid"),
+                display_name: DISPLAY_NAME.into(),
+            }]);
+        }
+        // No stored key, --rekey explicitly requested, or stored key
+        // didn't yield a working client: open the modal.
+        Ok(vec![Effect::PromptApiKey {
+            provider_id: ProviderId::new(PROVIDER_ID).expect("valid"),
+        }])
+    }
+
+    async fn on_event(&mut self, event: HostEvent) -> Result<Vec<Effect>, PluginError> {
+        match event {
+            HostEvent::HostStarting => {
+                if self.try_connect_from_keyring().is_some() {
+                    return Ok(vec![Effect::RegisterProvider {
+                        id: ProviderId::new(PROVIDER_ID).expect("valid"),
+                        display_name: DISPLAY_NAME.into(),
+                    }]);
+                }
+                Ok(vec![])
+            }
+            HostEvent::ActiveProviderChanged { ref id } => {
+                self.active = id.as_str() == PROVIDER_ID;
+                Ok(vec![])
+            }
+            _ => Ok(vec![]),
+        }
+    }
+
+    fn render_slot(&self, slot_id: &str, _: Region) -> Vec<StyledLine> {
+        if slot_id != "home.footer.left" {
+            return vec![];
+        }
+        if self.client.is_some() {
+            let mods = TextMods {
+                bold: true,
+                ..TextMods::default()
+            };
+            let prefix = if self.active { "\u{25b8} " } else { "  " };
+            vec![StyledLine {
+                spans: vec![StyledSpan {
+                    text: format!("{prefix}{DISPLAY_NAME}"),
+                    fg: Some(ThemeColor::Success),
+                    bg: None,
+                    modifiers: mods,
+                }],
+            }]
+        } else {
+            vec![]
+        }
+    }
+}
+
+impl BuiltinProviderPlugin for ProviderDeepSeekPlugin {
+    fn take_client(&mut self) -> Option<Box<dyn ProviderClient>> {
+        self.client.take()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin::builtin::provider_common::test_support::use_mock_keyring;
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn no_creds_emits_prompt_api_key() {
+        use_mock_keyring();
+        rust_i18n::set_locale("en");
+        let _ = keyring::Entry::new("otto", PROVIDER_ID).map(|e| e.delete_credential());
+
+        let mut p = ProviderDeepSeekPlugin::new();
+        let effs = p.handle_slash("connect deepseek", vec![]).await.unwrap();
+        match &effs[0] {
+            Effect::PromptApiKey { provider_id } => {
+                assert_eq!(provider_id.as_str(), PROVIDER_ID);
+            }
+            other => panic!("expected PromptApiKey, got {other:?}"),
+        }
+        rust_i18n::set_locale("en");
+    }
+
+    /// `/connect deepseek` with a stored key must NOT emit
+    /// `Effect::PromptApiKey`; it must instead emit `RegisterProvider`
+    /// immediately via the keyring path.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn handle_slash_with_stored_key_skips_modal() {
+        use_mock_keyring();
+        rust_i18n::set_locale("en");
+
+        // Clear anything a prior test (or a panicked-before-cleanup run)
+        // left behind so the assertion below depends only on our setup.
+        let _ = keyring::Entry::new("otto", PROVIDER_ID).map(|e| e.delete_credential());
+        let _ = keyring::Entry::new("otto", PROVIDER_ID).map(|e| e.set_password("test-key"));
+
+        let mut p = ProviderDeepSeekPlugin::new();
+        let effs = p.handle_slash("connect deepseek", vec![]).await.unwrap();
+        let saw_prompt = effs
+            .iter()
+            .any(|e| matches!(e, Effect::PromptApiKey { .. }));
+        assert!(
+            !saw_prompt,
+            "with a stored key, /connect must not open the modal; got effects: {effs:?}"
+        );
+        let saw_register = effs.iter().any(
+            |e| matches!(e, Effect::RegisterProvider { id, .. } if id.as_str() == PROVIDER_ID),
+        );
+        assert!(
+            saw_register,
+            "must register the provider silently; got effects: {effs:?}"
+        );
+
+        let _ = keyring::Entry::new("otto", PROVIDER_ID).map(|e| e.delete_credential());
+        rust_i18n::set_locale("en");
+    }
+
+    /// `--rekey` must open the API-key modal even with a stored key,
+    /// letting the user update their credentials.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn handle_slash_with_rekey_flag_opens_modal_even_when_client_exists() {
+        use_mock_keyring();
+        rust_i18n::set_locale("en");
+
+        // Clear anything a prior test (or a panicked-before-cleanup run)
+        // left behind so the assertion below depends only on our setup.
+        let _ = keyring::Entry::new("otto", PROVIDER_ID).map(|e| e.delete_credential());
+        let _ = keyring::Entry::new("otto", PROVIDER_ID).map(|e| e.set_password("test-key"));
+
+        let mut p = ProviderDeepSeekPlugin::new();
+        let effs = p
+            .handle_slash("connect deepseek", vec!["--rekey".into()])
+            .await
+            .unwrap();
+        assert!(
+            effs.iter()
+                .any(|e| matches!(e, Effect::PromptApiKey { .. })),
+            "--rekey must open the modal even with a stored key; got {effs:?}"
+        );
+
+        let _ = keyring::Entry::new("otto", PROVIDER_ID).map(|e| e.delete_credential());
+        rust_i18n::set_locale("en");
+    }
+
+    #[test]
+    fn manifest_declares_provider_and_slash() {
+        let p = ProviderDeepSeekPlugin::new();
+        let m = p.manifest();
+        assert_eq!(m.id.as_str(), PLUGIN_ID);
+        assert_eq!(m.contributions.providers[0].id.as_str(), PROVIDER_ID);
+        assert!(
+            m.contributions
+                .slash_commands
+                .iter()
+                .any(|s| s.name == format!("connect {PROVIDER_ID}"))
+        );
+    }
+
+    #[test]
+    fn render_slot_marks_active_provider() {
+        rust_i18n::set_locale("en");
+        use async_trait::async_trait;
+        use otto_mcp::ProviderClient;
+        use otto_protocol::{
+            CompleteRequest, CompleteResponse, ListModelsResponse, ProviderError, StreamEvent,
+        };
+        use tokio::sync::mpsc;
+
+        struct StubClient;
+        #[async_trait]
+        impl ProviderClient for StubClient {
+            async fn complete(
+                &self,
+                _: CompleteRequest,
+                _: Option<mpsc::Sender<StreamEvent>>,
+            ) -> Result<CompleteResponse, ProviderError> {
+                unreachable!()
+            }
+            async fn list_models(&self) -> Result<ListModelsResponse, ProviderError> {
+                unreachable!()
+            }
+        }
+
+        let mut p = ProviderDeepSeekPlugin::with_test_client(Box::new(StubClient));
+        p.set_active_for_render(true);
+        let lines = p.render_slot(
+            "home.footer.left",
+            Region {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 1,
+            },
+        );
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            joined.starts_with('\u{25b8}'),
+            "active marker missing in: {joined}"
+        );
+
+        p.set_active_for_render(false);
+        let lines = p.render_slot(
+            "home.footer.left",
+            Region {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 1,
+            },
+        );
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            joined.starts_with("  "),
+            "inactive prefix missing in: {joined}"
+        );
+        rust_i18n::set_locale("en");
+    }
+}

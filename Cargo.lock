@@ -5253,6 +5253,7 @@ dependencies = [
  "otto-plugin-wasm",
  "otto-protocol",
  "provider-anthropic",
+ "provider-deepseek",
  "provider-gemini",
  "provider-local",
  "provider-openai",
