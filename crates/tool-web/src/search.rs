@@ -8,10 +8,10 @@
 //! the user's IP flagged. Instead two backends are supported, selected by
 //! whichever is configured (Brave is tried first if both are set):
 //!
-//! - **Brave Search API** (`SAVVAGENT_BRAVE_API_KEY`, falls back to the
+//! - **Brave Search API** (`OTTO_BRAVE_API_KEY`, falls back to the
 //!   unprefixed `BRAVE_API_KEY`) — hosted, requires a free-tier API key
 //!   from <https://brave.com/search/api/>.
-//! - **SearXNG** (`SAVVAGENT_SEARXNG_URL`) — points at a self-hosted or
+//! - **SearXNG** (`OTTO_SEARXNG_URL`) — points at a self-hosted or
 //!   third-party SearXNG instance's base URL (e.g. `http://localhost:8080`)
 //!   with its JSON output format enabled; no API key required.
 //!
@@ -74,17 +74,17 @@ pub async fn run(input: SearchInput) -> Result<SearchOutput, WebToolError> {
         .clamp(1, 50);
 
     if let Ok(key) =
-        std::env::var("SAVVAGENT_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
+        std::env::var("OTTO_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
     {
         return brave_search(&input.query, max_results, &key).await;
     }
-    if let Ok(base_url) = std::env::var("SAVVAGENT_SEARXNG_URL") {
+    if let Ok(base_url) = std::env::var("OTTO_SEARXNG_URL") {
         return searxng_search(&input.query, max_results, &base_url).await;
     }
     Err(WebToolError::NotConfigured(
-        "web_search has no backend configured. Set SAVVAGENT_BRAVE_API_KEY \
+        "web_search has no backend configured. Set OTTO_BRAVE_API_KEY \
          (get a free-tier key at https://brave.com/search/api/) or \
-         SAVVAGENT_SEARXNG_URL (base URL of a SearXNG instance with JSON \
+         OTTO_SEARXNG_URL (base URL of a SearXNG instance with JSON \
          output enabled, e.g. http://localhost:8080)."
             .into(),
     ))
@@ -272,11 +272,11 @@ mod tests {
         });
 
         // SAFETY: guarded by ENV_LOCK above; no other test in this crate
-        // touches SAVVAGENT_SEARXNG_URL without also holding it.
+        // touches OTTO_SEARXNG_URL without also holding it.
         unsafe {
-            std::env::remove_var("SAVVAGENT_BRAVE_API_KEY");
+            std::env::remove_var("OTTO_BRAVE_API_KEY");
             std::env::remove_var("BRAVE_API_KEY");
-            std::env::set_var("SAVVAGENT_SEARXNG_URL", format!("http://{addr}"));
+            std::env::set_var("OTTO_SEARXNG_URL", format!("http://{addr}"));
         }
 
         let out = run(SearchInput {
@@ -287,7 +287,7 @@ mod tests {
         .unwrap();
 
         unsafe {
-            std::env::remove_var("SAVVAGENT_SEARXNG_URL");
+            std::env::remove_var("OTTO_SEARXNG_URL");
         }
 
         assert_eq!(out.backend, "searxng");

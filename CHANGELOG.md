@@ -1,12 +1,25 @@
 # Changelog
 
-All notable changes to savvagent are documented here. The format follows
+All notable changes to otto are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-1.0: `0.MINOR.PATCH`, where MINOR captures features + breaking
 boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
+
+### Changed
+
+- **Breaking, comprehensive rename: the project is renamed from `savvagent` to `otto`.** Every
+  public interface is affected, with no compatibility shims or migration path: the crate prefix
+  (`savvagent-*` → `otto-*`), the TUI binary and all bundled tool/provider binaries (`savvagent` →
+  `otto`, `savvagent-tool-*` → `otto-tool-*`, `savvagent-anthropic`/`-gemini`/`-openai` →
+  `otto-anthropic`/`-gemini`/`-openai`), the on-disk config/state directory (`~/.savvagent/` →
+  `~/.otto/`), the project-context filename (`SAVVAGENT.md` → `OTTO.md`), the OS keyring service
+  name (`savvagent` → `otto`), every `SAVVAGENT_*` environment variable (→ `OTTO_*`), the plugin
+  WIT package (`savvagent:plugin@0.1.0` → `otto:plugin@0.1.0`), and the plugin manifest's
+  `[plugin].savvagent` version-range key (→ `[plugin].otto`). The GitHub org handle `savvagent`
+  is unchanged; only the repository name changed (`savvagent/savvagent-cli` → `savvagent/otto`).
 
 ## 0.23.1 - 2026-09-06
 

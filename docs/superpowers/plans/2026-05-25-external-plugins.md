@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add WASM external-plugin support to savvagent. Wasm modules implementing one of three WIT worlds (static / interactive / provider) are discovered from four well-known directories, hash-trusted, and adapted to `Box<dyn Plugin>` so the rest of the host treats them identically to built-ins.
+**Goal:** Add WASM external-plugin support to otto. Wasm modules implementing one of three WIT worlds (static / interactive / provider) are discovered from four well-known directories, hash-trusted, and adapted to `Box<dyn Plugin>` so the rest of the host treats them identically to built-ins.
 
-**Architecture:** Two new crates — `savvagent-plugin-wit` (pure WIT + bindgen, leaf) and `savvagent-plugin-wasm` (wasmtime runtime + adapters + host-imports). A new `register_external()` call in `crates/savvagent/src/plugin/registry.rs` appends discovered wasm plugins. A new `internal:plugins` built-in owns `/plugins` (install/trust/revoke/remove/list/enable/disable).
+**Architecture:** Two new crates — `otto-plugin-wit` (pure WIT + bindgen, leaf) and `otto-plugin-wasm` (wasmtime runtime + adapters + host-imports). A new `register_external()` call in `crates/otto/src/plugin/registry.rs` appends discovered wasm plugins. A new `internal:plugins` built-in owns `/plugins` (install/trust/revoke/remove/list/enable/disable).
 
 **Tech Stack:** wasmtime 24.0 (Component Model), wit-bindgen, reqwest (TLS via rustls — already in workspace), keyring (for provider creds), sha2 (tree hashing), toml, walkdir.
 
@@ -12,7 +12,7 @@
 
 **Reality reconciliations against the spec:**
 
-The spec sketched a WIT surface that didn't exactly match the actual `Plugin` trait in `crates/savvagent-plugin/src/plugin.rs`. The plan reconciles as follows:
+The spec sketched a WIT surface that didn't exactly match the actual `Plugin` trait in `crates/otto-plugin/src/plugin.rs`. The plan reconciles as follows:
 
 | Spec named | Actual trait uses | Plan's WIT export name |
 |---|---|---|
@@ -30,48 +30,48 @@ The `event-json` boundary matches the existing `HostEvent` enum's serde represen
 Before Task 1, the implementer should:
 
 - Read the spec end-to-end.
-- Read `crates/savvagent-plugin/src/plugin.rs` (the trait we adapt to).
-- Read `crates/savvagent-plugin/src/event.rs` (HostEvent + HookKind).
-- Read `crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs` (prior-art four-path discovery).
-- Read `crates/savvagent/src/plugin/registry.rs` (insertion site for `register_external`).
+- Read `crates/otto-plugin/src/plugin.rs` (the trait we adapt to).
+- Read `crates/otto-plugin/src/event.rs` (HostEvent + HookKind).
+- Read `crates/otto/src/plugin/builtin/user_hooks/discovery.rs` (prior-art four-path discovery).
+- Read `crates/otto/src/plugin/registry.rs` (insertion site for `register_external`).
 - Confirm rust toolchain ≥ 1.85 (workspace `rust-version`).
 
 ---
 
-## Task 1: `savvagent-plugin-wit` crate scaffold + shared.wit + spp.wit + CI dep-guard
+## Task 1: `otto-plugin-wit` crate scaffold + shared.wit + spp.wit + CI dep-guard
 
 **Files:**
-- Create: `crates/savvagent-plugin-wit/Cargo.toml`
-- Create: `crates/savvagent-plugin-wit/src/lib.rs`
-- Create: `crates/savvagent-plugin-wit/wit/shared.wit`
-- Create: `crates/savvagent-plugin-wit/wit/spp.wit`
-- Create: `crates/savvagent-plugin-wit/build.rs`
-- Create: `crates/savvagent-plugin-wit/tests/wit_parses.rs`
+- Create: `crates/otto-plugin-wit/Cargo.toml`
+- Create: `crates/otto-plugin-wit/src/lib.rs`
+- Create: `crates/otto-plugin-wit/wit/shared.wit`
+- Create: `crates/otto-plugin-wit/wit/spp.wit`
+- Create: `crates/otto-plugin-wit/build.rs`
+- Create: `crates/otto-plugin-wit/tests/wit_parses.rs`
 - Modify: `Cargo.toml` (workspace) — add the crate to `[workspace] members` and `[workspace.dependencies]`
-- Create: `.github/workflows/wit-dep-guard.yml` (CI grep ensuring no ratatui/crossterm/tokio/anyhow in `savvagent-plugin-wit`)
+- Create: `.github/workflows/wit-dep-guard.yml` (CI grep ensuring no ratatui/crossterm/tokio/anyhow in `otto-plugin-wit`)
 
 - [ ] **Step 1.1: Add the crate to the workspace.**
 
-Edit `Cargo.toml` to add `"crates/savvagent-plugin-wit"` to `members` (alphabetically near `savvagent-plugin`) and add this to `[workspace.dependencies]`:
+Edit `Cargo.toml` to add `"crates/otto-plugin-wit"` to `members` (alphabetically near `otto-plugin`) and add this to `[workspace.dependencies]`:
 
 ```toml
-savvagent-plugin-wit = { path = "crates/savvagent-plugin-wit", version = "0.17.0" }
+otto-plugin-wit = { path = "crates/otto-plugin-wit", version = "0.17.0" }
 wit-bindgen = "0.34"
 ```
 
 The version literal here is `0.17.0` because the workspace is still at `0.17.0`; Task 15 bumps to `0.18.0`. Keeping them in sync per `feedback_semver.md`.
 
-- [ ] **Step 1.2: Write `crates/savvagent-plugin-wit/Cargo.toml`.**
+- [ ] **Step 1.2: Write `crates/otto-plugin-wit/Cargo.toml`.**
 
 ```toml
 [package]
-name = "savvagent-plugin-wit"
+name = "otto-plugin-wit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "WIT contract for savvagent external plugins (sub-project D)."
+description = "WIT contract for otto external plugins (sub-project D)."
 
 [dependencies]
 wit-bindgen = { workspace = true }
@@ -86,7 +86,7 @@ wit-bindgen = { workspace = true }
 unsafe_code = "forbid"
 ```
 
-- [ ] **Step 1.3: Write `crates/savvagent-plugin-wit/build.rs`.**
+- [ ] **Step 1.3: Write `crates/otto-plugin-wit/build.rs`.**
 
 ```rust
 fn main() {
@@ -95,10 +95,10 @@ fn main() {
 }
 ```
 
-- [ ] **Step 1.4: Write `crates/savvagent-plugin-wit/wit/shared.wit`.**
+- [ ] **Step 1.4: Write `crates/otto-plugin-wit/wit/shared.wit`.**
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 interface types {
     // ---- Key events ---------------------------------------------------
@@ -176,7 +176,7 @@ interface types {
     }
 
     // ---- Effects -----------------------------------------------------
-    // Mirror of savvagent_plugin::Effect (closed set; v0.9.0 §9 rule).
+    // Mirror of otto_plugin::Effect (closed set; v0.9.0 §9 rule).
     variant effect {
         push-note(note),
         open-screen(screen-target),
@@ -241,7 +241,7 @@ interface types {
         themes: bool,
     }
 
-    // ---- Hook discriminants (mirror savvagent_plugin::HookKind) -----
+    // ---- Hook discriminants (mirror otto_plugin::HookKind) -----
     variant hook-kind {
         host-starting,
         connect,
@@ -291,14 +291,14 @@ interface types {
 }
 ```
 
-- [ ] **Step 1.5: Write `crates/savvagent-plugin-wit/wit/spp.wit`.**
+- [ ] **Step 1.5: Write `crates/otto-plugin-wit/wit/spp.wit`.**
 
 ```wit
-package savvagent:spp@0.1.0;
+package otto:spp@0.1.0;
 
 interface types {
-    // SPP types mirrored from savvagent-protocol field-for-field.
-    // From/Into impls live in savvagent-plugin-wasm/src/spp_convert.rs.
+    // SPP types mirrored from otto-protocol field-for-field.
+    // From/Into impls live in otto-plugin-wasm/src/spp_convert.rs.
 
     record complete-request {
         model: string,
@@ -463,13 +463,13 @@ interface types {
 }
 ```
 
-- [ ] **Step 1.6: Write `crates/savvagent-plugin-wit/src/lib.rs`.**
+- [ ] **Step 1.6: Write `crates/otto-plugin-wit/src/lib.rs`.**
 
 ```rust
-//! WIT contract crate for savvagent external plugins.
+//! WIT contract crate for otto external plugins.
 //!
 //! This crate holds the `.wit` files and (via `wit-bindgen`) the generated
-//! host-side bindings used by `savvagent-plugin-wasm`. It must remain a
+//! host-side bindings used by `otto-plugin-wasm`. It must remain a
 //! leaf crate with zero runtime dependencies — see `wit-dep-guard.yml` for
 //! the CI enforcement.
 
@@ -484,7 +484,7 @@ interface types {
 
 pub mod static_world {
     wit_bindgen::generate!({
-        path: "../savvagent-plugin-wit/wit",
+        path: "../otto-plugin-wit/wit",
         world: "plugin-static",
         with: {},
     });
@@ -492,7 +492,7 @@ pub mod static_world {
 
 pub mod interactive_world {
     wit_bindgen::generate!({
-        path: "../savvagent-plugin-wit/wit",
+        path: "../otto-plugin-wit/wit",
         world: "plugin-interactive",
         with: {},
     });
@@ -500,7 +500,7 @@ pub mod interactive_world {
 
 pub mod provider_world {
     wit_bindgen::generate!({
-        path: "../savvagent-plugin-wit/wit",
+        path: "../otto-plugin-wit/wit",
         world: "plugin-provider",
         with: {},
     });
@@ -511,11 +511,11 @@ pub mod provider_world {
 
 - [ ] **Step 1.7: Add stub WIT world files** (will be filled in Task 2).
 
-Create `crates/savvagent-plugin-wit/wit/plugin-static.wit`, `plugin-interactive.wit`, `plugin-provider.wit` with skeleton content so `cargo build` at the end of Task 1 succeeds:
+Create `crates/otto-plugin-wit/wit/plugin-static.wit`, `plugin-interactive.wit`, `plugin-provider.wit` with skeleton content so `cargo build` at the end of Task 1 succeeds:
 
 ```wit
 // plugin-static.wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-static {
     use types.{plugin-manifest, plugin-error};
@@ -525,7 +525,7 @@ world plugin-static {
 
 ```wit
 // plugin-interactive.wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-interactive {
     use types.{plugin-manifest, plugin-error};
@@ -535,7 +535,7 @@ world plugin-interactive {
 
 ```wit
 // plugin-provider.wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-provider {
     use types.{plugin-manifest, plugin-error};
@@ -543,7 +543,7 @@ world plugin-provider {
 }
 ```
 
-- [ ] **Step 1.8: Write the parse-only sanity test `crates/savvagent-plugin-wit/tests/wit_parses.rs`.**
+- [ ] **Step 1.8: Write the parse-only sanity test `crates/otto-plugin-wit/tests/wit_parses.rs`.**
 
 ```rust
 //! Sanity test: every WIT file in the crate parses with `wit-parser`.
@@ -570,8 +570,8 @@ wit-parser = "0.220"
 - [ ] **Step 1.9: Run sanity build.**
 
 ```bash
-cargo build -p savvagent-plugin-wit
-cargo test -p savvagent-plugin-wit
+cargo build -p otto-plugin-wit
+cargo test -p otto-plugin-wit
 ```
 
 Expected: clean build, `every_wit_file_parses` passes. If `wit_bindgen::generate!` fails, fall back to the build.rs codegen path — the world files are skeletal at this point so the macro should expand to nearly nothing.
@@ -582,8 +582,8 @@ Expected: clean build, `every_wit_file_parses` passes. If `wit_bindgen::generate
 name: WIT dep-guard
 
 on:
-  push: { paths: [ "crates/savvagent-plugin-wit/**", ".github/workflows/wit-dep-guard.yml" ] }
-  pull_request: { paths: [ "crates/savvagent-plugin-wit/**" ] }
+  push: { paths: [ "crates/otto-plugin-wit/**", ".github/workflows/wit-dep-guard.yml" ] }
+  pull_request: { paths: [ "crates/otto-plugin-wit/**" ] }
 
 jobs:
   guard:
@@ -594,10 +594,10 @@ jobs:
         run: |
           set -eu
           deps=$(awk '/^\[dependencies\]/{f=1;next} /^\[/{f=0} f' \
-                 crates/savvagent-plugin-wit/Cargo.toml)
+                 crates/otto-plugin-wit/Cargo.toml)
           for forbidden in ratatui crossterm tokio anyhow reqwest wasmtime; do
             if echo "$deps" | grep -q "^$forbidden\b"; then
-              echo "::error::savvagent-plugin-wit must not depend on '$forbidden'"
+              echo "::error::otto-plugin-wit must not depend on '$forbidden'"
               exit 1
             fi
           done
@@ -607,7 +607,7 @@ jobs:
 - [ ] **Step 1.11: Commit.**
 
 ```bash
-git add Cargo.toml crates/savvagent-plugin-wit/ .github/workflows/wit-dep-guard.yml
+git add Cargo.toml crates/otto-plugin-wit/ .github/workflows/wit-dep-guard.yml
 git commit -m "feat(plugin-wit): crate scaffold + shared.wit + spp.wit + dep-guard CI"
 ```
 
@@ -616,19 +616,19 @@ git commit -m "feat(plugin-wit): crate scaffold + shared.wit + spp.wit + dep-gua
 ## Task 2: WIT world definitions + bindings + SPP↔WIT round-trips
 
 **Files:**
-- Modify: `crates/savvagent-plugin-wit/wit/plugin-static.wit`
-- Modify: `crates/savvagent-plugin-wit/wit/plugin-interactive.wit`
-- Modify: `crates/savvagent-plugin-wit/wit/plugin-provider.wit`
-- Create: `crates/savvagent-plugin-wit/tests/world_validates.rs`
-- Create: `crates/savvagent-plugin-wasm/Cargo.toml` (scaffold only — empty lib)
-- Create: `crates/savvagent-plugin-wasm/src/lib.rs`
-- Create: `crates/savvagent-plugin-wasm/src/spp_convert.rs` (the From/Into impls + tests)
-- Modify: `Cargo.toml` (workspace) — add savvagent-plugin-wasm + wasmtime dependency stanzas
+- Modify: `crates/otto-plugin-wit/wit/plugin-static.wit`
+- Modify: `crates/otto-plugin-wit/wit/plugin-interactive.wit`
+- Modify: `crates/otto-plugin-wit/wit/plugin-provider.wit`
+- Create: `crates/otto-plugin-wit/tests/world_validates.rs`
+- Create: `crates/otto-plugin-wasm/Cargo.toml` (scaffold only — empty lib)
+- Create: `crates/otto-plugin-wasm/src/lib.rs`
+- Create: `crates/otto-plugin-wasm/src/spp_convert.rs` (the From/Into impls + tests)
+- Modify: `Cargo.toml` (workspace) — add otto-plugin-wasm + wasmtime dependency stanzas
 
 - [ ] **Step 2.1: Fill `plugin-static.wit`.**
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-static {
     use types.{plugin-manifest, plugin-error, effect, hook-kind, theme-color,
@@ -652,7 +652,7 @@ world plugin-static {
 - [ ] **Step 2.2: Fill `plugin-interactive.wit`.**
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-interactive {
     use types.{plugin-manifest, plugin-error, effect, key-event-portable,
@@ -675,7 +675,7 @@ world plugin-interactive {
     variant line-style { solid, dashed, dotted }
 
     record screen-args {
-        invocation-json: string,   // serialized savvagent_plugin::ScreenArgs
+        invocation-json: string,   // serialized otto_plugin::ScreenArgs
         terminal-width: u16,
         terminal-height: u16,
     }
@@ -697,11 +697,11 @@ world plugin-interactive {
 - [ ] **Step 2.3: Fill `plugin-provider.wit`.**
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-provider {
     use types.{plugin-manifest, plugin-error, log-level};
-    use savvagent:spp/types.{complete-request, complete-response, stream-event,
+    use otto:spp/types.{complete-request, complete-response, stream-event,
                               model-info, count-tokens-request, count-tokens-response,
                               provider-error, provider-manifest};
 
@@ -762,17 +762,17 @@ interface keyring-capability {
         backend(string),
     }
 
-    // service is always "savvagent" — fixed; only account is a parameter.
+    // service is always "otto" — fixed; only account is a parameter.
     get: func(account: string) -> result<string, keyring-error>;
 }
 
 interface progress-capability {
-    use savvagent:spp/types.{stream-event};
+    use otto:spp/types.{stream-event};
     emit-stream-event: func(event: stream-event);
 }
 ```
 
-- [ ] **Step 2.4: Write `crates/savvagent-plugin-wit/tests/world_validates.rs`.**
+- [ ] **Step 2.4: Write `crates/otto-plugin-wit/tests/world_validates.rs`.**
 
 ```rust
 //! Every world file resolves to a fully-typed component-model world.
@@ -797,39 +797,39 @@ fn three_worlds_resolve() {
 }
 ```
 
-- [ ] **Step 2.5: Add `savvagent-plugin-wasm` to the workspace and create the scaffold crate.**
+- [ ] **Step 2.5: Add `otto-plugin-wasm` to the workspace and create the scaffold crate.**
 
 Edit `Cargo.toml`:
 
 ```toml
 # in [workspace] members:
-"crates/savvagent-plugin-wasm",
+"crates/otto-plugin-wasm",
 
 # in [workspace.dependencies]:
-savvagent-plugin-wasm = { path = "crates/savvagent-plugin-wasm", version = "0.17.0" }
+otto-plugin-wasm = { path = "crates/otto-plugin-wasm", version = "0.17.0" }
 wasmtime = "24.0"
 wasmtime-wasi = "24.0"
 sha2 = "0.10"
 walkdir = "2.5"
 ```
 
-Create `crates/savvagent-plugin-wasm/Cargo.toml`:
+Create `crates/otto-plugin-wasm/Cargo.toml`:
 
 ```toml
 [package]
-name = "savvagent-plugin-wasm"
+name = "otto-plugin-wasm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Wasmtime-backed runtime for savvagent external plugins."
+description = "Wasmtime-backed runtime for otto external plugins."
 
 [dependencies]
-savvagent-plugin = { workspace = true }
-savvagent-plugin-wit = { workspace = true }
-savvagent-protocol = { workspace = true }
-savvagent-mcp = { workspace = true }
+otto-plugin = { workspace = true }
+otto-plugin-wit = { workspace = true }
+otto-protocol = { workspace = true }
+otto-mcp = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -850,14 +850,14 @@ tempfile = "3"
 proptest = "1"
 ```
 
-- [ ] **Step 2.6: Write the empty lib `crates/savvagent-plugin-wasm/src/lib.rs`.**
+- [ ] **Step 2.6: Write the empty lib `crates/otto-plugin-wasm/src/lib.rs`.**
 
 ```rust
-//! Wasmtime-backed runtime for savvagent external plugins.
+//! Wasmtime-backed runtime for otto external plugins.
 //!
 //! This crate adapts WASM components implementing one of three WIT worlds
 //! (plugin-static / plugin-interactive / plugin-provider) to
-//! `Box<dyn savvagent_plugin::Plugin>` — making them indistinguishable from
+//! `Box<dyn otto_plugin::Plugin>` — making them indistinguishable from
 //! built-ins to the rest of the host.
 
 #![deny(missing_docs)]
@@ -865,22 +865,22 @@ proptest = "1"
 pub mod spp_convert;
 
 /// Re-export of the WIT bindings for downstream convenience.
-pub use savvagent_plugin_wit as wit;
+pub use otto_plugin_wit as wit;
 ```
 
-- [ ] **Step 2.7: Write `crates/savvagent-plugin-wasm/src/spp_convert.rs` — the From/Into impls.**
+- [ ] **Step 2.7: Write `crates/otto-plugin-wasm/src/spp_convert.rs` — the From/Into impls.**
 
-This file is mechanical and long. The contract: every type in `savvagent_protocol` has both directions; every variant has one test; high-fanout types (`CompleteRequest`, `StreamEvent`) get proptests.
+This file is mechanical and long. The contract: every type in `otto_protocol` has both directions; every variant has one test; high-fanout types (`CompleteRequest`, `StreamEvent`) get proptests.
 
 ```rust
-//! Mechanical From/Into between `savvagent_protocol` types and the WIT
-//! mirror in `savvagent_plugin_wit::provider_world::savvagent::spp::types`.
+//! Mechanical From/Into between `otto_protocol` types and the WIT
+//! mirror in `otto_plugin_wit::provider_world::otto::spp::types`.
 //!
 //! Convention: the WIT alias is `wit::*`. The Rust types are imported
-//! from `savvagent_protocol::*` with their canonical names.
+//! from `otto_protocol::*` with their canonical names.
 
-use savvagent_plugin_wit::provider_world::savvagent::spp::types as wit;
-use savvagent_protocol as spp;
+use otto_plugin_wit::provider_world::otto::spp::types as wit;
+use otto_protocol as spp;
 
 // ---- CompleteRequest -------------------------------------------------
 impl From<spp::CompleteRequest> for wit::CompleteRequest {
@@ -1095,8 +1095,8 @@ The complete implementation is mechanical; the executor fills in the remaining v
 - [ ] **Step 2.8: Run tests.**
 
 ```bash
-cargo build -p savvagent-plugin-wit -p savvagent-plugin-wasm
-cargo test -p savvagent-plugin-wit -p savvagent-plugin-wasm
+cargo build -p otto-plugin-wit -p otto-plugin-wasm
+cargo test -p otto-plugin-wit -p otto-plugin-wasm
 ```
 
 Expected: all tests pass. SPP fixtures round-trip cleanly.
@@ -1104,7 +1104,7 @@ Expected: all tests pass. SPP fixtures round-trip cleanly.
 - [ ] **Step 2.9: Commit.**
 
 ```bash
-git add Cargo.toml crates/savvagent-plugin-wit/ crates/savvagent-plugin-wasm/
+git add Cargo.toml crates/otto-plugin-wit/ crates/otto-plugin-wasm/
 git commit -m "feat(plugin-wit,plugin-wasm): three WIT worlds + SPP<->WIT round-trips"
 ```
 
@@ -1113,17 +1113,17 @@ git commit -m "feat(plugin-wit,plugin-wasm): three WIT worlds + SPP<->WIT round-
 ## Task 3: Manifest, discovery, trust file, tree-hash
 
 **Files:**
-- Create: `crates/savvagent-plugin-wasm/src/manifest.rs`
-- Create: `crates/savvagent-plugin-wasm/src/discovery.rs`
-- Create: `crates/savvagent-plugin-wasm/src/trust.rs`
-- Create: `crates/savvagent-plugin-wasm/src/error.rs`
-- Modify: `crates/savvagent-plugin-wasm/src/lib.rs` (export modules)
-- Create: `crates/savvagent-plugin-wasm/tests/discovery.rs`
-- Create: `crates/savvagent-plugin-wasm/tests/trust.rs`
+- Create: `crates/otto-plugin-wasm/src/manifest.rs`
+- Create: `crates/otto-plugin-wasm/src/discovery.rs`
+- Create: `crates/otto-plugin-wasm/src/trust.rs`
+- Create: `crates/otto-plugin-wasm/src/error.rs`
+- Modify: `crates/otto-plugin-wasm/src/lib.rs` (export modules)
+- Create: `crates/otto-plugin-wasm/tests/discovery.rs`
+- Create: `crates/otto-plugin-wasm/tests/trust.rs`
 
-Reference the existing four-path pattern in `crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs`. Mirror its precedence order and project-root walk.
+Reference the existing four-path pattern in `crates/otto/src/plugin/builtin/user_hooks/discovery.rs`. Mirror its precedence order and project-root walk.
 
-- [ ] **Step 3.1: Define the error type — `crates/savvagent-plugin-wasm/src/error.rs`.**
+- [ ] **Step 3.1: Define the error type — `crates/otto-plugin-wasm/src/error.rs`.**
 
 ```rust
 //! Error types for the wasm runtime — covers discovery, manifest parsing,
@@ -1151,7 +1151,7 @@ pub enum WasmPluginError {
     #[error("plugin {0} declares exports {declared:?} but wasm exports {actual:?}", declared = .1, actual = .2)]
     ExportMismatch(String, Vec<String>, Vec<String>),
 
-    #[error("plugin {0} requires savvagent {1} but this build provides {2}")]
+    #[error("plugin {0} requires otto {1} but this build provides {2}")]
     VersionMismatch(String, String, String),
 
     #[error("plugin {0} hash mismatch: stored={1} actual={2}")]
@@ -1171,7 +1171,7 @@ pub enum WasmPluginError {
 }
 ```
 
-- [ ] **Step 3.2: Manifest type + TOML parsing — `crates/savvagent-plugin-wasm/src/manifest.rs`.**
+- [ ] **Step 3.2: Manifest type + TOML parsing — `crates/otto-plugin-wasm/src/manifest.rs`.**
 
 ```rust
 //! Parser/validator for `plugin.toml` files.
@@ -1181,7 +1181,7 @@ pub enum WasmPluginError {
 //! 2. Required fields present.
 //! 3. id format is `<lowercase-kebab>.<lowercase-kebab>`.
 //! 4. `world` is one of the three known values.
-//! 5. `savvagent` version range is satisfiable by current build.
+//! 5. `otto` version range is satisfiable by current build.
 //! 6. `[security]` is rejected on non-provider worlds.
 
 use std::path::Path;
@@ -1216,7 +1216,7 @@ pub struct PluginSection {
     pub license: Option<String>,
     #[serde(default)]
     pub authors: Vec<String>,
-    pub savvagent: String,
+    pub otto: String,
     #[serde(default)]
     pub wasm: Option<String>,
 }
@@ -1286,10 +1286,10 @@ impl PluginManifest {
             ));
         }
 
-        validate_version_range(&m.plugin.savvagent)
+        validate_version_range(&m.plugin.otto)
             .map_err(|reason| WasmPluginError::VersionMismatch(
                 m.plugin.id.clone(),
-                m.plugin.savvagent.clone(),
+                m.plugin.otto.clone(),
                 reason,
             ))?;
 
@@ -1367,7 +1367,7 @@ id = "acme.demo"
 name = "Demo"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 
 [exports]
 slash-commands = ["demo"]
@@ -1386,7 +1386,7 @@ id = "acme.demo"
 name = "Demo"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 "#);
         let e = PluginManifest::load(f.path(), "acme.other").unwrap_err();
         assert!(matches!(e, WasmPluginError::Manifest(_, _)));
@@ -1400,7 +1400,7 @@ id = "acme.demo"
 name = "Demo"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 
 [security]
 allowed-hosts = ["example.com"]
@@ -1417,7 +1417,7 @@ id = "acme.demo"
 name = "Demo"
 version = "0.1.0"
 world = "plugin-provider"
-savvagent = "^0.18"
+otto = "^0.18"
 "#);
         let e = PluginManifest::load(f.path(), "acme.demo").unwrap_err();
         assert!(matches!(e, WasmPluginError::Manifest(_, _)));
@@ -1431,7 +1431,7 @@ id = "acme.demo"
 name = "Demo"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.17"
+otto = "^0.17"
 "#);
         let e = PluginManifest::load(f.path(), "acme.demo").unwrap_err();
         assert!(matches!(e, WasmPluginError::VersionMismatch(..)));
@@ -1447,7 +1447,7 @@ id = "{bad}"
 name = "x"
 version = "0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 "#);
             let f = write_manifest(&toml);
             let e = PluginManifest::load(f.path(), bad).unwrap_err();
@@ -1466,7 +1466,7 @@ id = "acme.demo"
 name = "Demo"
 version = "0.1.0"
 world = "plugin-static"
-savvagent = "^0.18"
+otto = "^0.18"
 
 [runtime]
 call-timeout-ms = 9999999
@@ -1477,16 +1477,16 @@ call-timeout-ms = 9999999
 }
 ```
 
-- [ ] **Step 3.3: Discovery — `crates/savvagent-plugin-wasm/src/discovery.rs`.**
+- [ ] **Step 3.3: Discovery — `crates/otto-plugin-wasm/src/discovery.rs`.**
 
 ```rust
 //! Walk the four well-known directories and produce a list of valid,
 //! manifest-parsed plugin candidates. First-wins by plugin id.
 //!
 //! Path precedence (matches sub-projects A/B/C):
-//! 1. <project>/.savvagent/plugins/<id>/plugin.toml
+//! 1. <project>/.otto/plugins/<id>/plugin.toml
 //! 2. <project>/.claude/plugins/<id>/plugin.toml
-//! 3. ~/.savvagent/plugins/<id>/plugin.toml
+//! 3. ~/.otto/plugins/<id>/plugin.toml
 //! 4. ~/.claude/plugins/<id>/plugin.toml
 
 use std::collections::HashMap;
@@ -1504,9 +1504,9 @@ pub struct DiscoveredPlugin {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceScope {
-    ProjectSavvagent,
+    ProjectOtto,
     ProjectClaude,
-    UserSavvagent,
+    UserOtto,
     UserClaude,
 }
 
@@ -1519,16 +1519,16 @@ pub struct Discovery {
 /// Discover plugins from the four standard paths.
 ///
 /// `project_root` is the directory returned by the same project-root
-/// resolver `SAVVAGENT.md` uses (walk up for `.git/` or `.savvagent/`).
+/// resolver `OTTO.md` uses (walk up for `.git/` or `.otto/`).
 /// `home_dir` is `dirs::home_dir()` in production; injectable for tests.
 pub fn discover(project_root: Option<&Path>, home_dir: Option<&Path>) -> Discovery {
     let mut by_id: HashMap<String, DiscoveredPlugin> = HashMap::new();
     let mut warnings = Vec::new();
 
     let paths: Vec<(Option<PathBuf>, SourceScope)> = vec![
-        (project_root.map(|p| p.join(".savvagent/plugins")), SourceScope::ProjectSavvagent),
+        (project_root.map(|p| p.join(".otto/plugins")), SourceScope::ProjectOtto),
         (project_root.map(|p| p.join(".claude/plugins")), SourceScope::ProjectClaude),
-        (home_dir.map(|h| h.join(".savvagent/plugins")), SourceScope::UserSavvagent),
+        (home_dir.map(|h| h.join(".otto/plugins")), SourceScope::UserOtto),
         (home_dir.map(|h| h.join(".claude/plugins")), SourceScope::UserClaude),
     ];
 
@@ -1593,7 +1593,7 @@ id = "{id}"
 name = "{id}"
 version = "0.1.0"
 world = "{world}"
-savvagent = "^0.18"
+otto = "^0.18"
 "#
         )
         .unwrap();
@@ -1604,40 +1604,40 @@ savvagent = "^0.18"
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
         let home = tmp.path().join("home");
-        std::fs::create_dir_all(project.join(".savvagent/plugins")).unwrap();
-        std::fs::create_dir_all(home.join(".savvagent/plugins")).unwrap();
+        std::fs::create_dir_all(project.join(".otto/plugins")).unwrap();
+        std::fs::create_dir_all(home.join(".otto/plugins")).unwrap();
 
-        write_plugin(&project.join(".savvagent/plugins"), "acme.demo", "plugin-static");
-        write_plugin(&home.join(".savvagent/plugins"), "acme.demo", "plugin-static");
+        write_plugin(&project.join(".otto/plugins"), "acme.demo", "plugin-static");
+        write_plugin(&home.join(".otto/plugins"), "acme.demo", "plugin-static");
 
         let d = discover(Some(&project), Some(&home));
         assert_eq!(d.plugins.len(), 1);
-        assert_eq!(d.plugins[0].source_scope, SourceScope::ProjectSavvagent);
+        assert_eq!(d.plugins[0].source_scope, SourceScope::ProjectOtto);
     }
 
     #[test]
-    fn savvagent_beats_claude_within_scope() {
+    fn otto_beats_claude_within_scope() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
-        std::fs::create_dir_all(project.join(".savvagent/plugins")).unwrap();
+        std::fs::create_dir_all(project.join(".otto/plugins")).unwrap();
         std::fs::create_dir_all(project.join(".claude/plugins")).unwrap();
 
-        write_plugin(&project.join(".savvagent/plugins"), "acme.demo", "plugin-static");
+        write_plugin(&project.join(".otto/plugins"), "acme.demo", "plugin-static");
         write_plugin(&project.join(".claude/plugins"), "acme.demo", "plugin-static");
 
         let d = discover(Some(&project), None);
         assert_eq!(d.plugins.len(), 1);
-        assert_eq!(d.plugins[0].source_scope, SourceScope::ProjectSavvagent);
+        assert_eq!(d.plugins[0].source_scope, SourceScope::ProjectOtto);
     }
 
     #[test]
     fn invalid_manifest_warns_but_does_not_block_others() {
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
-        std::fs::create_dir_all(project.join(".savvagent/plugins")).unwrap();
-        write_plugin(&project.join(".savvagent/plugins"), "good.demo", "plugin-static");
+        std::fs::create_dir_all(project.join(".otto/plugins")).unwrap();
+        write_plugin(&project.join(".otto/plugins"), "good.demo", "plugin-static");
 
-        let bad_dir = project.join(".savvagent/plugins/bad.demo");
+        let bad_dir = project.join(".otto/plugins/bad.demo");
         std::fs::create_dir_all(&bad_dir).unwrap();
         std::fs::write(bad_dir.join("plugin.toml"), "not toml at all = ::").unwrap();
 
@@ -1649,10 +1649,10 @@ savvagent = "^0.18"
 }
 ```
 
-- [ ] **Step 3.4: Trust file — `crates/savvagent-plugin-wasm/src/trust.rs`.**
+- [ ] **Step 3.4: Trust file — `crates/otto-plugin-wasm/src/trust.rs`.**
 
 ```rust
-//! Manages `~/.savvagent/plugin-trust.toml` — the per-user trust ledger
+//! Manages `~/.otto/plugin-trust.toml` — the per-user trust ledger
 //! for external plugins.
 //!
 //! Trust unit: SHA-256 over the plugin's full directory tree
@@ -1684,7 +1684,7 @@ pub struct TrustRecord {
 
 impl TrustFile {
     pub fn load(home_dir: &Path) -> Result<Self, WasmPluginError> {
-        let path = home_dir.join(".savvagent/plugin-trust.toml");
+        let path = home_dir.join(".otto/plugin-trust.toml");
         if !path.exists() {
             return Ok(TrustFile::default());
         }
@@ -1695,7 +1695,7 @@ impl TrustFile {
     }
 
     pub fn save(&self, home_dir: &Path) -> Result<(), WasmPluginError> {
-        let path = home_dir.join(".savvagent/plugin-trust.toml");
+        let path = home_dir.join(".otto/plugin-trust.toml");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| WasmPluginError::Io(parent.to_path_buf(), e))?;
@@ -1853,10 +1853,10 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3.5: Wire modules — update `crates/savvagent-plugin-wasm/src/lib.rs`.**
+- [ ] **Step 3.5: Wire modules — update `crates/otto-plugin-wasm/src/lib.rs`.**
 
 ```rust
-//! Wasmtime-backed runtime for savvagent external plugins.
+//! Wasmtime-backed runtime for otto external plugins.
 
 #![deny(missing_docs)]
 
@@ -1866,13 +1866,13 @@ pub mod manifest;
 pub mod spp_convert;
 pub mod trust;
 
-pub use savvagent_plugin_wit as wit;
+pub use otto_plugin_wit as wit;
 ```
 
 - [ ] **Step 3.6: Run tests.**
 
 ```bash
-cargo test -p savvagent-plugin-wasm
+cargo test -p otto-plugin-wasm
 ```
 
 Expected: all manifest, discovery, and trust tests pass.
@@ -1880,7 +1880,7 @@ Expected: all manifest, discovery, and trust tests pass.
 - [ ] **Step 3.7: Commit.**
 
 ```bash
-git add crates/savvagent-plugin-wasm/
+git add crates/otto-plugin-wasm/
 git commit -m "feat(plugin-wasm): manifest + four-path discovery + plugin-trust.toml + tree-hash"
 ```
 

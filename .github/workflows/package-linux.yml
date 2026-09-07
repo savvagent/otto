@@ -53,7 +53,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       # Same system deps as ci.yml: `keyring`'s sync-secret-service backend
-      # needs libdbus headers; blitz (savvagent-canvas) needs fontconfig.
+      # needs libdbus headers; blitz (otto-canvas) needs fontconfig.
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev pkg-config
 
@@ -61,21 +61,21 @@ jobs:
         run: cargo install cargo-deb cargo-generate-rpm
 
       - name: Build release binaries
-        run: cargo build --release -p savvagent --bins
+        run: cargo build --release -p otto --bins
 
       - name: Build .deb package
-        run: cargo deb -p savvagent --no-build
+        run: cargo deb -p otto --no-build
 
       # Unlike `cargo deb -p`, `cargo-generate-rpm`'s `-p <name>` does not
       # resolve the crate through workspace metadata: it joins the name
       # onto the current directory (`./<name>/Cargo.toml`), which only
       # works for flat single-level workspaces. Since this crate lives at
-      # `crates/savvagent`, invoke it from that directory instead, pointing
+      # `crates/otto`, invoke it from that directory instead, pointing
       # `--target-dir` back at the workspace's shared `target/` so it picks
       # up the release binary built above.
       - name: Build .rpm package
         run: cargo generate-rpm --target-dir ../../target
-        working-directory: crates/savvagent
+        working-directory: crates/otto
 
       - name: Verify tag matches a real GitHub Release
         run: gh release view "$TAG" --repo "${{ github.repository }}"

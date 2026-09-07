@@ -1,7 +1,7 @@
 //! Typed Anthropic Messages API request and response shapes.
 //!
 //! Only the subset SPP needs is modeled. Anthropic's API is the canonical
-//! one we mirror in [`savvagent_protocol`], so the translation is mostly
+//! one we mirror in [`otto_protocol`], so the translation is mostly
 //! field renaming. These types are crate-public so the `translate` and
 //! `stream` modules can build them, but they are not part of the stable
 //! provider API.

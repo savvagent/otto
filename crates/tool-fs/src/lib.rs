@@ -7,7 +7,7 @@
 //! - [`list_dir`](FsTools::list_dir) — list directory entries (optionally recursively).
 //! - [`glob`](FsTools::glob) — expand a glob pattern relative to a root.
 //!
-//! The binary `savvagent-tool-fs` wraps [`FsTools`] in an `rmcp` stdio
+//! The binary `otto-tool-fs` wraps [`FsTools`] in an `rmcp` stdio
 //! transport; see `src/main.rs`.
 //!
 //! v0.1 ships **without sandboxing**. Tools run with the full privileges of the
@@ -15,7 +15,7 @@
 //! routing them.
 //!
 //! Optional Layer 1 path hygiene: construct via [`FsTools::with_root`] (or set
-//! `SAVVAGENT_TOOL_FS_ROOT` for the bundled binary) to confine all four tools
+//! `OTTO_TOOL_FS_ROOT` for the bundled binary) to confine all four tools
 //! to a single project root. Inputs containing `..` are rejected, relative
 //! paths resolve against the root, and symlink escapes are caught by
 //! `std::fs::canonicalize`.
@@ -756,11 +756,11 @@ impl ServerHandler for FsTools {
             .with_server_info(
                 Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
                     .with_description(
-                        "Savvagent filesystem tools (read_file, write_file, list_dir, glob)",
+                        "Otto filesystem tools (read_file, write_file, list_dir, glob)",
                     ),
             )
             .with_instructions(
-                "Filesystem tool server for Savvagent. v0.1 has no sandbox; the host \
+                "Filesystem tool server for Otto. v0.1 has no sandbox; the host \
                  is expected to confirm destructive calls before routing them.",
             )
     }
@@ -837,8 +837,8 @@ fn walk_dir(
 // ---------------------------------------------------------------------------
 
 /// Serve [`FsTools`] over a stdio MCP transport. Shared between the
-/// `savvagent-tool-fs` binary in this crate and the bundled shim in the
-/// `savvagent` crate's release archive.
+/// `otto-tool-fs` binary in this crate and the bundled shim in the
+/// `otto` crate's release archive.
 pub async fn run() -> anyhow::Result<()> {
     use rmcp::{ServiceExt, transport::stdio};
 
@@ -852,7 +852,7 @@ pub async fn run() -> anyhow::Result<()> {
         .init();
 
     tracing::info!(
-        "savvagent-tool-fs {} starting on stdio",
+        "otto-tool-fs {} starting on stdio",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -862,11 +862,11 @@ pub async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build an [`FsTools`] honoring `SAVVAGENT_TOOL_FS_ROOT`. Falls back to the
+/// Build an [`FsTools`] honoring `OTTO_TOOL_FS_ROOT`. Falls back to the
 /// process CWD; if both fail to canonicalize, returns the unrestricted
 /// constructor so the binary still serves something useful.
 fn build_tools_from_env() -> FsTools {
-    let env_root = std::env::var("SAVVAGENT_TOOL_FS_ROOT")
+    let env_root = std::env::var("OTTO_TOOL_FS_ROOT")
         .ok()
         .filter(|s| !s.is_empty());
     if let Some(root) = env_root {
@@ -879,7 +879,7 @@ fn build_tools_from_env() -> FsTools {
                 tracing::warn!(
                     root = %root,
                     error = %e,
-                    "SAVVAGENT_TOOL_FS_ROOT failed to canonicalize; falling back to CWD",
+                    "OTTO_TOOL_FS_ROOT failed to canonicalize; falling back to CWD",
                 );
             }
         }
@@ -1588,7 +1588,7 @@ mod tests {
             .filter(|e| {
                 e.file_name()
                     .to_string_lossy()
-                    .starts_with(".savvagent-tmp.")
+                    .starts_with(".otto-tmp.")
             })
             .collect();
         assert!(leftovers.is_empty(), "leftover tmp file: {leftovers:?}");

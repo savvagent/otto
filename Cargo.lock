@@ -5225,6 +5225,193 @@ dependencies = [
 ]
 
 [[package]]
+name = "otto"
+version = "0.23.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "crossterm",
+ "dirs",
+ "dotenvy",
+ "eframe",
+ "egui",
+ "egui-file-dialog",
+ "flate2",
+ "futures",
+ "globset",
+ "hex",
+ "httpmock",
+ "ignore",
+ "image",
+ "keyring",
+ "otto-canvas",
+ "otto-host",
+ "otto-mcp",
+ "otto-plugin",
+ "otto-plugin-wasm",
+ "otto-protocol",
+ "provider-anthropic",
+ "provider-gemini",
+ "provider-local",
+ "provider-openai",
+ "ratatui 0.30.0",
+ "ratatui-explorer",
+ "ratatui-image",
+ "ratatui-themes",
+ "reqwest 0.13.3",
+ "rmcp",
+ "rust-i18n",
+ "self_update",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "serial_test",
+ "sha2",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "toml_edit 0.25.11+spec-1.1.0",
+ "tool-bash",
+ "tool-fs",
+ "tool-grep",
+ "tool-lsp",
+ "tool-web",
+ "tracing",
+ "tracing-subscriber",
+ "tui-markdown",
+ "tui-spinner",
+ "tui-textarea-2",
+ "which",
+ "zip 5.1.1",
+]
+
+[[package]]
+name = "otto-canvas"
+version = "0.23.1"
+dependencies = [
+ "anyrender",
+ "anyrender_vello_cpu",
+ "async-trait",
+ "blitz-dom",
+ "blitz-html",
+ "blitz-paint",
+ "blitz-traits",
+ "otto-plugin",
+ "peniko",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "otto-fence"
+version = "0.23.1"
+
+[[package]]
+name = "otto-host"
+version = "0.23.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "futures",
+ "mcp-connect-fixture",
+ "otto-mcp",
+ "otto-plugin",
+ "otto-protocol",
+ "provider-anthropic",
+ "provider-gemini",
+ "provider-openai",
+ "resource-tool",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "otto-mcp"
+version = "0.23.1"
+dependencies = [
+ "async-trait",
+ "otto-protocol",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "otto-plugin"
+version = "0.23.1"
+dependencies = [
+ "async-trait",
+ "otto-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "otto-plugin-wasm"
+version = "0.23.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "keyring",
+ "otto-mcp",
+ "otto-plugin",
+ "otto-plugin-wit",
+ "otto-protocol",
+ "proptest",
+ "reqwest 0.13.3",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tracing",
+ "url",
+ "walkdir",
+ "wasmtime",
+]
+
+[[package]]
+name = "otto-plugin-wit"
+version = "0.23.1"
+dependencies = [
+ "wit-parser 0.250.0",
+]
+
+[[package]]
+name = "otto-protocol"
+version = "0.23.1"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "outref"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5777,11 +5964,11 @@ dependencies = [
  "bytes",
  "dotenvy",
  "futures",
+ "otto-fence",
+ "otto-mcp",
+ "otto-protocol",
  "reqwest 0.13.3",
  "rmcp",
- "savvagent-fence",
- "savvagent-mcp",
- "savvagent-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -5800,11 +5987,11 @@ dependencies = [
  "bytes",
  "dotenvy",
  "futures",
+ "otto-fence",
+ "otto-mcp",
+ "otto-protocol",
  "reqwest 0.13.3",
  "rmcp",
- "savvagent-fence",
- "savvagent-mcp",
- "savvagent-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -5822,10 +6009,10 @@ dependencies = [
  "axum",
  "bytes",
  "futures",
+ "otto-fence",
+ "otto-mcp",
+ "otto-protocol",
  "reqwest 0.13.3",
- "savvagent-fence",
- "savvagent-mcp",
- "savvagent-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -5843,11 +6030,11 @@ dependencies = [
  "bytes",
  "dotenvy",
  "futures",
+ "otto-fence",
+ "otto-mcp",
+ "otto-protocol",
  "reqwest 0.13.3",
  "rmcp",
- "savvagent-fence",
- "savvagent-mcp",
- "savvagent-protocol",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -6947,193 +7134,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "savvagent"
-version = "0.23.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "crossterm",
- "dirs",
- "dotenvy",
- "eframe",
- "egui",
- "egui-file-dialog",
- "flate2",
- "futures",
- "globset",
- "hex",
- "httpmock",
- "ignore",
- "image",
- "keyring",
- "provider-anthropic",
- "provider-gemini",
- "provider-local",
- "provider-openai",
- "ratatui 0.30.0",
- "ratatui-explorer",
- "ratatui-image",
- "ratatui-themes",
- "reqwest 0.13.3",
- "rmcp",
- "rust-i18n",
- "savvagent-canvas",
- "savvagent-host",
- "savvagent-mcp",
- "savvagent-plugin",
- "savvagent-plugin-wasm",
- "savvagent-protocol",
- "self_update",
- "semver",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "serial_test",
- "sha2",
- "tar",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "toml_edit 0.25.11+spec-1.1.0",
- "tool-bash",
- "tool-fs",
- "tool-grep",
- "tool-lsp",
- "tool-web",
- "tracing",
- "tracing-subscriber",
- "tui-markdown",
- "tui-spinner",
- "tui-textarea-2",
- "which",
- "zip 5.1.1",
-]
-
-[[package]]
-name = "savvagent-canvas"
-version = "0.23.1"
-dependencies = [
- "anyrender",
- "anyrender_vello_cpu",
- "async-trait",
- "blitz-dom",
- "blitz-html",
- "blitz-paint",
- "blitz-traits",
- "peniko",
- "savvagent-plugin",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "savvagent-fence"
-version = "0.23.1"
-
-[[package]]
-name = "savvagent-host"
-version = "0.23.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "futures",
- "mcp-connect-fixture",
- "provider-anthropic",
- "provider-gemini",
- "provider-openai",
- "resource-tool",
- "rmcp",
- "savvagent-mcp",
- "savvagent-plugin",
- "savvagent-protocol",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "savvagent-mcp"
-version = "0.23.1"
-dependencies = [
- "async-trait",
- "savvagent-protocol",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "savvagent-plugin"
-version = "0.23.1"
-dependencies = [
- "async-trait",
- "savvagent-protocol",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "savvagent-plugin-wasm"
-version = "0.23.1"
-dependencies = [
- "anyhow",
- "async-trait",
- "keyring",
- "proptest",
- "reqwest 0.13.3",
- "savvagent-mcp",
- "savvagent-plugin",
- "savvagent-plugin-wit",
- "savvagent-protocol",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "toml",
- "tracing",
- "url",
- "walkdir",
- "wasmtime",
-]
-
-[[package]]
-name = "savvagent-plugin-wit"
-version = "0.23.1"
-dependencies = [
- "wit-parser 0.250.0",
-]
-
-[[package]]
-name = "savvagent-protocol"
-version = "0.23.1"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "uuid",
 ]
 
 [[package]]

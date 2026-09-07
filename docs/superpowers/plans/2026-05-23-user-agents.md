@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Claude-Code-compatible user-defined agents to savvagent — markdown files under `.savvagent/agents/` and `.claude/agents/` get discovered into an in-memory index; the parent model gets a `task` tool whose `subagent_type` enum is populated from that index; each `task` call constructs a Sub-Host that runs its own turn loop with a filtered tool set, returning the final assistant text back to the parent.
+**Goal:** Add Claude-Code-compatible user-defined agents to otto — markdown files under `.otto/agents/` and `.claude/agents/` get discovered into an in-memory index; the parent model gets a `task` tool whose `subagent_type` enum is populated from that index; each `task` call constructs a Sub-Host that runs its own turn loop with a filtered tool set, returning the final assistant text back to the parent.
 
 **Architecture:** New built-in plugin `internal:user-agents` discovers agent definition files via the same four-path scheme as sub-projects A and B. A new in-process tool registration path on `ToolRegistry` (Effect: `RegisterInProcessTool`) lets the plugin contribute a `task` handler that, when invoked, builds a `SubHost` — a value owning its own session state but sharing the parent's `ProviderClient`, `ToolRegistry`, `PreToolUseGate`, permissions, and sandbox via `Arc`. Tool scoping is enforced two ways: at the provider boundary (filtered `ToolDef` list) and at runtime (`ScopedToolRegistry` wrapper). Sub-project B's hooks gain an optional `subagent` field in their stdin payload, and the previously-reserved `SubagentStop` event lights up here. Transcript schema bumps 1 → 2 to embed nested subagent transcripts under the parent's `task` tool-call entry.
 
 **Tech Stack:** Rust (edition 2024), Tokio, `serde_yaml_ng`, `ignore`, `tokio-util` (CancellationToken), `async_trait`, `rmcp` (transitively). No new external crates.
 
-**Dependency:** This plan assumes sub-project B (user-defined hooks) has merged. B contributes `PreToolUseGate` (re-exported from `savvagent-host`), the `internal:user-hooks` plugin, `Effect::RegisterPreToolGate`, and the `HookContext` payload builder. If B is not yet on master at execution time, rebase this branch onto B's branch before starting.
+**Dependency:** This plan assumes sub-project B (user-defined hooks) has merged. B contributes `PreToolUseGate` (re-exported from `otto-host`), the `internal:user-hooks` plugin, `Effect::RegisterPreToolGate`, and the `HookContext` payload builder. If B is not yet on master at execution time, rebase this branch onto B's branch before starting.
 
 **Spec:** `docs/superpowers/specs/2026-05-23-user-agents-design.md`. Defer to the spec for any clarification the plan doesn't cover.
 
@@ -20,32 +20,32 @@
 
 | Path | Responsibility |
 |---|---|
-| `crates/savvagent-host/src/subhost.rs` | `SubHost` struct, `SubagentContext`, depth handling, cancellation child-token wiring, subagent turn loop entry point |
-| `crates/savvagent-host/src/scoped_registry.rs` | `ScopedToolRegistry` wrapper that filters tool calls against an allowlist |
-| `crates/savvagent/src/plugin/builtin/user_agents/mod.rs` | Plugin manifest, `Plugin` impl, `/reload-agents` wiring, `Effect::RegisterInProcessTool` emission |
-| `crates/savvagent/src/plugin/builtin/user_agents/spec.rs` | `AgentSpec` type — the parsed, in-memory representation of one agent file |
-| `crates/savvagent/src/plugin/builtin/user_agents/frontmatter.rs` | YAML frontmatter parser: `name`, `description`, `tools` (string or list), `model` |
-| `crates/savvagent/src/plugin/builtin/user_agents/body.rs` | `@<path>` include expansion at load time |
-| `crates/savvagent/src/plugin/builtin/user_agents/discovery.rs` | Four-path walk, slug extraction, precedence dedup |
-| `crates/savvagent/src/plugin/builtin/user_agents/task_tool.rs` | `TaskToolHandler` — `InProcessToolHandler` impl that resolves `subagent_type`, builds a `SubHost`, drives it, returns the final text |
-| `crates/savvagent/src/plugin/builtin/user_agents/index.rs` | `AgentIndex` — `Arc<RwLock<HashMap<String, Arc<AgentSpec>>>>` shared between the plugin and the task handler |
+| `crates/otto-host/src/subhost.rs` | `SubHost` struct, `SubagentContext`, depth handling, cancellation child-token wiring, subagent turn loop entry point |
+| `crates/otto-host/src/scoped_registry.rs` | `ScopedToolRegistry` wrapper that filters tool calls against an allowlist |
+| `crates/otto/src/plugin/builtin/user_agents/mod.rs` | Plugin manifest, `Plugin` impl, `/reload-agents` wiring, `Effect::RegisterInProcessTool` emission |
+| `crates/otto/src/plugin/builtin/user_agents/spec.rs` | `AgentSpec` type — the parsed, in-memory representation of one agent file |
+| `crates/otto/src/plugin/builtin/user_agents/frontmatter.rs` | YAML frontmatter parser: `name`, `description`, `tools` (string or list), `model` |
+| `crates/otto/src/plugin/builtin/user_agents/body.rs` | `@<path>` include expansion at load time |
+| `crates/otto/src/plugin/builtin/user_agents/discovery.rs` | Four-path walk, slug extraction, precedence dedup |
+| `crates/otto/src/plugin/builtin/user_agents/task_tool.rs` | `TaskToolHandler` — `InProcessToolHandler` impl that resolves `subagent_type`, builds a `SubHost`, drives it, returns the final text |
+| `crates/otto/src/plugin/builtin/user_agents/index.rs` | `AgentIndex` — `Arc<RwLock<HashMap<String, Arc<AgentSpec>>>>` shared between the plugin and the task handler |
 
 **Modified files:**
 
 | Path | Change |
 |---|---|
-| `crates/savvagent-plugin/src/event.rs` | Add `HookKind::SubagentStop` variant and `HostEvent::SubagentStop { agent_name, success }` variant |
-| `crates/savvagent-plugin/src/effect.rs` | Add `Effect::RegisterInProcessTool { spec, handler }` variant |
-| `crates/savvagent-host/src/tools.rs` | Add `InProcessToolHandler` trait, `ToolCallContext`, `SubagentContext` types; add in-process handler `HashMap` to `ToolRegistry`; update `call_with_bash_net_override` to check the in-process map first; add `register_in_process_tool` method |
-| `crates/savvagent-host/src/lib.rs` | Re-export new types (`SubHost`, `InProcessToolHandler`, `ToolCallContext`, `SubagentContext`, `ScopedToolRegistry`) |
-| `crates/savvagent-host/src/session.rs` | Bump `TRANSCRIPT_SCHEMA_VERSION` from 1 to 2; add nested `subagent_transcript` to tool-call serialization; version-tolerant deserializer that loads v1 with warn-log |
-| `crates/savvagent/src/plugin/builtin/mod.rs` | Register `user_agents` plugin alongside the others |
-| `crates/savvagent/src/plugin/builtin/user_hooks/payload.rs` | Accept optional `subagent: Option<&str>` in `pre_tool_use`, `post_tool_use`; add `subagent_stop` builder |
-| `crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs` | Add `HookEvent::SubagentStop` variant |
-| `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs` | Subscribe to `HookKind::SubagentStop`; route to existing dispatch with `subagent_stop` payload |
-| `crates/savvagent/src/app.rs` | Handle `Effect::RegisterInProcessTool` by calling `Host::register_in_process_tool` |
-| `crates/savvagent/src/tui.rs` (or split into a new widget module) | Render `task` tool-call entries as collapsible blocks; receive `SubagentStreamEvent` updates routed by `subagent_block_id` |
-| `README.md` | New "User-defined agents" section under TUI features; `.savvagent/agents/` in on-disk paths; `task` tool in tool list |
+| `crates/otto-plugin/src/event.rs` | Add `HookKind::SubagentStop` variant and `HostEvent::SubagentStop { agent_name, success }` variant |
+| `crates/otto-plugin/src/effect.rs` | Add `Effect::RegisterInProcessTool { spec, handler }` variant |
+| `crates/otto-host/src/tools.rs` | Add `InProcessToolHandler` trait, `ToolCallContext`, `SubagentContext` types; add in-process handler `HashMap` to `ToolRegistry`; update `call_with_bash_net_override` to check the in-process map first; add `register_in_process_tool` method |
+| `crates/otto-host/src/lib.rs` | Re-export new types (`SubHost`, `InProcessToolHandler`, `ToolCallContext`, `SubagentContext`, `ScopedToolRegistry`) |
+| `crates/otto-host/src/session.rs` | Bump `TRANSCRIPT_SCHEMA_VERSION` from 1 to 2; add nested `subagent_transcript` to tool-call serialization; version-tolerant deserializer that loads v1 with warn-log |
+| `crates/otto/src/plugin/builtin/mod.rs` | Register `user_agents` plugin alongside the others |
+| `crates/otto/src/plugin/builtin/user_hooks/payload.rs` | Accept optional `subagent: Option<&str>` in `pre_tool_use`, `post_tool_use`; add `subagent_stop` builder |
+| `crates/otto/src/plugin/builtin/user_hooks/discovery.rs` | Add `HookEvent::SubagentStop` variant |
+| `crates/otto/src/plugin/builtin/user_hooks/mod.rs` | Subscribe to `HookKind::SubagentStop`; route to existing dispatch with `subagent_stop` payload |
+| `crates/otto/src/app.rs` | Handle `Effect::RegisterInProcessTool` by calling `Host::register_in_process_tool` |
+| `crates/otto/src/tui.rs` (or split into a new widget module) | Render `task` tool-call entries as collapsible blocks; receive `SubagentStreamEvent` updates routed by `subagent_block_id` |
+| `README.md` | New "User-defined agents" section under TUI features; `.otto/agents/` in on-disk paths; `task` tool in tool list |
 | `PRD.md` | Add agent surface bullet to §3 Goals; add v1 non-goals paragraph to §4 |
 | `CHANGELOG.md` (top of `[Unreleased]` or new version section) | Entry describing the feature |
 | `Cargo.toml` (workspace root) | Bump `[workspace.package].version` to the next minor (provisionally `0.17.0`); mirror into `[workspace.dependencies]` literals |
@@ -57,11 +57,11 @@
 ### Task 1: Add `HookKind::SubagentStop` and `HostEvent::SubagentStop`
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/event.rs`
+- Modify: `crates/otto-plugin/src/event.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Open `crates/savvagent-plugin/src/event.rs` and append to the `#[cfg(test)] mod tests` block at the bottom of the file:
+Open `crates/otto-plugin/src/event.rs` and append to the `#[cfg(test)] mod tests` block at the bottom of the file:
 
 ```rust
 #[test]
@@ -76,7 +76,7 @@ fn subagent_stop_kind_round_trip() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-plugin subagent_stop_kind_round_trip`
+Run: `cargo test -p otto-plugin subagent_stop_kind_round_trip`
 Expected: FAIL with `no variant or associated item named SubagentStop`.
 
 - [ ] **Step 3: Add the `HookKind` variant**
@@ -116,18 +116,18 @@ In `impl HostEvent`'s `kind()` match, add:
 
 - [ ] **Step 6: Run test to verify it passes**
 
-Run: `cargo test -p savvagent-plugin subagent_stop_kind_round_trip`
+Run: `cargo test -p otto-plugin subagent_stop_kind_round_trip`
 Expected: PASS.
 
 - [ ] **Step 7: Run the full crate tests**
 
-Run: `cargo test -p savvagent-plugin`
+Run: `cargo test -p otto-plugin`
 Expected: All pre-existing tests still PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/event.rs
+git add crates/otto-plugin/src/event.rs
 git commit -m "feat(plugin): HookKind::SubagentStop + HostEvent::SubagentStop"
 ```
 
@@ -136,16 +136,16 @@ git commit -m "feat(plugin): HookKind::SubagentStop + HostEvent::SubagentStop"
 ### Task 2: Add `Effect::RegisterInProcessTool` variant
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/effect.rs`
-- Modify: `crates/savvagent-plugin/src/lib.rs` (re-exports, if applicable — verify)
+- Modify: `crates/otto-plugin/src/effect.rs`
+- Modify: `crates/otto-plugin/src/lib.rs` (re-exports, if applicable — verify)
 
-The handler in this Effect is a `dyn` trait object held by `Arc`. It must be the **same** trait `savvagent-host::InProcessToolHandler` defines (Task 4 introduces that). To avoid a `savvagent-plugin → savvagent-host` cycle, the trait lives in `savvagent-host` and is referenced from `savvagent-plugin` through a small marker re-export pattern: the Effect carries an `Arc<dyn InProcessToolHandler>` where the trait is **defined here** (`savvagent-plugin`) but its host-facing concrete handler implementation lives in the user_agents plugin module.
+The handler in this Effect is a `dyn` trait object held by `Arc`. It must be the **same** trait `otto-host::InProcessToolHandler` defines (Task 4 introduces that). To avoid a `otto-plugin → otto-host` cycle, the trait lives in `otto-host` and is referenced from `otto-plugin` through a small marker re-export pattern: the Effect carries an `Arc<dyn InProcessToolHandler>` where the trait is **defined here** (`otto-plugin`) but its host-facing concrete handler implementation lives in the user_agents plugin module.
 
-Decision: define `InProcessToolHandler` in `savvagent-plugin` (it's just a trait — no host imports needed because it consumes only `serde_json::Value` + `Arc<dyn Any>` for context). The host crate provides a concrete `ToolCallContext` value that the handler downcasts via `Any` — see Task 4.
+Decision: define `InProcessToolHandler` in `otto-plugin` (it's just a trait — no host imports needed because it consumes only `serde_json::Value` + `Arc<dyn Any>` for context). The host crate provides a concrete `ToolCallContext` value that the handler downcasts via `Any` — see Task 4.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/savvagent-plugin/src/effect.rs`'s `#[cfg(test)] mod tests` block (or create one if it doesn't exist):
+Append to `crates/otto-plugin/src/effect.rs`'s `#[cfg(test)] mod tests` block (or create one if it doesn't exist):
 
 ```rust
 #[cfg(test)]
@@ -191,22 +191,22 @@ mod tests_in_process_tool {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-plugin register_in_process_tool_holds_handler`
+Run: `cargo test -p otto-plugin register_in_process_tool_holds_handler`
 Expected: FAIL — `InProcessToolHandler` not found.
 
-- [ ] **Step 3: Define `InProcessToolHandler` trait in `savvagent-plugin`**
+- [ ] **Step 3: Define `InProcessToolHandler` trait in `otto-plugin`**
 
-Create a new module file `crates/savvagent-plugin/src/in_process_tool.rs`:
+Create a new module file `crates/otto-plugin/src/in_process_tool.rs`:
 
 ```rust
-//! `InProcessToolHandler` — savvagent-internal trait for tools whose
+//! `InProcessToolHandler` — otto-internal trait for tools whose
 //! implementation runs on the calling tokio runtime (no stdio child).
 //!
 //! Used by built-in plugins that need direct access to host state
 //! (e.g. the `task` tool needs to construct a SubHost from the
 //! parent's `Host`). The concrete context type is opaque here so this
-//! crate does not depend on `savvagent-host`; handlers downcast the
-//! `Arc<dyn Any>` to `savvagent_host::ToolCallContext`.
+//! crate does not depend on `otto-host`; handlers downcast the
+//! `Arc<dyn Any>` to `otto_host::ToolCallContext`.
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -228,7 +228,7 @@ pub trait InProcessToolHandler: Send + Sync + 'static {
 
 - [ ] **Step 4: Re-export from `lib.rs`**
 
-In `crates/savvagent-plugin/src/lib.rs`, add:
+In `crates/otto-plugin/src/lib.rs`, add:
 
 ```rust
 mod in_process_tool;
@@ -237,7 +237,7 @@ pub use in_process_tool::InProcessToolHandler;
 
 - [ ] **Step 5: Add the `Effect` variant**
 
-In `crates/savvagent-plugin/src/effect.rs`, add to the `Effect` enum (next to `RegisterProvider` and `RegisterPreToolGate`):
+In `crates/otto-plugin/src/effect.rs`, add to the `Effect` enum (next to `RegisterProvider` and `RegisterPreToolGate`):
 
 ```rust
     /// Register an in-process tool whose handler runs on the calling
@@ -252,7 +252,7 @@ In `crates/savvagent-plugin/src/effect.rs`, add to the `Effect` enum (next to `R
     },
 ```
 
-`ToolDef` is already in scope from existing variants — verify the existing `use` block at the top of the file. If not present, add `use savvagent_protocol::ToolDef;`.
+`ToolDef` is already in scope from existing variants — verify the existing `use` block at the top of the file. If not present, add `use otto_protocol::ToolDef;`.
 
 - [ ] **Step 6: Update `Debug` impl for `Effect` (if hand-rolled)**
 
@@ -272,34 +272,34 @@ Check whether `Effect` uses `#[derive(Debug)]`. If yes, replace with a manual im
 
 - [ ] **Step 7: Run test to verify it passes**
 
-Run: `cargo test -p savvagent-plugin register_in_process_tool_holds_handler`
+Run: `cargo test -p otto-plugin register_in_process_tool_holds_handler`
 Expected: PASS.
 
 - [ ] **Step 8: Run the full crate tests**
 
-Run: `cargo test -p savvagent-plugin`
+Run: `cargo test -p otto-plugin`
 Expected: All tests PASS.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/{effect.rs,lib.rs,in_process_tool.rs}
+git add crates/otto-plugin/src/{effect.rs,lib.rs,in_process_tool.rs}
 git commit -m "feat(plugin): InProcessToolHandler trait + Effect::RegisterInProcessTool"
 ```
 
 ---
 
-### Task 3: Add `SubagentContext` and `ToolCallContext` to `savvagent-host`
+### Task 3: Add `SubagentContext` and `ToolCallContext` to `otto-host`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/tools.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Modify: `crates/otto-host/src/tools.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 These are the concrete types host-side handlers downcast to from the opaque `Arc<dyn Any>` the plugin trait sees.
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/savvagent-host/src/tools.rs`, append to the `#[cfg(test)] mod tests` block (create one if absent):
+In `crates/otto-host/src/tools.rs`, append to the `#[cfg(test)] mod tests` block (create one if absent):
 
 ```rust
 #[test]
@@ -330,12 +330,12 @@ fn tool_call_context_default_has_no_subagent() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-host --lib subagent_context_carries_depth_and_name`
+Run: `cargo test -p otto-host --lib subagent_context_carries_depth_and_name`
 Expected: FAIL — type not found.
 
 - [ ] **Step 3: Define the types**
 
-Add to `crates/savvagent-host/src/tools.rs` (near the top, after existing public types):
+Add to `crates/otto-host/src/tools.rs` (near the top, after existing public types):
 
 ```rust
 use std::sync::Arc;
@@ -348,7 +348,7 @@ use tokio_util::sync::CancellationToken;
 pub struct SubagentContext {
     /// Nesting depth. Parent's first `task` call → depth 1; that
     /// subagent's `task` call → depth 2; and so on. Capped at
-    /// `SAVVAGENT_AGENT_MAX_DEPTH` (default 3).
+    /// `OTTO_AGENT_MAX_DEPTH` (default 3).
     pub depth: u8,
     /// The agent name (slug) currently executing.
     pub agent_name: String,
@@ -380,7 +380,7 @@ pub(crate) struct ToolCallContextBuilder {
 
 - [ ] **Step 4: Re-export from `lib.rs`**
 
-In `crates/savvagent-host/src/lib.rs`, extend the existing `pub use tools::...` line:
+In `crates/otto-host/src/lib.rs`, extend the existing `pub use tools::...` line:
 
 ```rust
 pub use tools::{BashNetContext, BashNetResolver, NetOverride, SubagentContext, ToolCallContext};
@@ -388,19 +388,19 @@ pub use tools::{BashNetContext, BashNetResolver, NetOverride, SubagentContext, T
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent-host --lib subagent_context_carries_depth_and_name`
-Run: `cargo test -p savvagent-host --lib tool_call_context_default_has_no_subagent`
+Run: `cargo test -p otto-host --lib subagent_context_carries_depth_and_name`
+Run: `cargo test -p otto-host --lib tool_call_context_default_has_no_subagent`
 Expected: Both PASS.
 
 - [ ] **Step 6: Run the full crate tests**
 
-Run: `cargo test -p savvagent-host`
+Run: `cargo test -p otto-host`
 Expected: All pre-existing tests still PASS.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent-host/src/{tools.rs,lib.rs}
+git add crates/otto-host/src/{tools.rs,lib.rs}
 git commit -m "feat(host): SubagentContext + ToolCallContext types"
 ```
 
@@ -409,7 +409,7 @@ git commit -m "feat(host): SubagentContext + ToolCallContext types"
 ### Task 4: Add in-process tool registration to `ToolRegistry`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/tools.rs`
+- Modify: `crates/otto-host/src/tools.rs`
 
 `ToolRegistry` currently routes calls to stdio MCP children via the `routes`/`eager_servers`/`lazy_bash` machinery. Add a parallel in-process map and route checks accordingly.
 
@@ -421,7 +421,7 @@ Append to the `#[cfg(test)] mod tests` block in `tools.rs`:
 #[tokio::test]
 async fn registry_routes_in_process_tool() {
     use async_trait::async_trait;
-    use savvagent_plugin::InProcessToolHandler;
+    use otto_plugin::InProcessToolHandler;
     use serde_json::{Value, json};
     use std::any::Any;
     use std::sync::Arc;
@@ -460,7 +460,7 @@ async fn registry_routes_in_process_tool() {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-host --lib registry_routes_in_process_tool`
+Run: `cargo test -p otto-host --lib registry_routes_in_process_tool`
 Expected: FAIL — methods don't exist.
 
 - [ ] **Step 3: Add the in-process handler map to `ToolRegistry`**
@@ -472,7 +472,7 @@ Find `pub struct ToolRegistry` in `tools.rs`. Add a new field:
     /// `Effect::RegisterInProcessTool`. Looked up before the stdio
     /// children map.
     in_process: tokio::sync::RwLock<
-        std::collections::HashMap<String, Arc<dyn savvagent_plugin::InProcessToolHandler>>,
+        std::collections::HashMap<String, Arc<dyn otto_plugin::InProcessToolHandler>>,
     >,
 ```
 
@@ -504,7 +504,7 @@ In `impl ToolRegistry`:
     pub async fn register_in_process_tool(
         self: &Arc<Self>,
         spec: ToolDef,
-        handler: Arc<dyn savvagent_plugin::InProcessToolHandler>,
+        handler: Arc<dyn otto_plugin::InProcessToolHandler>,
     ) {
         let mut guard = self.in_process.write().await;
         guard.insert(spec.name.clone(), handler);
@@ -582,16 +582,16 @@ Rationale: the existing stdio-path signature doesn't carry `ToolCallContext`, so
 
 - [ ] **Step 8: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent-host --lib registry_routes_in_process_tool`
+Run: `cargo test -p otto-host --lib registry_routes_in_process_tool`
 Expected: PASS.
 
-Run: `cargo test -p savvagent-host`
+Run: `cargo test -p otto-host`
 Expected: All tests PASS.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/savvagent-host/src/tools.rs
+git add crates/otto-host/src/tools.rs
 git commit -m "feat(host): in-process tool registration + dispatch in ToolRegistry"
 ```
 
@@ -600,14 +600,14 @@ git commit -m "feat(host): in-process tool registration + dispatch in ToolRegist
 ### Task 5: Add `ScopedToolRegistry` wrapper
 
 **Files:**
-- Create: `crates/savvagent-host/src/scoped_registry.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Create: `crates/otto-host/src/scoped_registry.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 The SubHost uses this to gate tool dispatch by name against the agent's allowlist.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-host/src/scoped_registry.rs`:
+Create `crates/otto-host/src/scoped_registry.rs`:
 
 ```rust
 //! `ScopedToolRegistry` — wraps `Arc<ToolRegistry>` and rejects calls
@@ -664,12 +664,12 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-host --lib scoped_registry`
+Run: `cargo test -p otto-host --lib scoped_registry`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Wire the module into the crate**
 
-Add to `crates/savvagent-host/src/lib.rs` (near other `mod ...;` declarations):
+Add to `crates/otto-host/src/lib.rs` (near other `mod ...;` declarations):
 
 ```rust
 mod scoped_registry;
@@ -678,13 +678,13 @@ pub use scoped_registry::ScopedToolRegistry;
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p savvagent-host --lib scoped_registry`
+Run: `cargo test -p otto-host --lib scoped_registry`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/{scoped_registry.rs,lib.rs}
+git add crates/otto-host/src/{scoped_registry.rs,lib.rs}
 git commit -m "feat(host): ScopedToolRegistry wrapper for per-subagent allowlists"
 ```
 
@@ -695,14 +695,14 @@ git commit -m "feat(host): ScopedToolRegistry wrapper for per-subagent allowlist
 ### Task 6: Define the `SubHost` struct skeleton
 
 **Files:**
-- Create: `crates/savvagent-host/src/subhost.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Create: `crates/otto-host/src/subhost.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 This task only introduces the type and a stub `run_subagent` that errors with "unimplemented" — Task 7 wires the real loop. Splitting keeps each task small.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-host/src/subhost.rs`:
+Create `crates/otto-host/src/subhost.rs`:
 
 ```rust
 //! `SubHost` — a subagent execution context. Owns its own session
@@ -715,7 +715,7 @@ Create `crates/savvagent-host/src/subhost.rs`:
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use savvagent_protocol::ToolDef;
+use otto_protocol::ToolDef;
 use tokio_util::sync::CancellationToken;
 
 use crate::scoped_registry::ScopedToolRegistry;
@@ -802,7 +802,7 @@ The `parent.tool_registry_arc()` method doesn't exist yet — we add it in step 
 
 - [ ] **Step 2: Wire module + re-exports**
 
-In `crates/savvagent-host/src/lib.rs`:
+In `crates/otto-host/src/lib.rs`:
 
 ```rust
 mod subhost;
@@ -811,7 +811,7 @@ pub use subhost::{SubHost, SubHostError};
 
 - [ ] **Step 3: Add `Host::tool_registry_arc()` accessor**
 
-In `crates/savvagent-host/src/session.rs`, on `impl Host`, add:
+In `crates/otto-host/src/session.rs`, on `impl Host`, add:
 
 ```rust
     /// Clone the underlying `Arc<ToolRegistry>` for sharing with a
@@ -825,18 +825,18 @@ In `crates/savvagent-host/src/session.rs`, on `impl Host`, add:
 
 - [ ] **Step 4: Build the crate**
 
-Run: `cargo build -p savvagent-host`
+Run: `cargo build -p otto-host`
 Expected: Compiles cleanly.
 
 - [ ] **Step 5: Run the smoke test**
 
-Run: `cargo test -p savvagent-host --lib subhost`
+Run: `cargo test -p otto-host --lib subhost`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/{subhost.rs,lib.rs,session.rs}
+git add crates/otto-host/src/{subhost.rs,lib.rs,session.rs}
 git commit -m "feat(host): SubHost skeleton + tool_registry_arc accessor"
 ```
 
@@ -845,7 +845,7 @@ git commit -m "feat(host): SubHost skeleton + tool_registry_arc accessor"
 ### Task 7: Implement `SubHost::run_subagent` (subagent turn loop)
 
 **Files:**
-- Modify: `crates/savvagent-host/src/subhost.rs`
+- Modify: `crates/otto-host/src/subhost.rs`
 
 The simplest version uses the parent's `ProviderClient` directly — same `CompleteRequest`/`CompleteResponse` types — and runs its own mini-loop instead of trying to reuse `Host::run_turn_inner` (which carries too much main-session state to be easily reparameterized).
 
@@ -856,11 +856,11 @@ Append to `subhost.rs`'s test module:
 ```rust
     use crate::ScopedToolRegistry;
     // The real test requires a stub provider — use the existing
-    // `MockProviderClient` from `crates/savvagent-host/src/test_support.rs`
+    // `MockProviderClient` from `crates/otto-host/src/test_support.rs`
     // (verify it exists; if not, this test will need a small stub).
 
     // NOTE: this is an integration test, not a unit test — it will
-    // live in `crates/savvagent-host/tests/subhost_loop.rs` once we
+    // live in `crates/otto-host/tests/subhost_loop.rs` once we
     // have the wiring. Keep the placeholder here so reviewers see
     // intent during this task; the real assertion lands in Task 8.
     #[tokio::test]
@@ -873,7 +873,7 @@ Append to `subhost.rs`'s test module:
     }
 ```
 
-(For the real assertion we need a host stub, which the project may or may not have. Read `crates/savvagent-host/src/` for any `test_support.rs` or in-tree stub provider. If absent, create one in step 4.)
+(For the real assertion we need a host stub, which the project may or may not have. Read `crates/otto-host/src/` for any `test_support.rs` or in-tree stub provider. If absent, create one in step 4.)
 
 - [ ] **Step 2: Add the loop body**
 
@@ -881,7 +881,7 @@ Replace the stub `run_subagent` body in `subhost.rs` with:
 
 ```rust
     pub async fn run_subagent(&self, prompt: String) -> Result<String, SubHostError> {
-        use savvagent_protocol::{CompleteRequest, ContentBlock, Message, MessageRole, StopReason};
+        use otto_protocol::{CompleteRequest, ContentBlock, Message, MessageRole, StopReason};
 
         let mut messages: Vec<Message> = vec![Message {
             role: MessageRole::User,
@@ -960,8 +960,8 @@ Replace the stub `run_subagent` body in `subhost.rs` with:
 Helper functions (in the same file, below `impl SubHost`):
 
 ```rust
-fn collect_assistant_text(content: &[savvagent_protocol::ContentBlock]) -> String {
-    use savvagent_protocol::ContentBlock;
+fn collect_assistant_text(content: &[otto_protocol::ContentBlock]) -> String {
+    use otto_protocol::ContentBlock;
     let mut out = String::new();
     for block in content {
         if let ContentBlock::Text { text } = block {
@@ -980,8 +980,8 @@ struct PendingToolCall {
     input: serde_json::Value,
 }
 
-fn extract_tool_calls(content: &[savvagent_protocol::ContentBlock]) -> Vec<PendingToolCall> {
-    use savvagent_protocol::ContentBlock;
+fn extract_tool_calls(content: &[otto_protocol::ContentBlock]) -> Vec<PendingToolCall> {
+    use otto_protocol::ContentBlock;
     content
         .iter()
         .filter_map(|b| match b {
@@ -999,8 +999,8 @@ impl SubHost {
     async fn dispatch_tool_call(
         &self,
         call: &PendingToolCall,
-    ) -> savvagent_protocol::ContentBlock {
-        use savvagent_protocol::ContentBlock;
+    ) -> otto_protocol::ContentBlock {
+        use otto_protocol::ContentBlock;
 
         // Allowlist check
         if !self.tools.allows(&call.name) {
@@ -1112,16 +1112,16 @@ Add each missing accessor as listed above. Keep them small, each a few lines. If
 
 - [ ] **Step 4: Build and run the existing tests**
 
-Run: `cargo build -p savvagent-host`
-Expected: Compiles. If `MessageRole`, `StopReason`, or `ContentBlock` variant names differ in this codebase, adapt — read `crates/savvagent-protocol/src/content.rs` and `crates/savvagent-protocol/src/lib.rs` to verify.
+Run: `cargo build -p otto-host`
+Expected: Compiles. If `MessageRole`, `StopReason`, or `ContentBlock` variant names differ in this codebase, adapt — read `crates/otto-protocol/src/content.rs` and `crates/otto-protocol/src/lib.rs` to verify.
 
-Run: `cargo test -p savvagent-host`
+Run: `cargo test -p otto-host`
 Expected: All pre-existing tests still PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/{subhost.rs,session.rs,tools.rs}
+git add crates/otto-host/src/{subhost.rs,session.rs,tools.rs}
 git commit -m "feat(host): SubHost::run_subagent — minimal turn loop"
 ```
 
@@ -1130,13 +1130,13 @@ git commit -m "feat(host): SubHost::run_subagent — minimal turn loop"
 ### Task 8: Integration test — SubHost runs to end_turn against a stub provider
 
 **Files:**
-- Create: `crates/savvagent-host/tests/subhost_basic.rs`
+- Create: `crates/otto-host/tests/subhost_basic.rs`
 
 End-to-end check that the loop wires correctly. Uses a stub `ProviderClient` that emits `end_turn` immediately with a fixed text block, and asserts the returned String.
 
 - [ ] **Step 1: Write the integration test**
 
-Create `crates/savvagent-host/tests/subhost_basic.rs`:
+Create `crates/otto-host/tests/subhost_basic.rs`:
 
 ```rust
 //! End-to-end smoke for SubHost.
@@ -1145,9 +1145,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use savvagent_host::{Host, HostConfig, SubHost, SubagentContext};
-use savvagent_mcp::ProviderClient;
-use savvagent_protocol::{
+use otto_host::{Host, HostConfig, SubHost, SubagentContext};
+use otto_mcp::ProviderClient;
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ContentBlock, ListModelsResponse, ModelInfo,
     ProviderError, StopReason,
 };
@@ -1194,7 +1194,7 @@ async fn subhost_returns_text_on_end_turn() {
         config,
         provider,
         // tool registry — empty
-        savvagent_host::tools::ToolRegistry::empty_for_test(),
+        otto_host::tools::ToolRegistry::empty_for_test(),
     )
     .await
     .expect("host construction");
@@ -1221,17 +1221,17 @@ async fn subhost_returns_text_on_end_turn() {
 }
 ```
 
-The exact `Host::with_components` signature must match what's on master after sub-project B. If the existing test crate (`crates/savvagent-host/tests/...`) already has a host construction helper, prefer that.
+The exact `Host::with_components` signature must match what's on master after sub-project B. If the existing test crate (`crates/otto-host/tests/...`) already has a host construction helper, prefer that.
 
 - [ ] **Step 2: Run test to verify it passes**
 
-Run: `cargo test -p savvagent-host --test subhost_basic`
+Run: `cargo test -p otto-host --test subhost_basic`
 Expected: PASS. If the construction helper signature differs, fix the test to match — do not modify the production `Host` signature for a test.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/subhost_basic.rs
+git add crates/otto-host/tests/subhost_basic.rs
 git commit -m "test(host): integration smoke for SubHost end_turn path"
 ```
 
@@ -1240,7 +1240,7 @@ git commit -m "test(host): integration smoke for SubHost end_turn path"
 ### Task 9: Add depth cap with env-configurable max
 
 **Files:**
-- Modify: `crates/savvagent-host/src/subhost.rs`
+- Modify: `crates/otto-host/src/subhost.rs`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1256,16 +1256,16 @@ Append to the test module in `subhost.rs`:
 
     #[test]
     fn depth_limit_env_override_parses() {
-        std::env::set_var("SAVVAGENT_AGENT_MAX_DEPTH", "5");
+        std::env::set_var("OTTO_AGENT_MAX_DEPTH", "5");
         assert_eq!(crate::subhost::max_depth_from_env(), 5);
-        std::env::remove_var("SAVVAGENT_AGENT_MAX_DEPTH");
+        std::env::remove_var("OTTO_AGENT_MAX_DEPTH");
     }
 
     #[test]
     fn depth_limit_env_invalid_falls_back() {
-        std::env::set_var("SAVVAGENT_AGENT_MAX_DEPTH", "not-a-number");
+        std::env::set_var("OTTO_AGENT_MAX_DEPTH", "not-a-number");
         assert_eq!(crate::subhost::max_depth_from_env(), 3);
-        std::env::remove_var("SAVVAGENT_AGENT_MAX_DEPTH");
+        std::env::remove_var("OTTO_AGENT_MAX_DEPTH");
     }
 ```
 
@@ -1273,7 +1273,7 @@ Append to the test module in `subhost.rs`:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-host --lib depth_limit_env_default_is_three`
+Run: `cargo test -p otto-host --lib depth_limit_env_default_is_three`
 Expected: FAIL — `max_depth_from_env` not defined.
 
 - [ ] **Step 3: Add the function**
@@ -1284,7 +1284,7 @@ In `subhost.rs`, near the top:
 const DEFAULT_MAX_DEPTH: u8 = 3;
 
 pub fn max_depth_from_env() -> u8 {
-    std::env::var("SAVVAGENT_AGENT_MAX_DEPTH")
+    std::env::var("OTTO_AGENT_MAX_DEPTH")
         .ok()
         .and_then(|s| s.parse::<u8>().ok())
         .unwrap_or(DEFAULT_MAX_DEPTH)
@@ -1326,15 +1326,15 @@ Update Task 8's integration test to `.expect("construction")` on the new `Result
 
 - [ ] **Step 5: Run tests**
 
-Run: `cargo test -p savvagent-host --lib depth_limit`
-Run: `cargo test -p savvagent-host --test subhost_basic`
+Run: `cargo test -p otto-host --lib depth_limit`
+Run: `cargo test -p otto-host --test subhost_basic`
 Expected: All PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/subhost.rs crates/savvagent-host/tests/subhost_basic.rs
-git commit -m "feat(host): SubHost depth cap via SAVVAGENT_AGENT_MAX_DEPTH"
+git add crates/otto-host/src/subhost.rs crates/otto-host/tests/subhost_basic.rs
+git commit -m "feat(host): SubHost depth cap via OTTO_AGENT_MAX_DEPTH"
 ```
 
 ---
@@ -1342,21 +1342,21 @@ git commit -m "feat(host): SubHost depth cap via SAVVAGENT_AGENT_MAX_DEPTH"
 ### Task 10: Emit `HostEvent::SubagentStop` after subagent end_turn
 
 **Files:**
-- Modify: `crates/savvagent-host/src/subhost.rs`
+- Modify: `crates/otto-host/src/subhost.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-host/tests/subhost_stop_event.rs`:
+Create `crates/otto-host/tests/subhost_stop_event.rs`:
 
 ```rust
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use savvagent_host::{Host, SubHost, SubagentContext};
-use savvagent_mcp::ProviderClient;
-use savvagent_plugin::{HookKind, HostEvent};
-use savvagent_protocol::{CompleteRequest, CompleteResponse, ContentBlock, StopReason};
+use otto_host::{Host, SubHost, SubagentContext};
+use otto_mcp::ProviderClient;
+use otto_plugin::{HookKind, HostEvent};
+use otto_protocol::{CompleteRequest, CompleteResponse, ContentBlock, StopReason};
 use tokio_util::sync::CancellationToken;
 
 struct CapturingPlugin {
@@ -1365,7 +1365,7 @@ struct CapturingPlugin {
 
 // Implement Plugin and subscribe to SubagentStop. See the user_hooks
 // plugin tests for a working subscription example.
-// The exact Plugin trait shape lives in savvagent-plugin; mirror that
+// The exact Plugin trait shape lives in otto-plugin; mirror that
 // crate's test helpers.
 
 #[tokio::test]
@@ -1378,15 +1378,15 @@ async fn subagent_stop_event_fires_after_end_turn() {
     //    SubHost::run_subagent return.
     //
     // Implement using the same patterns sub-project B used in
-    // crates/savvagent/tests/user_hooks_*.
+    // crates/otto/tests/user_hooks_*.
 }
 ```
 
-Fill the test body with the same plugin-subscription patterns used by `user_hooks` integration tests (look under `crates/savvagent/tests/` for examples). If those tests aren't present, the simpler shape is to put the capture into the `Host`'s plugin runtime directly via `Effect::Stack` and a custom plugin registered through `HostConfig::with_plugin`.
+Fill the test body with the same plugin-subscription patterns used by `user_hooks` integration tests (look under `crates/otto/tests/` for examples). If those tests aren't present, the simpler shape is to put the capture into the `Host`'s plugin runtime directly via `Effect::Stack` and a custom plugin registered through `HostConfig::with_plugin`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent-host --test subhost_stop_event`
+Run: `cargo test -p otto-host --test subhost_stop_event`
 Expected: FAIL — `SubagentStop` not emitted.
 
 - [ ] **Step 3: Emit the event in `run_subagent`**
@@ -1408,13 +1408,13 @@ Do NOT emit `SubagentStop` from the cancellation branch — cancelled subagents 
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p savvagent-host --test subhost_stop_event`
+Run: `cargo test -p otto-host --test subhost_stop_event`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/subhost.rs crates/savvagent-host/tests/subhost_stop_event.rs
+git add crates/otto-host/src/subhost.rs crates/otto-host/tests/subhost_stop_event.rs
 git commit -m "feat(host): SubHost emits HostEvent::SubagentStop on clean end_turn"
 ```
 
@@ -1423,7 +1423,7 @@ git commit -m "feat(host): SubHost emits HostEvent::SubagentStop on clean end_tu
 ### Task 11: Extend user_hooks payload with optional `subagent` field
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/payload.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/payload.rs`
 
 The existing `pre_tool_use` and `post_tool_use` builders take `ctx`, `tool_name`, `tool_input`. Extend them to accept an optional agent name and append the field when present.
 
@@ -1478,7 +1478,7 @@ Append to `payload.rs`'s test module:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent --lib user_hooks::payload`
+Run: `cargo test -p otto --lib user_hooks::payload`
 Expected: FAIL — signatures don't match / `subagent_stop` not defined.
 
 - [ ] **Step 3: Update existing builders**
@@ -1507,7 +1507,7 @@ Update `post_tool_use` the same way: add `subagent: Option<&str>` as the last pa
 
 - [ ] **Step 4: Add `HookEvent::SubagentStop` variant**
 
-In `crates/savvagent/src/plugin/builtin/user_hooks/discovery.rs`, find `pub enum HookEvent` and add `SubagentStop`. In `event_name` in `payload.rs`, add the arm:
+In `crates/otto/src/plugin/builtin/user_hooks/discovery.rs`, find `pub enum HookEvent` and add `SubagentStop`. In `event_name` in `payload.rs`, add the arm:
 
 ```rust
         HookEvent::SubagentStop => "SubagentStop",
@@ -1532,19 +1532,19 @@ pub fn subagent_stop(
 
 - [ ] **Step 6: Update all call sites of `pre_tool_use` / `post_tool_use`**
 
-`grep -rn "pre_tool_use(\|post_tool_use(" crates/savvagent/src/plugin/builtin/user_hooks/`
+`grep -rn "pre_tool_use(\|post_tool_use(" crates/otto/src/plugin/builtin/user_hooks/`
 to find every caller and pass `None` (parent-turn calls). The SubHost path passes `Some(&self.ctx.agent_name)` — that wiring lands in Task 12.
 
 - [ ] **Step 7: Run tests**
 
-Run: `cargo test -p savvagent --lib user_hooks::payload`
-Run: `cargo test -p savvagent --lib user_hooks`
+Run: `cargo test -p otto --lib user_hooks::payload`
+Run: `cargo test -p otto --lib user_hooks`
 Expected: All PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/
+git add crates/otto/src/plugin/builtin/user_hooks/
 git commit -m "feat(plugin/user-hooks): optional subagent field + subagent_stop payload"
 ```
 
@@ -1553,7 +1553,7 @@ git commit -m "feat(plugin/user-hooks): optional subagent field + subagent_stop 
 ### Task 12: Wire subagent context through PreToolUse dispatch
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/pre_tool_gate.rs` (or wherever the `UserHooksPreToolGate::check` impl lives)
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/pre_tool_gate.rs` (or wherever the `UserHooksPreToolGate::check` impl lives)
 
 The `PreToolUseGate::check` signature is `(name, input) -> PreToolDecision`. It needs to know whether the call came from a subagent. Two options:
 
@@ -1571,11 +1571,11 @@ In `pre_tool_gate.rs` or a sibling test file, add a test that:
 
 The hook child process verifies stdin by writing the parsed payload to a tempfile. The test reads the tempfile back and asserts.
 
-(For brevity here, write the test using a `MockShellRunner` if the existing user_hooks code has one; otherwise use a real `/bin/sh -c "cat > /tmp/savvagent-test-N"` hook.)
+(For brevity here, write the test using a `MockShellRunner` if the existing user_hooks code has one; otherwise use a real `/bin/sh -c "cat > /tmp/otto-test-N"` hook.)
 
 - [ ] **Step 2: Define the task-local**
 
-In `crates/savvagent/src/plugin/builtin/user_hooks/payload.rs` or a sibling `context.rs`:
+In `crates/otto/src/plugin/builtin/user_hooks/payload.rs` or a sibling `context.rs`:
 
 ```rust
 tokio::task_local! {
@@ -1599,13 +1599,13 @@ In `UserHooksPreToolGate::check`, when building the payload:
 
 - [ ] **Step 4: Wrap subagent tool dispatch in the task-local scope**
 
-In `crates/savvagent-host/src/subhost.rs`, the `dispatch_tool_call` needs to set the task-local. But `subhost.rs` can't reach the user_hooks plugin's task-local directly (crate boundary).
+In `crates/otto-host/src/subhost.rs`, the `dispatch_tool_call` needs to set the task-local. But `subhost.rs` can't reach the user_hooks plugin's task-local directly (crate boundary).
 
 Resolution: define the task-local in a neutral place that both crates can reference. Two options:
-- (a) Define it in `savvagent-host` and have `user_hooks` read from it.
-- (b) Make the task-local a plain string carried via `tracing` span fields or `tokio::task_local!` in `savvagent-host`, then re-export.
+- (a) Define it in `otto-host` and have `user_hooks` read from it.
+- (b) Make the task-local a plain string carried via `tracing` span fields or `tokio::task_local!` in `otto-host`, then re-export.
 
-Pick (a): define the task-local in `savvagent-host/src/subhost.rs`:
+Pick (a): define the task-local in `otto-host/src/subhost.rs`:
 
 ```rust
 tokio::task_local! {
@@ -1631,24 +1631,24 @@ Wrap dispatch in the scope. Replace the gate call in `dispatch_tool_call`:
 In `user_hooks/pre_tool_gate.rs`:
 
 ```rust
-        let subagent = savvagent_host::subhost::SUBAGENT_NAME
+        let subagent = otto_host::subhost::SUBAGENT_NAME
             .try_with(|v| v.clone())
             .ok()
             .flatten();
 ```
 
-This requires `pub mod subhost` in `savvagent-host/src/lib.rs` (already public). Promote `SUBAGENT_NAME` to `pub`.
+This requires `pub mod subhost` in `otto-host/src/lib.rs` (already public). Promote `SUBAGENT_NAME` to `pub`.
 
 - [ ] **Step 5: Run tests**
 
-Run: `cargo test -p savvagent user_hooks`
-Run: `cargo test -p savvagent-host subhost`
+Run: `cargo test -p otto user_hooks`
+Run: `cargo test -p otto-host subhost`
 Expected: All PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/subhost.rs crates/savvagent/src/plugin/builtin/user_hooks/
+git add crates/otto-host/src/subhost.rs crates/otto/src/plugin/builtin/user_hooks/
 git commit -m "feat: thread subagent name through PreToolUse via tokio task-local"
 ```
 
@@ -1657,13 +1657,13 @@ git commit -m "feat: thread subagent name through PreToolUse via tokio task-loca
 ### Task 13: Wire SubagentStop event into user_hooks dispatch
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_hooks/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_hooks/mod.rs`
 
 The existing plugin already subscribes to `HookKind` events. Add `SubagentStop` to its subscription list and the dispatch logic that maps it to `subagent_stop` payload + the user's `SubagentStop` hook list.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent/tests/user_hooks_subagent_stop.rs`:
+Create `crates/otto/tests/user_hooks_subagent_stop.rs`:
 
 ```rust
 //! End-to-end: a user SubagentStop hook fires when a SubHost reaches
@@ -1676,11 +1676,11 @@ Create `crates/savvagent/tests/user_hooks_subagent_stop.rs`:
 // user_hooks_*.rs tests in this directory.
 ```
 
-Implement the test body using the project's existing user_hooks fixture machinery (look at `crates/savvagent/tests/user_hooks_*.rs` for templates).
+Implement the test body using the project's existing user_hooks fixture machinery (look at `crates/otto/tests/user_hooks_*.rs` for templates).
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent --test user_hooks_subagent_stop`
+Run: `cargo test -p otto --test user_hooks_subagent_stop`
 Expected: FAIL.
 
 - [ ] **Step 3: Subscribe to SubagentStop in the plugin manifest**
@@ -1702,14 +1702,14 @@ The `stop_hook_active` field is the same flag B uses for `Stop` — set true whe
 
 - [ ] **Step 5: Run tests**
 
-Run: `cargo test -p savvagent --test user_hooks_subagent_stop`
-Run: `cargo test -p savvagent`
+Run: `cargo test -p otto --test user_hooks_subagent_stop`
+Run: `cargo test -p otto`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_hooks/mod.rs crates/savvagent/tests/user_hooks_subagent_stop.rs
+git add crates/otto/src/plugin/builtin/user_hooks/mod.rs crates/otto/tests/user_hooks_subagent_stop.rs
 git commit -m "feat(plugin/user-hooks): dispatch SubagentStop event with stop_hook_active loop guard"
 ```
 
@@ -1720,7 +1720,7 @@ git commit -m "feat(plugin/user-hooks): dispatch SubagentStop event with stop_ho
 ### Task 14: Bump `TRANSCRIPT_SCHEMA_VERSION` and add nested subagent_transcript field
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1752,7 +1752,7 @@ async fn transcript_v1_loads_with_warn_log() {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent-host --lib transcript_schema_version_is_two`
+Run: `cargo test -p otto-host --lib transcript_schema_version_is_two`
 Expected: FAIL — version is 1.
 
 - [ ] **Step 3: Bump the constant**
@@ -1821,13 +1821,13 @@ Add `#[serde(default)]` on every new `TranscriptFile` field. v1 docs round-trip 
 
 - [ ] **Step 7: Run tests**
 
-Run: `cargo test -p savvagent-host transcript`
+Run: `cargo test -p otto-host transcript`
 Expected: All three new tests PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "feat(host): transcript v2 with nested subagent transcripts, v1-tolerant loader"
 ```
 
@@ -1838,12 +1838,12 @@ git commit -m "feat(host): transcript v2 with nested subagent transcripts, v1-to
 ### Task 15: Plugin scaffold — manifest, Plugin impl, registration
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_agents/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`
+- Create: `crates/otto/src/plugin/builtin/user_agents/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/savvagent/src/plugin/builtin/user_agents/mod.rs`, add at the bottom:
+In `crates/otto/src/plugin/builtin/user_agents/mod.rs`, add at the bottom:
 
 ```rust
 #[cfg(test)]
@@ -1860,12 +1860,12 @@ mod tests {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent --lib user_agents`
+Run: `cargo test -p otto --lib user_agents`
 Expected: FAIL — module not found.
 
 - [ ] **Step 3: Write the scaffold**
 
-Create `crates/savvagent/src/plugin/builtin/user_agents/mod.rs`:
+Create `crates/otto/src/plugin/builtin/user_agents/mod.rs`:
 
 ```rust
 //! `internal:user-agents` — discovers user-defined agent definition
@@ -1883,7 +1883,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Contributions, Effect, HookKind, Manifest, Plugin, PluginError, PluginId, PluginKind,
     SlashSpec,
 };
@@ -1927,9 +1927,9 @@ impl Plugin for UserAgentsPlugin {
 
     async fn on_event(
         &mut self,
-        event: savvagent_plugin::HostEvent,
+        event: otto_plugin::HostEvent,
     ) -> Result<Vec<Effect>, PluginError> {
-        use savvagent_plugin::HostEvent::*;
+        use otto_plugin::HostEvent::*;
 
         match event {
             HostStarting => {
@@ -1962,7 +1962,7 @@ impl UserAgentsPlugin {
             return vec![];
         }
         let spec = task_tool::build_tool_def(&self.index);
-        let handler: Arc<dyn savvagent_plugin::InProcessToolHandler> =
+        let handler: Arc<dyn otto_plugin::InProcessToolHandler> =
             Arc::new(task_tool::TaskToolHandler::new(self.index.clone()));
         vec![Effect::RegisterInProcessTool { spec, handler }]
     }
@@ -1971,12 +1971,12 @@ impl UserAgentsPlugin {
 
 Stub the sub-modules so the file compiles. We'll fill them in subsequent tasks. Create empty files:
 
-`crates/savvagent/src/plugin/builtin/user_agents/body.rs`:
+`crates/otto/src/plugin/builtin/user_agents/body.rs`:
 ```rust
 //! `@<path>` include expansion. Implemented in Task 17.
 ```
 
-`crates/savvagent/src/plugin/builtin/user_agents/discovery.rs`:
+`crates/otto/src/plugin/builtin/user_agents/discovery.rs`:
 ```rust
 //! Four-path agent discovery. Implemented in Task 18.
 
@@ -1988,12 +1988,12 @@ pub fn discover(_project: &Path, _user_home: &Path) -> Vec<AgentSpec> {
 }
 ```
 
-`crates/savvagent/src/plugin/builtin/user_agents/frontmatter.rs`:
+`crates/otto/src/plugin/builtin/user_agents/frontmatter.rs`:
 ```rust
 //! YAML frontmatter parser. Implemented in Task 16.
 ```
 
-`crates/savvagent/src/plugin/builtin/user_agents/index.rs`:
+`crates/otto/src/plugin/builtin/user_agents/index.rs`:
 ```rust
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -2039,7 +2039,7 @@ impl AgentIndex {
 }
 ```
 
-`crates/savvagent/src/plugin/builtin/user_agents/spec.rs`:
+`crates/otto/src/plugin/builtin/user_agents/spec.rs`:
 ```rust
 use std::collections::HashSet;
 
@@ -2064,14 +2064,14 @@ pub enum ToolsScope {
 }
 ```
 
-`crates/savvagent/src/plugin/builtin/user_agents/task_tool.rs`:
+`crates/otto/src/plugin/builtin/user_agents/task_tool.rs`:
 ```rust
 //! `task` in-process tool handler. Implemented in Task 21.
 
 use std::sync::Arc;
 use async_trait::async_trait;
-use savvagent_plugin::InProcessToolHandler;
-use savvagent_protocol::ToolDef;
+use otto_plugin::InProcessToolHandler;
+use otto_protocol::ToolDef;
 use serde_json::Value;
 
 use crate::plugin::builtin::user_agents::index::AgentIndex;
@@ -2117,7 +2117,7 @@ pub fn build_tool_def(index: &AgentIndex) -> ToolDef {
 
 - [ ] **Step 4: Register the plugin in builtin/mod.rs**
 
-In `crates/savvagent/src/plugin/builtin/mod.rs`, find the existing list where plugins are added and append:
+In `crates/otto/src/plugin/builtin/mod.rs`, find the existing list where plugins are added and append:
 
 ```rust
 pub mod user_agents;
@@ -2134,18 +2134,18 @@ And in the function that builds the plugin list (look for where `user_slash_comm
 
 - [ ] **Step 5: Run the test**
 
-Run: `cargo test -p savvagent --lib user_agents`
+Run: `cargo test -p otto --lib user_agents`
 Expected: PASS.
 
 - [ ] **Step 6: Build the whole workspace**
 
 Run: `cargo build`
-Expected: Compiles. (TUI requires `savvagent-tool-fs` binary at runtime, but `cargo build` doesn't require it.)
+Expected: Compiles. (TUI requires `otto-tool-fs` binary at runtime, but `cargo build` doesn't require it.)
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/
+git add crates/otto/src/plugin/builtin/
 git commit -m "feat(plugin/user-agents): scaffold internal:user-agents plugin"
 ```
 
@@ -2154,7 +2154,7 @@ git commit -m "feat(plugin/user-agents): scaffold internal:user-agents plugin"
 ### Task 16: Frontmatter parser
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_agents/frontmatter.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_agents/frontmatter.rs`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2267,7 +2267,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent --lib frontmatter`
+Run: `cargo test -p otto --lib frontmatter`
 Expected: FAIL — `todo!()` panic.
 
 - [ ] **Step 3: Implement `parse`**
@@ -2347,13 +2347,13 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), String> {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent --lib frontmatter`
+Run: `cargo test -p otto --lib frontmatter`
 Expected: All tests PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_agents/frontmatter.rs
+git add crates/otto/src/plugin/builtin/user_agents/frontmatter.rs
 git commit -m "feat(plugin/user-agents): YAML frontmatter parser"
 ```
 
@@ -2362,7 +2362,7 @@ git commit -m "feat(plugin/user-agents): YAML frontmatter parser"
 ### Task 17: `@<path>` body include expansion
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_agents/body.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_agents/body.rs`
 
 Mirror sub-project A's `@<path>` semantics: a single-pass include at load time. `@<path>` lines (with path relative to the agent file or absolute) get substituted with the file contents. Missing files leave the literal `@<path>` in place and emit a warning.
 
@@ -2468,13 +2468,13 @@ mod tests {
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p savvagent --lib body`
+Run: `cargo test -p otto --lib body`
 Expected: All PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_agents/body.rs
+git add crates/otto/src/plugin/builtin/user_agents/body.rs
 git commit -m "feat(plugin/user-agents): @<path> include expansion at load time"
 ```
 
@@ -2483,7 +2483,7 @@ git commit -m "feat(plugin/user-agents): @<path> include expansion at load time"
 ### Task 18: Four-path discovery
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_agents/discovery.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_agents/discovery.rs`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2491,7 +2491,7 @@ Replace `discovery.rs` with:
 
 ```rust
 //! Four-path discovery for agent definition files. Mirrors sub-project A
-//! and B precedence: project beats user, savvagent beats claude.
+//! and B precedence: project beats user, otto beats claude.
 
 use std::path::{Path, PathBuf};
 
@@ -2502,9 +2502,9 @@ use crate::plugin::builtin::user_agents::spec::AgentSpec;
 /// Discover agent definitions across the four standard paths.
 pub fn discover(project_root: &Path, user_home: &Path) -> Vec<AgentSpec> {
     let paths = [
-        project_root.join(".savvagent").join("agents"),
+        project_root.join(".otto").join("agents"),
         project_root.join(".claude").join("agents"),
-        user_home.join(".savvagent").join("agents"),
+        user_home.join(".otto").join("agents"),
         user_home.join(".claude").join("agents"),
     ];
 
@@ -2587,11 +2587,11 @@ mod tests {
     const MINIMAL: &str = "---\ndescription: test agent\n---\nbody";
 
     #[test]
-    fn precedence_project_savvagent_beats_user_claude() {
+    fn precedence_project_otto_beats_user_claude() {
         let project = tempdir().unwrap();
         let user = tempdir().unwrap();
         write_agent(
-            &project.path().join(".savvagent/agents"),
+            &project.path().join(".otto/agents"),
             "shared",
             "---\ndescription: project version\n---\nproject body",
         );
@@ -2610,12 +2610,12 @@ mod tests {
         let project = tempdir().unwrap();
         let user = tempdir().unwrap();
         write_agent(
-            &project.path().join(".savvagent/agents"),
+            &project.path().join(".otto/agents"),
             "bad",
             "not even close to YAML",
         );
         write_agent(
-            &project.path().join(".savvagent/agents"),
+            &project.path().join(".otto/agents"),
             "good",
             MINIMAL,
         );
@@ -2630,7 +2630,7 @@ mod tests {
         let project = tempdir().unwrap();
         let user = tempdir().unwrap();
         write_agent(
-            &project.path().join(".savvagent/agents"),
+            &project.path().join(".otto/agents"),
             "BadCaps",
             MINIMAL,
         );
@@ -2650,13 +2650,13 @@ mod tests {
 
 - [ ] **Step 2: Run tests**
 
-Run: `cargo test -p savvagent --lib discovery`
+Run: `cargo test -p otto --lib discovery`
 Expected: All PASS.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_agents/discovery.rs
+git add crates/otto/src/plugin/builtin/user_agents/discovery.rs
 git commit -m "feat(plugin/user-agents): four-path discovery with precedence + slug validation"
 ```
 
@@ -2665,7 +2665,7 @@ git commit -m "feat(plugin/user-agents): four-path discovery with precedence + s
 ### Task 19: `AgentIndex` async-friendly wrapper
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_agents/index.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_agents/index.rs`
 
 Refactor: the scaffold version used `blocking_write` / `try_read` to keep the API sync. The plugin hot path is async; switch to async methods.
 
@@ -2710,7 +2710,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent --lib user_agents::index`
+Run: `cargo test -p otto --lib user_agents::index`
 Expected: FAIL — `replace` is sync, `len` doesn't exist.
 
 - [ ] **Step 3: Refactor `AgentIndex`**
@@ -2773,7 +2773,7 @@ The `register_task_tool_effects` and `on_event` paths now need async. Refactor:
             return vec![];
         }
         let spec = task_tool::build_tool_def(&self.index).await;
-        let handler: Arc<dyn savvagent_plugin::InProcessToolHandler> =
+        let handler: Arc<dyn otto_plugin::InProcessToolHandler> =
             Arc::new(task_tool::TaskToolHandler::new(self.index.clone()));
         vec![Effect::RegisterInProcessTool { spec, handler }]
     }
@@ -2793,13 +2793,13 @@ Update `handle_slash` similarly. Update `task_tool::build_tool_def` to be async 
 
 - [ ] **Step 5: Run tests**
 
-Run: `cargo test -p savvagent --lib user_agents`
+Run: `cargo test -p otto --lib user_agents`
 Expected: All PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_agents/
+git add crates/otto/src/plugin/builtin/user_agents/
 git commit -m "feat(plugin/user-agents): async AgentIndex; rewire register_task_tool_effects"
 ```
 
@@ -2808,11 +2808,11 @@ git commit -m "feat(plugin/user-agents): async AgentIndex; rewire register_task_
 ### Task 20: `task` tool — the handler that builds and drives a SubHost
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_agents/task_tool.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_agents/task_tool.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent/tests/user_agents_task_tool.rs`:
+Create `crates/otto/tests/user_agents_task_tool.rs`:
 
 ```rust
 //! End-to-end: the `task` in-process tool resolves a subagent, builds
@@ -2823,14 +2823,14 @@ Create `crates/savvagent/tests/user_agents_task_tool.rs`:
 //! the JSON returned by `TaskToolHandler::call` is exactly that text.
 
 // Test body uses the same Host + stub provider fixtures as
-// crates/savvagent-host/tests/subhost_basic.rs.
+// crates/otto-host/tests/subhost_basic.rs.
 ```
 
 Implement against the existing test fixtures.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p savvagent --test user_agents_task_tool`
+Run: `cargo test -p otto --test user_agents_task_tool`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement `TaskToolHandler::call`**
@@ -2844,9 +2844,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use savvagent_host::{SubHost, SubagentContext, ToolCallContext};
-use savvagent_plugin::InProcessToolHandler;
-use savvagent_protocol::ToolDef;
+use otto_host::{SubHost, SubagentContext, ToolCallContext};
+use otto_plugin::InProcessToolHandler;
+use otto_protocol::ToolDef;
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -2936,7 +2936,7 @@ fn filter_tools(
     parent: &[ToolDef],
     depth: u8,
 ) -> (HashSet<String>, Vec<ToolDef>) {
-    let max_depth = savvagent_host::subhost::max_depth_from_env();
+    let max_depth = otto_host::subhost::max_depth_from_env();
     let include_task = depth < max_depth;
 
     match scope {
@@ -3011,14 +3011,14 @@ This requires `Host::session_id()` accessor and `Host::tool_registry()` accessor
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p savvagent --test user_agents_task_tool`
+Run: `cargo test -p otto --test user_agents_task_tool`
 Run: `cargo build`
 Expected: PASS / compiles.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_agents/task_tool.rs crates/savvagent-host/src/session.rs crates/savvagent/tests/user_agents_task_tool.rs
+git add crates/otto/src/plugin/builtin/user_agents/task_tool.rs crates/otto-host/src/session.rs crates/otto/tests/user_agents_task_tool.rs
 git commit -m "feat(plugin/user-agents): task tool handler — builds and drives SubHost"
 ```
 
@@ -3027,13 +3027,13 @@ git commit -m "feat(plugin/user-agents): task tool handler — builds and drives
 ### Task 21: Wire `Effect::RegisterInProcessTool` handling in the TUI app
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
+- Modify: `crates/otto/src/app.rs`
 
 When a plugin emits `RegisterInProcessTool`, the app must register it on the active `Host`. The existing pattern for `RegisterProvider` is the closest analog.
 
 - [ ] **Step 1: Find the existing Effect handler**
 
-`grep -n "Effect::RegisterProvider\|Effect::RegisterPreToolGate" crates/savvagent/src/app.rs`
+`grep -n "Effect::RegisterProvider\|Effect::RegisterPreToolGate" crates/otto/src/app.rs`
 
 Locate the `match effect { ... }` block that handles plugin effects.
 
@@ -3065,7 +3065,7 @@ Expected: Compiles.
 Run the TUI smoke test that already exists for tool registration, or add a small one:
 
 ```rust
-// crates/savvagent/tests/user_agents_e2e.rs
+// crates/otto/tests/user_agents_e2e.rs
 #[tokio::test]
 async fn task_tool_registered_when_agents_present() {
     // Build app with a project root containing a single agent file.
@@ -3077,7 +3077,7 @@ async fn task_tool_registered_when_agents_present() {
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs crates/savvagent/tests/user_agents_e2e.rs
+git add crates/otto/src/app.rs crates/otto/tests/user_agents_e2e.rs
 git commit -m "feat(app): handle Effect::RegisterInProcessTool"
 ```
 
@@ -3088,19 +3088,19 @@ git commit -m "feat(app): handle Effect::RegisterInProcessTool"
 ### Task 22: Render `task` tool calls as collapsible blocks
 
 **Files:**
-- Modify: `crates/savvagent/src/tui.rs` (or wherever conversation-log rendering is split — read the file to confirm)
-- Likely create: `crates/savvagent/src/plugin/builtin/tool_task_summary/` (mirror existing `tool_fs_summary`, `tool_grep_summary`)
+- Modify: `crates/otto/src/tui.rs` (or wherever conversation-log rendering is split — read the file to confirm)
+- Likely create: `crates/otto/src/plugin/builtin/tool_task_summary/` (mirror existing `tool_fs_summary`, `tool_grep_summary`)
 
 Sub-project A's tool-call rendering work introduced per-tool summary plugins. Mirror that pattern for the `task` tool.
 
 - [ ] **Step 1: Find the existing tool-call summary pattern**
 
-`ls crates/savvagent/src/plugin/builtin/tool_*_summary/`
+`ls crates/otto/src/plugin/builtin/tool_*_summary/`
 Read one (e.g. `tool_fs_summary/mod.rs`) to understand the contract.
 
 - [ ] **Step 2: Add `tool_task_summary`**
 
-Create `crates/savvagent/src/plugin/builtin/tool_task_summary/mod.rs` following the existing pattern. The summary should render:
+Create `crates/otto/src/plugin/builtin/tool_task_summary/mod.rs` following the existing pattern. The summary should render:
 - Collapsed: `task <agent_name> · "<description>"`
 - Expanded: streaming text + nested tool calls
 
@@ -3108,7 +3108,7 @@ If the existing summary plugins are passive (just provide a one-line collapsed v
 
 - [ ] **Step 3: Register the new summary plugin**
 
-In `crates/savvagent/src/plugin/builtin/mod.rs`, append `pub mod tool_task_summary;` and push it into the plugin list.
+In `crates/otto/src/plugin/builtin/mod.rs`, append `pub mod tool_task_summary;` and push it into the plugin list.
 
 - [ ] **Step 4: Add expansion routing for `subagent_transcript`**
 
@@ -3120,22 +3120,22 @@ The exact integration depends on how the existing rendering deals with `ContentB
 
 Build the TUI:
 ```bash
-cargo build -p savvagent
+cargo build -p otto
 ```
 
 Run it interactively against a project with one agent file (manual smoke; not a unit test):
 
 ```bash
-mkdir -p /tmp/savvagent-c-smoke/.savvagent/agents
-cat > /tmp/savvagent-c-smoke/.savvagent/agents/echo.md <<'EOF'
+mkdir -p /tmp/otto-c-smoke/.otto/agents
+cat > /tmp/otto-c-smoke/.otto/agents/echo.md <<'EOF'
 ---
 description: Returns the prompt verbatim, capitalized.
 ---
 Return exactly the prompt the user gave, capitalized. No other text.
 EOF
 
-cd /tmp/savvagent-c-smoke
-cargo run -p savvagent
+cd /tmp/otto-c-smoke
+cargo run -p otto
 ```
 
 In the TUI, ask: "Use the task tool with subagent_type=echo and prompt='hello world'". Confirm a collapsible block appears, expanded while running, collapsed on completion.
@@ -3143,7 +3143,7 @@ In the TUI, ask: "Use the task tool with subagent_type=echo and prompt='hello wo
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/tool_task_summary/ crates/savvagent/src/plugin/builtin/mod.rs crates/savvagent/src/tui.rs
+git add crates/otto/src/plugin/builtin/tool_task_summary/ crates/otto/src/plugin/builtin/mod.rs crates/otto/src/tui.rs
 git commit -m "feat(tui): collapsible task-call block + subagent transcript expansion"
 ```
 
@@ -3152,8 +3152,8 @@ git commit -m "feat(tui): collapsible task-call block + subagent transcript expa
 ### Task 23: Subagent streaming via private channel
 
 **Files:**
-- Modify: `crates/savvagent-host/src/subhost.rs`
-- Modify: `crates/savvagent/src/tui.rs` or app.rs
+- Modify: `crates/otto-host/src/subhost.rs`
+- Modify: `crates/otto/src/tui.rs` or app.rs
 
 If you want **live** content streaming inside the collapsible block (versus just status), add a `SubagentStreamEvent` enum and a `tokio::sync::mpsc::Sender<SubagentStreamEvent>` parameter to `SubHost::new` / `run_subagent`.
 
@@ -3206,7 +3206,7 @@ Same as Task 22 — confirm live updates appear in the block.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/subhost.rs crates/savvagent/src/{tui.rs,app.rs}
+git add crates/otto-host/src/subhost.rs crates/otto/src/{tui.rs,app.rs}
 git commit -m "feat: SubagentStreamEvent channel + TUI live updates"
 ```
 
@@ -3228,12 +3228,12 @@ Locate the TUI features region. Add a new section after the hooks section:
 ```markdown
 ### User-defined agents
 
-Drop markdown files into `.savvagent/agents/` (project) or `~/.savvagent/agents/` (user)
+Drop markdown files into `.otto/agents/` (project) or `~/.otto/agents/` (user)
 to make them available as subagents the model can spawn via the built-in `task` tool.
 `.claude/agents/` is also supported for drop-in compatibility with existing Claude Code
 agent libraries.
 
-Example `~/.savvagent/agents/code-reviewer.md`:
+Example `~/.otto/agents/code-reviewer.md`:
 
 \`\`\`markdown
 ---
@@ -3258,7 +3258,7 @@ Agent body files may use `@<path>` to inline another file at load time (single-p
 
 Reload agents at runtime: `/reload-agents`.
 
-Subagent depth cap: `SAVVAGENT_AGENT_MAX_DEPTH=3` (env-configurable).
+Subagent depth cap: `OTTO_AGENT_MAX_DEPTH=3` (env-configurable).
 ```
 
 - [ ] **Step 2: Update the on-disk paths reference**
@@ -3266,7 +3266,7 @@ Subagent depth cap: `SAVVAGENT_AGENT_MAX_DEPTH=3` (env-configurable).
 Find the existing "On-disk paths" section and add:
 
 ```markdown
-- `<project>/.savvagent/agents/**.md` and `~/.savvagent/agents/**.md` — user-defined subagent definitions
+- `<project>/.otto/agents/**.md` and `~/.otto/agents/**.md` — user-defined subagent definitions
 - `.claude/agents/` — Claude-Code compat path, same shape
 ```
 
@@ -3297,7 +3297,7 @@ git commit -m "docs(readme): user-defined agents section + on-disk paths + task 
 Find the existing goals list and add:
 
 ```markdown
-- **User-defined subagents.** Users drop markdown files into `.savvagent/agents/` (or `.claude/agents/` for compat) to make them available as subagents the model can spawn via the built-in `task` tool, with per-agent tool scoping and optional model override.
+- **User-defined subagents.** Users drop markdown files into `.otto/agents/` (or `.claude/agents/` for compat) to make them available as subagents the model can spawn via the built-in `task` tool, with per-agent tool scoping and optional model override.
 ```
 
 - [ ] **Step 2: Update §4 Non-goals**
@@ -3334,7 +3334,7 @@ At the top of the file (under any `[Unreleased]` heading, or as a new heading da
 ### Added
 
 - **User-defined agents** (sub-project C of the Claude-Code / OpenCode parity rollup).
-  Drop markdown files into `.savvagent/agents/`, `.claude/agents/`, `~/.savvagent/agents/`,
+  Drop markdown files into `.otto/agents/`, `.claude/agents/`, `~/.otto/agents/`,
   or `~/.claude/agents/` to expose them as subagents the model can spawn via a new
   built-in `task` tool. Each agent file carries Claude-Code-compatible frontmatter
   (`description`, optional `tools`, optional `model`); its body becomes the subagent's
@@ -3353,11 +3353,11 @@ At the top of the file (under any `[Unreleased]` heading, or as a new heading da
   (backward-compatible: absent for parent-turn calls).
 - Transcript schema v2 — embeds nested subagent transcripts under the parent's
   `task` tool-call entry. v1 transcripts still load (with a one-time warn-log).
-- `SAVVAGENT_AGENT_MAX_DEPTH` env var (default 3) caps subagent recursion.
+- `OTTO_AGENT_MAX_DEPTH` env var (default 3) caps subagent recursion.
 
 ### Changed
 
-- `Effect` gains `RegisterInProcessTool` variant (savvagent-internal; not part of
+- `Effect` gains `RegisterInProcessTool` variant (otto-internal; not part of
   the WIT-portable plugin surface).
 - `ToolRegistry` accepts in-process tool handlers via
   `register_in_process_tool` alongside its existing stdio children.
@@ -3367,7 +3367,7 @@ At the top of the file (under any `[Unreleased]` heading, or as a new heading da
 - Transcripts from earlier versions load cleanly with empty subagent sections.
   No action required.
 - Existing `.claude/agents/*.md` files are picked up automatically. Project
-  files outrank user files; `.savvagent/` outranks `.claude/`.
+  files outrank user files; `.otto/` outranks `.claude/`.
 ```
 
 - [ ] **Step 2: Commit**
@@ -3407,7 +3407,7 @@ version = "0.17.0"
 Find lines like:
 
 ```toml
-savvagent-protocol = { path = "crates/savvagent-protocol", version = "0.16.1" }
+otto-protocol = { path = "crates/otto-protocol", version = "0.16.1" }
 ```
 
 Bump every `version` literal in `[workspace.dependencies]` to match. The memory note [[feedback_semver]] is explicit about this.
@@ -3470,7 +3470,7 @@ All tests PASS.
 If providers are configured locally:
 
 ```bash
-cargo run -p savvagent-host --example headless -- "Use the task tool with subagent_type=<some-discovered-agent> and prompt='hello'"
+cargo run -p otto-host --example headless -- "Use the task tool with subagent_type=<some-discovered-agent> and prompt='hello'"
 ```
 
 Verify the subagent runs and the final text comes back.
@@ -3484,7 +3484,7 @@ git push -u origin worktree-user-agents
 gh pr create --base master --title "feat: user-defined agents (sub-project C)" --body "$(cat <<'EOF'
 ## Summary
 
-Third of four sub-projects toward Claude-Code / OpenCode parity. Adds user-defined agents discoverable from `.savvagent/agents/` and `.claude/agents/`, plus a built-in `task` tool the parent model uses to spawn subagents.
+Third of four sub-projects toward Claude-Code / OpenCode parity. Adds user-defined agents discoverable from `.otto/agents/` and `.claude/agents/`, plus a built-in `task` tool the parent model uses to spawn subagents.
 
 - Sub-Host runtime with own session state, shared provider/registry/gate
 - Two-layer tool scoping (provider-boundary filter + ScopedToolRegistry)
@@ -3531,16 +3531,16 @@ Per [[feedback_keep_issue_updated]]: post a comment on the roadmap issue (the on
 - **Backward-compat in stdin payloads.** The new `subagent` field is optional; existing `.claude/settings.json` hooks that ignore unknown fields continue to work. Hook authors who care can branch on its presence.
 - **`SubagentStop` ordering.** The event fires **after** the subagent's `end_turn` and **before** the `task` tool returns. If a `SubagentStop` hook re-prompts (`continue: false` + `additionalContext`), the SubHost runs another turn with `stop_hook_active=true`.
 - **Type names introduced (cross-task reference):**
-  - `savvagent_plugin::HookKind::SubagentStop`
-  - `savvagent_plugin::HostEvent::SubagentStop`
-  - `savvagent_plugin::Effect::RegisterInProcessTool`
-  - `savvagent_plugin::InProcessToolHandler`
-  - `savvagent_host::SubagentContext`
-  - `savvagent_host::ToolCallContext`
-  - `savvagent_host::ScopedToolRegistry`
-  - `savvagent_host::SubHost`, `SubHostError`
-  - `savvagent_host::subhost::SUBAGENT_NAME` (tokio task-local)
-  - `savvagent_host::subhost::max_depth_from_env`
+  - `otto_plugin::HookKind::SubagentStop`
+  - `otto_plugin::HostEvent::SubagentStop`
+  - `otto_plugin::Effect::RegisterInProcessTool`
+  - `otto_plugin::InProcessToolHandler`
+  - `otto_host::SubagentContext`
+  - `otto_host::ToolCallContext`
+  - `otto_host::ScopedToolRegistry`
+  - `otto_host::SubHost`, `SubHostError`
+  - `otto_host::subhost::SUBAGENT_NAME` (tokio task-local)
+  - `otto_host::subhost::max_depth_from_env`
   - `crate::plugin::builtin::user_agents::{UserAgentsPlugin, AgentIndex, AgentSpec, ToolsScope, TaskToolHandler}`
   - `crate::plugin::builtin::user_hooks::discovery::HookEvent::SubagentStop`
 

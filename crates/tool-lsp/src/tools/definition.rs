@@ -109,7 +109,7 @@ pub(crate) fn resolve_inside_root(relative: &str, root_env: &PathBuf) -> Result<
         .with_context(|| format!("resolving {}", joined.display()))?;
     if !canonical.starts_with(root_env) {
         return Err(anyhow!(
-            "resolved path {} escapes SAVVAGENT_TOOL_LSP_ROOT",
+            "resolved path {} escapes OTTO_TOOL_LSP_ROOT",
             canonical.display()
         ));
     }

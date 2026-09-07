@@ -4,7 +4,7 @@
 
 **Goal:** Replace the single-host-slot model with a connected-provider pool that supports silent re-connect, lease-based lifecycle, and a single-active-provider invariant — closing the `/connect` re-prompt complaint while shipping the safety contract that Phase 3 will build on.
 
-**Architecture:** `savvagent-host` gains `pool.rs` (Arc-held `PoolEntry`, `ProviderLease` RAII guard, `Drain`/`Force` disconnect modes with 3-stage cancellation), `capabilities.rs` (per-model metadata), and `router/legacy_model.rs` (bare-model `SAVVAGENT_MODEL` resolver). The `Host` struct keeps one `active_provider: ProviderId` per conversation; turns always route to it; `/use <provider>` clears history and switches. `HostConfig` gains `providers: Vec<ProviderRegistration>` and `startup_connect: StartupConnectPolicy`. The TUI gains a `~/.savvagent/config.toml` file, a one-time migration picker, silent `/connect`, `/disconnect`, `/use`, and a multi-row status bar.
+**Architecture:** `otto-host` gains `pool.rs` (Arc-held `PoolEntry`, `ProviderLease` RAII guard, `Drain`/`Force` disconnect modes with 3-stage cancellation), `capabilities.rs` (per-model metadata), and `router/legacy_model.rs` (bare-model `OTTO_MODEL` resolver). The `Host` struct keeps one `active_provider: ProviderId` per conversation; turns always route to it; `/use <provider>` clears history and switches. `HostConfig` gains `providers: Vec<ProviderRegistration>` and `startup_connect: StartupConnectPolicy`. The TUI gains a `~/.otto/config.toml` file, a one-time migration picker, silent `/connect`, `/disconnect`, `/use`, and a multi-row status bar.
 
 **Tech Stack:** Rust 2024, Tokio (async + `select!` + `JoinHandle::abort`), `Arc<dyn ProviderClient>`, `tokio::sync::{RwLock, Mutex, oneshot}`, `std::sync::atomic::AtomicUsize`, `keyring` crate (existing), `toml`/`serde` for config file, `rust_i18n` for user-facing strings.
 
@@ -15,26 +15,26 @@
 ## File structure (Phase 1)
 
 **New files:**
-- `crates/savvagent-host/src/capabilities.rs` — `ProviderCapabilities`, `ModelCapabilities`, `ModelAlias`, `CostTier`.
-- `crates/savvagent-host/src/pool.rs` — `PoolEntry`, `ProviderLease`, `DisconnectMode`, `PoolError`.
-- `crates/savvagent-host/src/router/mod.rs` — module file (Phase 1 ships only `legacy_model`).
-- `crates/savvagent-host/src/router/legacy_model.rs` — `SAVVAGENT_MODEL` parser + ambiguity resolver.
-- `crates/savvagent-host/tests/pool_lifecycle.rs` — integration tests for Drain/Force lifecycle.
-- `crates/savvagent/src/config_file.rs` — `~/.savvagent/config.toml` schema + load/save + migration marker.
-- `crates/savvagent/src/migration.rs` — first-launch picker state + `MigrationOutcome`.
+- `crates/otto-host/src/capabilities.rs` — `ProviderCapabilities`, `ModelCapabilities`, `ModelAlias`, `CostTier`.
+- `crates/otto-host/src/pool.rs` — `PoolEntry`, `ProviderLease`, `DisconnectMode`, `PoolError`.
+- `crates/otto-host/src/router/mod.rs` — module file (Phase 1 ships only `legacy_model`).
+- `crates/otto-host/src/router/legacy_model.rs` — `OTTO_MODEL` parser + ambiguity resolver.
+- `crates/otto-host/tests/pool_lifecycle.rs` — integration tests for Drain/Force lifecycle.
+- `crates/otto/src/config_file.rs` — `~/.otto/config.toml` schema + load/save + migration marker.
+- `crates/otto/src/migration.rs` — first-launch picker state + `MigrationOutcome`.
 
 **Modified files:**
-- `crates/savvagent-host/src/lib.rs` — re-exports.
-- `crates/savvagent-host/src/config.rs` — add `ProviderRegistration`, `StartupConnectPolicy`, `force_disconnect_grace_ms`, `connect_timeout_ms` fields.
-- `crates/savvagent-host/src/session.rs` — replace `provider: Box<dyn ProviderClient>` with `pool: RwLock<HashMap<ProviderId, PoolEntry>>` + `active_provider: RwLock<ProviderId>`. Update `Host::start`, `run_turn_streaming`, history append.
-- `crates/savvagent/src/main.rs` — slash dispatch for `/disconnect`, `/use`; `/model` filtering by active provider; `perform_connect` now calls `host.add_provider`; startup runs `StartupConnectPolicy` + migration; `--rekey` flag plumbing.
-- `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs` — silent connect when key stored; `--rekey` opens modal.
-- `crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs` — same.
-- `crates/savvagent/src/plugin/builtin/provider_openai/mod.rs` — same.
-- `crates/savvagent/src/plugin/builtin/provider_local/mod.rs` — silent always (no key required).
-- `crates/savvagent/src/plugin/builtin/connect/screen.rs` — alt-Enter emits `/connect <id> --rekey`.
-- `crates/savvagent/src/ui.rs` — status bar lists all pool members.
-- `crates/savvagent/locales/en.yml` (and other locales) — new i18n keys.
+- `crates/otto-host/src/lib.rs` — re-exports.
+- `crates/otto-host/src/config.rs` — add `ProviderRegistration`, `StartupConnectPolicy`, `force_disconnect_grace_ms`, `connect_timeout_ms` fields.
+- `crates/otto-host/src/session.rs` — replace `provider: Box<dyn ProviderClient>` with `pool: RwLock<HashMap<ProviderId, PoolEntry>>` + `active_provider: RwLock<ProviderId>`. Update `Host::start`, `run_turn_streaming`, history append.
+- `crates/otto/src/main.rs` — slash dispatch for `/disconnect`, `/use`; `/model` filtering by active provider; `perform_connect` now calls `host.add_provider`; startup runs `StartupConnectPolicy` + migration; `--rekey` flag plumbing.
+- `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs` — silent connect when key stored; `--rekey` opens modal.
+- `crates/otto/src/plugin/builtin/provider_gemini/mod.rs` — same.
+- `crates/otto/src/plugin/builtin/provider_openai/mod.rs` — same.
+- `crates/otto/src/plugin/builtin/provider_local/mod.rs` — silent always (no key required).
+- `crates/otto/src/plugin/builtin/connect/screen.rs` — alt-Enter emits `/connect <id> --rekey`.
+- `crates/otto/src/ui.rs` — status bar lists all pool members.
+- `crates/otto/locales/en.yml` (and other locales) — new i18n keys.
 - `README.md`, `CHANGELOG.md` — release docs.
 
 ---
@@ -42,14 +42,14 @@
 ## Task 1: ProviderCapabilities + ModelCapabilities + ModelAlias types
 
 **Files:**
-- Create: `crates/savvagent-host/src/capabilities.rs`
-- Modify: `crates/savvagent-host/src/lib.rs` (re-export)
+- Create: `crates/otto-host/src/capabilities.rs`
+- Modify: `crates/otto-host/src/lib.rs` (re-export)
 
 Pure types. No behavior. Needed before pool/registration types reference them.
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `crates/savvagent-host/src/capabilities.rs`:
+Add to `crates/otto-host/src/capabilities.rs`:
 
 ```rust
 //! Per-provider and per-model capability metadata. Carried into the host
@@ -57,7 +57,7 @@ Add to `crates/savvagent-host/src/capabilities.rs`:
 //! Plugins build these from their hardcoded model lists; the host treats
 //! them as read-only data and never mutates capability records itself.
 
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CostTier {
@@ -104,7 +104,7 @@ impl ProviderCapabilities {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use savvagent_protocol::ProviderId;
+    use otto_protocol::ProviderId;
 
     fn anthropic() -> ProviderId {
         ProviderId::new("anthropic").unwrap()
@@ -156,12 +156,12 @@ mod tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent-host capabilities::tests`
+Run: `cargo test -p otto-host capabilities::tests`
 Expected: FAIL with "unresolved module" / "cannot find module `capabilities`".
 
 - [ ] **Step 3: Wire the module**
 
-Edit `crates/savvagent-host/src/lib.rs`. Add near the other `mod` lines:
+Edit `crates/otto-host/src/lib.rs`. Add near the other `mod` lines:
 
 ```rust
 pub mod capabilities;
@@ -170,18 +170,18 @@ pub use capabilities::{CostTier, ModelAlias, ModelCapabilities, ProviderCapabili
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `cargo test -p savvagent-host capabilities::tests`
+Run: `cargo test -p otto-host capabilities::tests`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Clippy + fmt parity**
 
-Run: `rustup run stable cargo fmt --all -- --check && rustup run stable cargo clippy -p savvagent-host -- -D warnings`
+Run: `rustup run stable cargo fmt --all -- --check && rustup run stable cargo clippy -p otto-host -- -D warnings`
 Expected: clean. (Per [[feedback_match_ci_toolchain_locally]] — local default toolchain may lag CI.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/capabilities.rs crates/savvagent-host/src/lib.rs
+git add crates/otto-host/src/capabilities.rs crates/otto-host/src/lib.rs
 git commit -m "feat(host): add ProviderCapabilities/ModelCapabilities types"
 ```
 
@@ -190,14 +190,14 @@ git commit -m "feat(host): add ProviderCapabilities/ModelCapabilities types"
 ## Task 2: PoolEntry, ProviderLease, DisconnectMode, PoolError (Drain only)
 
 **Files:**
-- Create: `crates/savvagent-host/src/pool.rs`
-- Modify: `crates/savvagent-host/src/lib.rs` (re-export)
+- Create: `crates/otto-host/src/pool.rs`
+- Modify: `crates/otto-host/src/lib.rs` (re-export)
 
 Pool primitives. Drain mode is well-defined by `Arc` reference counting; Force mode is layered on top in Task 3.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-host/src/pool.rs`:
+Create `crates/otto-host/src/pool.rs`:
 
 ```rust
 //! Provider pool primitives. The pool stores per-provider entries keyed
@@ -212,8 +212,8 @@ Create `crates/savvagent-host/src/pool.rs`:
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use savvagent_mcp::ProviderClient;
-use savvagent_protocol::ProviderId;
+use otto_mcp::ProviderClient;
+use otto_protocol::ProviderId;
 use thiserror::Error;
 
 use crate::capabilities::ProviderCapabilities;
@@ -303,7 +303,7 @@ mod tests {
     use super::*;
     use crate::capabilities::{CostTier, ModelCapabilities};
     use async_trait::async_trait;
-    use savvagent_protocol::{
+    use otto_protocol::{
         CompleteRequest, CompleteResponse, ListModelsResponse, ProviderError, StreamEvent,
     };
     use tokio::sync::mpsc;
@@ -369,7 +369,7 @@ mod tests {
 
 - [ ] **Step 2: Add `thiserror` dependency**
 
-Check if `thiserror` is already a dep of `savvagent-host`. If not, edit `crates/savvagent-host/Cargo.toml`:
+Check if `thiserror` is already a dep of `otto-host`. If not, edit `crates/otto-host/Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -381,7 +381,7 @@ If `thiserror` isn't in `[workspace.dependencies]` either, add `thiserror = "1"`
 
 - [ ] **Step 3: Wire the module**
 
-Edit `crates/savvagent-host/src/lib.rs`:
+Edit `crates/otto-host/src/lib.rs`:
 
 ```rust
 pub mod pool;
@@ -390,18 +390,18 @@ pub use pool::{DisconnectMode, PoolEntry, PoolError, ProviderLease};
 
 - [ ] **Step 4: Run the test**
 
-Run: `cargo test -p savvagent-host pool::tests`
+Run: `cargo test -p otto-host pool::tests`
 Expected: PASS (2 tests).
 
 - [ ] **Step 5: Clippy + fmt**
 
-Run: `rustup run stable cargo fmt --all -- --check && rustup run stable cargo clippy -p savvagent-host -- -D warnings`
+Run: `rustup run stable cargo fmt --all -- --check && rustup run stable cargo clippy -p otto-host -- -D warnings`
 Expected: clean.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/pool.rs crates/savvagent-host/src/lib.rs crates/savvagent-host/Cargo.toml
+git add crates/otto-host/src/pool.rs crates/otto-host/src/lib.rs crates/otto-host/Cargo.toml
 git commit -m "feat(host): add PoolEntry/ProviderLease primitives"
 ```
 
@@ -410,14 +410,14 @@ git commit -m "feat(host): add PoolEntry/ProviderLease primitives"
 ## Task 3: ProviderRegistration + StartupConnectPolicy in HostConfig
 
 **Files:**
-- Modify: `crates/savvagent-host/src/config.rs`
-- Modify: `crates/savvagent-host/src/lib.rs` (re-export)
+- Modify: `crates/otto-host/src/config.rs`
+- Modify: `crates/otto-host/src/lib.rs` (re-export)
 
 Adds the carrier shape the TUI uses to hand provider clients (+ capabilities) into the host.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/savvagent-host/src/config.rs`:
+Append to `crates/otto-host/src/config.rs`:
 
 ```rust
 #[cfg(test)]
@@ -425,8 +425,8 @@ mod registration_tests {
     use super::*;
     use crate::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
     use async_trait::async_trait;
-    use savvagent_mcp::ProviderClient;
-    use savvagent_protocol::{
+    use otto_mcp::ProviderClient;
+    use otto_protocol::{
         CompleteRequest, CompleteResponse, ListModelsResponse, ProviderError, ProviderId,
         StreamEvent,
     };
@@ -496,18 +496,18 @@ mod registration_tests {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent-host registration_tests`
+Run: `cargo test -p otto-host registration_tests`
 Expected: FAIL — `ProviderRegistration`, `StartupConnectPolicy`, and the new `HostConfig` fields don't exist.
 
 - [ ] **Step 3: Add the types**
 
-Edit `crates/savvagent-host/src/config.rs`. Add at the top of the file (after existing imports):
+Edit `crates/otto-host/src/config.rs`. Add at the top of the file (after existing imports):
 
 ```rust
 use std::sync::Arc;
 
-use savvagent_mcp::ProviderClient;
-use savvagent_protocol::ProviderId;
+use otto_mcp::ProviderClient;
+use otto_protocol::ProviderId;
 
 use crate::capabilities::{ModelAlias, ProviderCapabilities};
 ```
@@ -538,7 +538,7 @@ pub enum StartupConnectPolicy {
     /// Skip auto-connect entirely; pool starts empty.
     None,
     /// Auto-connect only the provider(s) recorded in
-    /// `~/.savvagent/state.toml`'s `last_used` field. Resolution happens
+    /// `~/.otto/state.toml`'s `last_used` field. Resolution happens
     /// in the embedder (TUI) before the policy is built — by the time
     /// the host sees `LastUsed`, the inner vec is already populated.
     LastUsed(Vec<ProviderId>),
@@ -640,7 +640,7 @@ Drop `#[derive(Clone)]` on `HostConfig` — `Arc<dyn ProviderClient>` is `Clone`
 
 - [ ] **Step 4: Run the test**
 
-Run: `cargo test -p savvagent-host registration_tests`
+Run: `cargo test -p otto-host registration_tests`
 Expected: PASS (3 tests).
 
 - [ ] **Step 5: Fix workspace consumers if `HostConfig: Clone` was relied on**
@@ -653,13 +653,13 @@ Expected: clean. If any callers cloned `HostConfig`, refactor to pass `&HostConf
 ```bash
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent-host/src/config.rs crates/savvagent-host/src/lib.rs
+git add crates/otto-host/src/config.rs crates/otto-host/src/lib.rs
 git commit -m "feat(host): add ProviderRegistration + StartupConnectPolicy"
 ```
 
 (If lib.rs needs re-exports for the new types, also include in the commit.)
 
-Edit `crates/savvagent-host/src/lib.rs`:
+Edit `crates/otto-host/src/lib.rs`:
 
 ```rust
 pub use config::{ProviderRegistration, StartupConnectPolicy};
@@ -670,14 +670,14 @@ pub use config::{ProviderRegistration, StartupConnectPolicy};
 ## Task 4: Refactor Host to use the pool (single active provider)
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
-- Modify: `crates/savvagent/src/main.rs` (call sites of `Host::start`)
+- Modify: `crates/otto-host/src/session.rs`
+- Modify: `crates/otto/src/main.rs` (call sites of `Host::start`)
 
 This is the largest structural change. Replace `provider: Box<dyn ProviderClient>` with a pool, add `active_provider`, route `run_turn_streaming` through a lease.
 
 - [ ] **Step 1: Write the failing test (host + lease integration)**
 
-Create `crates/savvagent-host/tests/pool_lifecycle.rs`:
+Create `crates/otto-host/tests/pool_lifecycle.rs`:
 
 ```rust
 //! Pool lifecycle tests: drain, force, lock hygiene. Force-mode tests
@@ -687,11 +687,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use savvagent_host::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
-use savvagent_host::config::{ProviderEndpoint, StartupConnectPolicy};
-use savvagent_host::{DisconnectMode, Host, HostConfig, ProviderRegistration};
-use savvagent_mcp::ProviderClient;
-use savvagent_protocol::{
+use otto_host::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
+use otto_host::config::{ProviderEndpoint, StartupConnectPolicy};
+use otto_host::{DisconnectMode, Host, HostConfig, ProviderRegistration};
+use otto_mcp::ProviderClient;
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ListModelsResponse, Message, ProviderError, ProviderId,
     Role, StreamEvent,
 };
@@ -707,7 +707,7 @@ impl ProviderClient for EchoClient {
     ) -> Result<CompleteResponse, ProviderError> {
         Ok(CompleteResponse {
             content: vec![],
-            stop_reason: savvagent_protocol::StopReason::EndTurn,
+            stop_reason: otto_protocol::StopReason::EndTurn,
             usage: Default::default(),
             model: req.model.clone(),
         })
@@ -767,7 +767,7 @@ async fn add_provider_rejects_duplicate() {
     let err = host.add_provider(dup).await.unwrap_err();
     assert!(matches!(
         err,
-        savvagent_host::PoolError::AlreadyRegistered(ref id) if id.as_str() == "anthropic"
+        otto_host::PoolError::AlreadyRegistered(ref id) if id.as_str() == "anthropic"
     ));
 }
 
@@ -813,12 +813,12 @@ async fn remove_provider_drain_blocks_new_turns_but_lets_inflight_finish() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent-host --test pool_lifecycle`
+Run: `cargo test -p otto-host --test pool_lifecycle`
 Expected: FAIL — `Host::active_provider`, `is_connected`, `add_provider`, `remove_provider`, `acquire_lease_for_test` don't exist; `Host::start` doesn't yet read `HostConfig::providers`.
 
 - [ ] **Step 3: Replace `provider` field on Host**
 
-Edit `crates/savvagent-host/src/session.rs`. Add at top:
+Edit `crates/otto-host/src/session.rs`. Add at top:
 
 ```rust
 use std::collections::HashMap;
@@ -1018,14 +1018,14 @@ Add `HostError::NoActiveProvider`.
 
 - [ ] **Step 4: Run the test**
 
-Run: `cargo test -p savvagent-host --test pool_lifecycle`
+Run: `cargo test -p otto-host --test pool_lifecycle`
 Expected: PASS for the three tests in this task. The Force-mode test (added in Task 5) is not yet present.
 
 - [ ] **Step 5: Fix call sites**
 
-Run: `cargo check --workspace`. The TUI (`crates/savvagent/src/main.rs::build_in_process_host`) currently constructs `HostConfig` with a single provider via the legacy path; it still works thanks to the fallback in `Host::start`, but verify the headless example builds:
+Run: `cargo check --workspace`. The TUI (`crates/otto/src/main.rs::build_in_process_host`) currently constructs `HostConfig` with a single provider via the legacy path; it still works thanks to the fallback in `Host::start`, but verify the headless example builds:
 
-Run: `cargo build -p savvagent-host --example headless`
+Run: `cargo build -p otto-host --example headless`
 Expected: clean.
 
 - [ ] **Step 6: Clippy + fmt + commit**
@@ -1033,7 +1033,7 @@ Expected: clean.
 ```bash
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent-host/src/session.rs crates/savvagent-host/tests/pool_lifecycle.rs
+git add crates/otto-host/src/session.rs crates/otto-host/tests/pool_lifecycle.rs
 git commit -m "feat(host): replace single provider field with PoolEntry map + active_provider"
 ```
 
@@ -1042,9 +1042,9 @@ git commit -m "feat(host): replace single provider field with PoolEntry map + ac
 ## Task 5: Force-disconnect with 3-stage cancellation
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
-- Modify: `crates/savvagent-host/tests/pool_lifecycle.rs`
-- Modify: `crates/savvagent-host/src/pool.rs`
+- Modify: `crates/otto-host/src/session.rs`
+- Modify: `crates/otto-host/tests/pool_lifecycle.rs`
+- Modify: `crates/otto-host/src/pool.rs`
 
 Layer Force mode on top of Drain. Adds cooperative cancel signal → 500ms grace → `JoinHandle::abort` + `TurnEvent::AbortedAfterGrace`.
 
@@ -1075,7 +1075,7 @@ pub enum CancellationReason {
 
 - [ ] **Step 2: Write the failing test (uncooperative provider)**
 
-Append to `crates/savvagent-host/tests/pool_lifecycle.rs`:
+Append to `crates/otto-host/tests/pool_lifecycle.rs`:
 
 ```rust
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1166,7 +1166,7 @@ async fn force_disconnect_aborts_uncooperative_turn_within_grace() {
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent-host --test pool_lifecycle force_disconnect_aborts_uncooperative_turn_within_grace`
+Run: `cargo test -p otto-host --test pool_lifecycle force_disconnect_aborts_uncooperative_turn_within_grace`
 Expected: FAIL — `DisconnectMode::Force` assertion in `remove_provider` panics.
 
 - [ ] **Step 4: Implement Force mode**
@@ -1265,12 +1265,12 @@ Edit `run_turn_streaming` to:
 
 - [ ] **Step 5: Run the test**
 
-Run: `cargo test -p savvagent-host --test pool_lifecycle force_disconnect_aborts_uncooperative_turn_within_grace`
+Run: `cargo test -p otto-host --test pool_lifecycle force_disconnect_aborts_uncooperative_turn_within_grace`
 Expected: PASS, elapsed < 400ms.
 
 - [ ] **Step 6: Verify Drain still works**
 
-Run: `cargo test -p savvagent-host --test pool_lifecycle`
+Run: `cargo test -p otto-host --test pool_lifecycle`
 Expected: all tests PASS.
 
 - [ ] **Step 7: Clippy + fmt + commit**
@@ -1278,24 +1278,24 @@ Expected: all tests PASS.
 ```bash
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent-host/src/session.rs crates/savvagent-host/src/pool.rs crates/savvagent-host/tests/pool_lifecycle.rs
+git add crates/otto-host/src/session.rs crates/otto-host/src/pool.rs crates/otto-host/tests/pool_lifecycle.rs
 git commit -m "feat(host): 3-stage force-disconnect (signal → grace → abort)"
 ```
 
 ---
 
-## Task 6: Legacy `SAVVAGENT_MODEL` resolver
+## Task 6: Legacy `OTTO_MODEL` resolver
 
 **Files:**
-- Create: `crates/savvagent-host/src/router/mod.rs`
-- Create: `crates/savvagent-host/src/router/legacy_model.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Create: `crates/otto-host/src/router/mod.rs`
+- Create: `crates/otto-host/src/router/legacy_model.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 Pure parser — no I/O. Takes `&[ProviderRegistration]` (or a slimmer view) + a raw string, returns `Resolution`.
 
 - [ ] **Step 1: Create the module file**
 
-Create `crates/savvagent-host/src/router/mod.rs`:
+Create `crates/otto-host/src/router/mod.rs`:
 
 ```rust
 //! Routing layers. Phase 1 ships only `legacy_model`; subsequent
@@ -1308,16 +1308,16 @@ pub use legacy_model::{resolve_legacy_model, LegacyModelResolution};
 
 - [ ] **Step 2: Write the failing test**
 
-Create `crates/savvagent-host/src/router/legacy_model.rs`:
+Create `crates/otto-host/src/router/legacy_model.rs`:
 
 ```rust
-//! Resolve a `SAVVAGENT_MODEL`-shaped value against the set of connected
+//! Resolve a `OTTO_MODEL`-shaped value against the set of connected
 //! providers. Accepts both legacy bare-model form ("claude-opus-4-7")
 //! and the new "provider/model" form ("anthropic/claude-opus-4-7").
 //! Pure function; no I/O. The caller is responsible for surfacing the
 //! returned warnings as styled notes.
 
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 
 use crate::capabilities::ProviderCapabilities;
 
@@ -1371,7 +1371,7 @@ pub fn resolve_legacy_model(raw: &str, providers: &[ProviderView<'_>]) -> Legacy
             return LegacyModelResolution::UnknownProvider {
                 provider: pid.clone(),
                 note: format!(
-                    "SAVVAGENT_MODEL='{raw}' names provider '{}' which is not connected; \
+                    "OTTO_MODEL='{raw}' names provider '{}' which is not connected; \
                      falling back to default",
                     pid.as_str()
                 ),
@@ -1380,7 +1380,7 @@ pub fn resolve_legacy_model(raw: &str, providers: &[ProviderView<'_>]) -> Legacy
         if view.capabilities.model(model_part).is_none() {
             return LegacyModelResolution::Unknown {
                 note: format!(
-                    "SAVVAGENT_MODEL='{raw}' names model '{model_part}' \
+                    "OTTO_MODEL='{raw}' names model '{model_part}' \
                      which provider '{}' does not expose; \
                      falling back to {}'s default model",
                     pid.as_str(),
@@ -1402,14 +1402,14 @@ pub fn resolve_legacy_model(raw: &str, providers: &[ProviderView<'_>]) -> Legacy
     match hits.len() {
         0 => LegacyModelResolution::Unknown {
             note: format!(
-                "SAVVAGENT_MODEL='{raw}' did not match any connected provider's model; \
+                "OTTO_MODEL='{raw}' did not match any connected provider's model; \
                  falling back to default"
             ),
         },
         1 => {
             let (provider, model) = hits.remove(0);
             let note = format!(
-                "SAVVAGENT_MODEL='{raw}' resolved to '{}/{model}'",
+                "OTTO_MODEL='{raw}' resolved to '{}/{model}'",
                 provider.as_str()
             );
             LegacyModelResolution::ResolvedFromBare { provider, model, note }
@@ -1423,7 +1423,7 @@ pub fn resolve_legacy_model(raw: &str, providers: &[ProviderView<'_>]) -> Legacy
             LegacyModelResolution::Ambiguous {
                 candidates: hits,
                 note: format!(
-                    "SAVVAGENT_MODEL='{raw}' is ambiguous: matches providers [{candidates_str}]. \
+                    "OTTO_MODEL='{raw}' is ambiguous: matches providers [{candidates_str}]. \
                      Falling back to default; switch to 'provider/model' form to disambiguate."
                 ),
             }
@@ -1539,12 +1539,12 @@ mod tests {
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent-host router::legacy_model::tests`
+Run: `cargo test -p otto-host router::legacy_model::tests`
 Expected: FAIL — module not registered in `lib.rs` yet.
 
 - [ ] **Step 4: Wire the module**
 
-Edit `crates/savvagent-host/src/lib.rs`:
+Edit `crates/otto-host/src/lib.rs`:
 
 ```rust
 pub mod router;
@@ -1553,16 +1553,16 @@ pub use router::{LegacyModelResolution, resolve_legacy_model};
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cargo test -p savvagent-host router::legacy_model::tests`
+Run: `cargo test -p otto-host router::legacy_model::tests`
 Expected: PASS (6 tests).
 
 - [ ] **Step 6: Clippy + fmt + commit**
 
 ```bash
 rustup run stable cargo fmt --all -- --check
-rustup run stable cargo clippy -p savvagent-host -- -D warnings
-git add crates/savvagent-host/src/router/ crates/savvagent-host/src/lib.rs
-git commit -m "feat(host): add SAVVAGENT_MODEL legacy-form resolver"
+rustup run stable cargo clippy -p otto-host -- -D warnings
+git add crates/otto-host/src/router/ crates/otto-host/src/lib.rs
+git commit -m "feat(host): add OTTO_MODEL legacy-form resolver"
 ```
 
 ---
@@ -1570,16 +1570,16 @@ git commit -m "feat(host): add SAVVAGENT_MODEL legacy-form resolver"
 ## Task 7: Silent `/connect` when keyring already has the key
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/provider_openai/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/provider_local/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_gemini/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_openai/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_local/mod.rs`
 
 The bug fix the user originally reported. `handle_slash` for `/connect <provider>` should check the keyring first.
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs`, add to the existing test module:
+In `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`, add to the existing test module:
 
 ```rust
 /// `/connect anthropic` with a stored key must NOT emit
@@ -1593,7 +1593,7 @@ async fn handle_slash_with_stored_key_skips_modal() {
     rust_i18n::set_locale("en");
 
     // Install a stored key for the duration of the test.
-    let _ = keyring::Entry::new("savvagent", PROVIDER_ID)
+    let _ = keyring::Entry::new("otto", PROVIDER_ID)
         .map(|e| e.set_password("test-key"));
 
     let mut p = ProviderAnthropicPlugin::new();
@@ -1611,7 +1611,7 @@ async fn handle_slash_with_stored_key_skips_modal() {
     assert!(saw_register, "must register the provider silently");
 
     // Cleanup.
-    let _ = keyring::Entry::new("savvagent", PROVIDER_ID)
+    let _ = keyring::Entry::new("otto", PROVIDER_ID)
         .map(|e| e.delete_credential());
 }
 ```
@@ -1620,12 +1620,12 @@ async fn handle_slash_with_stored_key_skips_modal() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent provider_anthropic::tests::handle_slash_with_stored_key_skips_modal`
+Run: `cargo test -p otto provider_anthropic::tests::handle_slash_with_stored_key_skips_modal`
 Expected: FAIL — current `handle_slash` unconditionally emits `PromptApiKey`.
 
 - [ ] **Step 3: Update `handle_slash` to read keyring first**
 
-Edit `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs`. Replace the existing `handle_slash` body:
+Edit `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`. Replace the existing `handle_slash` body:
 
 ```rust
 async fn handle_slash(
@@ -1651,7 +1651,7 @@ async fn handle_slash(
 
 - [ ] **Step 4: Run the new test + the existing tests**
 
-Run: `cargo test -p savvagent provider_anthropic::tests`
+Run: `cargo test -p otto provider_anthropic::tests`
 Expected: PASS for new test. The existing `no_creds_emits_prompt_api_key` test still passes (clears keyring before the call). The existing `handle_slash_with_existing_client_still_prompts` test must be **updated** — its premise (the modal opens even when a client exists) is no longer correct policy. Replace it with:
 
 ```rust
@@ -1673,46 +1673,46 @@ async fn handle_slash_with_rekey_flag_opens_modal_even_when_client_exists() {
 - [ ] **Step 5: Repeat for the other three providers**
 
 Apply the same change to:
-- `crates/savvagent/src/plugin/builtin/provider_gemini/mod.rs`
-- `crates/savvagent/src/plugin/builtin/provider_openai/mod.rs`
-- `crates/savvagent/src/plugin/builtin/provider_local/mod.rs` (where `try_connect_from_keyring` is `try_connect_local` or similar — local providers don't require a key so the call always succeeds and silent-connect is the only path)
+- `crates/otto/src/plugin/builtin/provider_gemini/mod.rs`
+- `crates/otto/src/plugin/builtin/provider_openai/mod.rs`
+- `crates/otto/src/plugin/builtin/provider_local/mod.rs` (where `try_connect_from_keyring` is `try_connect_local` or similar — local providers don't require a key so the call always succeeds and silent-connect is the only path)
 
 - [ ] **Step 6: Clippy + fmt + commit**
 
 ```bash
 rustup run stable cargo fmt --all -- --check
-rustup run stable cargo clippy -p savvagent -- -D warnings
-git add crates/savvagent/src/plugin/builtin/provider_anthropic/ \
-        crates/savvagent/src/plugin/builtin/provider_gemini/ \
-        crates/savvagent/src/plugin/builtin/provider_openai/ \
-        crates/savvagent/src/plugin/builtin/provider_local/
+rustup run stable cargo clippy -p otto -- -D warnings
+git add crates/otto/src/plugin/builtin/provider_anthropic/ \
+        crates/otto/src/plugin/builtin/provider_gemini/ \
+        crates/otto/src/plugin/builtin/provider_openai/ \
+        crates/otto/src/plugin/builtin/provider_local/
 git commit -m "feat(connect): silent re-connect when keyring already has the key"
 ```
 
 ---
 
-## Task 8: `~/.savvagent/config.toml` schema + load/save + first-launch migration
+## Task 8: `~/.otto/config.toml` schema + load/save + first-launch migration
 
 **Files:**
-- Create: `crates/savvagent/src/config_file.rs`
-- Create: `crates/savvagent/src/migration.rs`
-- Modify: `crates/savvagent/src/main.rs`
+- Create: `crates/otto/src/config_file.rs`
+- Create: `crates/otto/src/migration.rs`
+- Modify: `crates/otto/src/main.rs`
 
 The user-facing config that drives startup policy + holds the migration marker.
 
 - [ ] **Step 1: Write the failing test for the config file schema**
 
-Create `crates/savvagent/src/config_file.rs`:
+Create `crates/otto/src/config_file.rs`:
 
 ```rust
-//! ~/.savvagent/config.toml schema, load, save, and migration marker.
+//! ~/.otto/config.toml schema, load, save, and migration marker.
 //! Single source of truth for non-routing knobs (startup connect policy,
 //! per-provider connect timeout, migration_v1_done marker).
 
 use std::path::{Path, PathBuf};
 
-use savvagent_host::config::StartupConnectPolicy;
-use savvagent_protocol::ProviderId;
+use otto_host::config::StartupConnectPolicy;
+use otto_protocol::ProviderId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -1757,7 +1757,7 @@ impl ConfigFile {
     pub fn default_path() -> PathBuf {
         dirs::home_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join(".savvagent")
+            .join(".otto")
             .join("config.toml")
     }
 
@@ -1843,20 +1843,20 @@ mod tests {
 }
 ```
 
-(Add `dirs`, `tempfile`, `serde`, `toml` to `Cargo.toml` for `savvagent` if missing; check `[dependencies]` first.)
+(Add `dirs`, `tempfile`, `serde`, `toml` to `Cargo.toml` for `otto` if missing; check `[dependencies]` first.)
 
 - [ ] **Step 2: Run the test**
 
-Run: `cargo test -p savvagent config_file::tests`
+Run: `cargo test -p otto config_file::tests`
 Expected: FAIL until `mod config_file;` is added; then PASS (3 tests).
 
 - [ ] **Step 3: Wire the module + run again**
 
-Edit `crates/savvagent/src/main.rs` (or `lib.rs`) — add `mod config_file;`. Re-run the test; expect PASS.
+Edit `crates/otto/src/main.rs` (or `lib.rs`) — add `mod config_file;`. Re-run the test; expect PASS.
 
 - [ ] **Step 4: Add the migration scanner**
 
-Create `crates/savvagent/src/migration.rs`:
+Create `crates/otto/src/migration.rs`:
 
 ```rust
 //! First-launch migration: when config.toml is absent or `v1_done=false`,
@@ -1944,7 +1944,7 @@ mod tests {
 
 - [ ] **Step 5: Wire and test**
 
-Add `mod migration;` to `main.rs`. Run `cargo test -p savvagent migration::tests` — expect PASS (4 tests).
+Add `mod migration;` to `main.rs`. Run `cargo test -p otto migration::tests` — expect PASS (4 tests).
 
 Note: `decide_migration` cases involving real keyring entries aren't unit-tested here (they hit the platform keyring); the integration assertion happens in Task 9.
 
@@ -1952,9 +1952,9 @@ Note: `decide_migration` cases involving real keyring entries aren't unit-tested
 
 ```bash
 rustup run stable cargo fmt --all -- --check
-rustup run stable cargo clippy -p savvagent -- -D warnings
-git add crates/savvagent/src/config_file.rs crates/savvagent/src/migration.rs crates/savvagent/src/main.rs crates/savvagent/Cargo.toml
-git commit -m "feat(tui): add ~/.savvagent/config.toml + migration scanner"
+rustup run stable cargo clippy -p otto -- -D warnings
+git add crates/otto/src/config_file.rs crates/otto/src/migration.rs crates/otto/src/main.rs crates/otto/Cargo.toml
+git commit -m "feat(tui): add ~/.otto/config.toml + migration scanner"
 ```
 
 ---
@@ -1962,17 +1962,17 @@ git commit -m "feat(tui): add ~/.savvagent/config.toml + migration scanner"
 ## Task 9: First-launch migration picker UI
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/migration_picker/mod.rs`
-- Create: `crates/savvagent/src/plugin/builtin/migration_picker/screen.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`
-- Modify: `crates/savvagent/src/plugin/mod.rs` (register_builtins)
-- Modify: `crates/savvagent/locales/en.yml`
+- Create: `crates/otto/src/plugin/builtin/migration_picker/mod.rs`
+- Create: `crates/otto/src/plugin/builtin/migration_picker/screen.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs`
+- Modify: `crates/otto/src/plugin/mod.rs` (register_builtins)
+- Modify: `crates/otto/locales/en.yml`
 
 A core plugin that opens its own screen on `HostStarting` when `decide_migration` returns `Picker`. The screen lists detected providers as toggle rows; Enter confirms; Esc applies `dismissed_fallback`. Either path writes `config.toml` and sets `v1_done = true`.
 
 - [ ] **Step 1: Add i18n keys**
 
-Edit `crates/savvagent/locales/en.yml`:
+Edit `crates/otto/locales/en.yml`:
 
 ```yaml
 migration:
@@ -1981,7 +1981,7 @@ migration:
     hint: "Found multiple stored keys. Choose which should auto-connect on startup. Space to toggle, Enter to confirm, Esc to cancel."
     row_selected: "✓ {name}"
     row_unselected: "  {name}"
-  saved: "Saved startup_providers = [{ids}] to ~/.savvagent/config.toml"
+  saved: "Saved startup_providers = [{ids}] to ~/.otto/config.toml"
   fallback: "No selection confirmed; defaulting to startup_providers = [{ids}]"
 ```
 
@@ -1989,12 +1989,12 @@ migration:
 
 - [ ] **Step 2: Write the failing test (screen-level)**
 
-Create `crates/savvagent/src/plugin/builtin/migration_picker/screen.rs` and stub the screen with placeholder behavior + tests asserting:
+Create `crates/otto/src/plugin/builtin/migration_picker/screen.rs` and stub the screen with placeholder behavior + tests asserting:
 - Enter on a selection emits `Effect::Stack([Effect::CloseScreen, <write-config-effect>])`.
 - Esc emits the fallback-write effect.
 - Space toggles row selection.
 
-(The exact test code mirrors `connect/screen.rs` tests in shape — render assertions on `StyledLine` rows, key dispatch assertions on the effects list. Engineer follows the `ConnectPickerScreen` pattern; see the test at `crates/savvagent/src/plugin/builtin/connect/screen.rs:127-168`.)
+(The exact test code mirrors `connect/screen.rs` tests in shape — render assertions on `StyledLine` rows, key dispatch assertions on the effects list. Engineer follows the `ConnectPickerScreen` pattern; see the test at `crates/otto/src/plugin/builtin/connect/screen.rs:127-168`.)
 
 - [ ] **Step 3: Implement the screen**
 
@@ -2002,17 +2002,17 @@ The screen state is `{ rows: Vec<(String, bool)>, cursor: usize }`. Rendering us
 
 - [ ] **Step 4: Register the plugin in `register_builtins`**
 
-Edit `crates/savvagent/src/plugin/mod.rs::register_builtins`. Add a new entry for `MigrationPickerPlugin` (kind `Core`, since it must run on first launch regardless of optional plugin state).
+Edit `crates/otto/src/plugin/mod.rs::register_builtins`. Add a new entry for `MigrationPickerPlugin` (kind `Core`, since it must run on first launch regardless of optional plugin state).
 
 The plugin subscribes to `HookKind::HostStarting`. In `on_event(HostStarting)`, it calls `decide_migration`; if `Picker { detected }`, it emits an `Effect::OpenScreen { id: "migration.picker", args: ScreenArgs::MigrationPicker { detected } }`. If `Direct`, it writes config and proceeds silently.
 
 - [ ] **Step 5: Add `ScreenArgs::MigrationPicker`**
 
-Edit `crates/savvagent-plugin/src/lib.rs` (or wherever `ScreenArgs` lives) to add the new variant. Make sure `match` arms in `apply_effects.rs::open_screen` cover it.
+Edit `crates/otto-plugin/src/lib.rs` (or wherever `ScreenArgs` lives) to add the new variant. Make sure `match` arms in `apply_effects.rs::open_screen` cover it.
 
 - [ ] **Step 6: Test full path**
 
-Add an integration test in `crates/savvagent/tests/migration_picker.rs` that:
+Add an integration test in `crates/otto/tests/migration_picker.rs` that:
 1. Builds a fake home dir (TempDir + env override of `HOME` inside `HOME_LOCK`).
 2. Installs two fake keyring entries (use a stub keyring if real-keyring is awkward in CI — gate the test on a feature flag if needed).
 3. Boots a minimal App; asserts the migration screen opens.
@@ -2020,20 +2020,20 @@ Add an integration test in `crates/savvagent/tests/migration_picker.rs` that:
 
 (Wrap with `#[serial_test::serial]` + locale reset per [[feedback_test_locale_isolation]].)
 
-Run: `cargo test -p savvagent migration_picker`
+Run: `cargo test -p otto migration_picker`
 Expected: PASS.
 
 - [ ] **Step 7: Clippy + fmt + commit**
 
 ```bash
 rustup run stable cargo fmt --all -- --check
-rustup run stable cargo clippy -p savvagent -- -D warnings
-git add crates/savvagent/src/plugin/builtin/migration_picker/ \
-        crates/savvagent/src/plugin/builtin/mod.rs \
-        crates/savvagent/src/plugin/mod.rs \
-        crates/savvagent/locales/ \
-        crates/savvagent-plugin/src/lib.rs \
-        crates/savvagent/tests/migration_picker.rs
+rustup run stable cargo clippy -p otto -- -D warnings
+git add crates/otto/src/plugin/builtin/migration_picker/ \
+        crates/otto/src/plugin/builtin/mod.rs \
+        crates/otto/src/plugin/mod.rs \
+        crates/otto/locales/ \
+        crates/otto-plugin/src/lib.rs \
+        crates/otto/tests/migration_picker.rs
 git commit -m "feat(tui): first-launch migration picker for startup_providers"
 ```
 
@@ -2042,17 +2042,17 @@ git commit -m "feat(tui): first-launch migration picker for startup_providers"
 ## Task 10: `/disconnect <provider> [--force]` slash command
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs`
-- Modify: `crates/savvagent/locales/en.yml`
+- Modify: `crates/otto/src/main.rs`
+- Modify: `crates/otto/locales/en.yml`
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `crates/savvagent/tests/slash_commands.rs` (create if absent):
+Add to `crates/otto/tests/slash_commands.rs` (create if absent):
 
 ```rust
 //! End-to-end slash command tests for /disconnect and /use.
 
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 // … set up an App with a host that has anthropic + gemini connected,
 //   then dispatch `/disconnect gemini` through the same path main.rs
 //   uses (the run_slash function or its public test seam).
@@ -2062,7 +2062,7 @@ use savvagent_protocol::ProviderId;
 #[tokio::test]
 async fn disconnect_drain_removes_provider() {
     // … construction details follow existing test patterns in
-    //   crates/savvagent/tests/*. See feedback_streaming_test_permissions:
+    //   crates/otto/tests/*. See feedback_streaming_test_permissions:
     //   pre-register Allow if any tool-use surface is involved.
 }
 
@@ -2074,16 +2074,16 @@ async fn disconnect_force_aborts_inflight_turn() {
 }
 ```
 
-(Real test bodies follow `crates/savvagent/tests/*.rs` patterns; this plan describes the assertions, not the harness setup boilerplate. The engineer reuses existing test helpers.)
+(Real test bodies follow `crates/otto/tests/*.rs` patterns; this plan describes the assertions, not the harness setup boilerplate. The engineer reuses existing test helpers.)
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent --test slash_commands`
+Run: `cargo test -p otto --test slash_commands`
 Expected: FAIL — `/disconnect` not yet routed.
 
 - [ ] **Step 3: Wire the slash command**
 
-Edit `crates/savvagent/src/main.rs::run_slash`. Add a new arm next to the existing `/model` / `/resume` / `/sandbox` cases:
+Edit `crates/otto/src/main.rs::run_slash`. Add a new arm next to the existing `/model` / `/resume` / `/sandbox` cases:
 
 ```rust
 "/disconnect" => {
@@ -2132,15 +2132,15 @@ async fn handle_disconnect_command(
 
 - [ ] **Step 4: Run the tests**
 
-Run: `cargo test -p savvagent --test slash_commands`
+Run: `cargo test -p otto --test slash_commands`
 Expected: PASS.
 
 - [ ] **Step 5: Clippy + fmt + commit**
 
 ```bash
 rustup run stable cargo fmt --all -- --check
-rustup run stable cargo clippy -p savvagent -- -D warnings
-git add crates/savvagent/src/main.rs crates/savvagent/tests/slash_commands.rs crates/savvagent/locales/
+rustup run stable cargo clippy -p otto -- -D warnings
+git add crates/otto/src/main.rs crates/otto/tests/slash_commands.rs crates/otto/locales/
 git commit -m "feat(tui): /disconnect <provider> [--force] slash command"
 ```
 
@@ -2149,15 +2149,15 @@ git commit -m "feat(tui): /disconnect <provider> [--force] slash command"
 ## Task 11: `/use <provider>` slash command
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs`
-- Modify: `crates/savvagent-host/src/session.rs` (add `Host::set_active_provider` + `clear_history`)
-- Modify: `crates/savvagent/locales/en.yml`
+- Modify: `crates/otto/src/main.rs`
+- Modify: `crates/otto-host/src/session.rs` (add `Host::set_active_provider` + `clear_history`)
+- Modify: `crates/otto/locales/en.yml`
 
 Switch active provider; clears history first.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/savvagent/tests/slash_commands.rs`:
+Append to `crates/otto/tests/slash_commands.rs`:
 
 ```rust
 #[tokio::test]
@@ -2180,12 +2180,12 @@ async fn use_provider_rejects_unknown_id() {
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent --test slash_commands use_provider_clears`
+Run: `cargo test -p otto --test slash_commands use_provider_clears`
 Expected: FAIL.
 
 - [ ] **Step 3: Add host method**
 
-Edit `crates/savvagent-host/src/session.rs`:
+Edit `crates/otto-host/src/session.rs`:
 
 ```rust
 impl Host {
@@ -2250,7 +2250,7 @@ async fn handle_use_command(app: &mut App, rest: &str, host_slot: &HostSlot) {
 
 - [ ] **Step 5: Run the tests**
 
-Run: `cargo test -p savvagent --test slash_commands use_provider`
+Run: `cargo test -p otto --test slash_commands use_provider`
 Expected: PASS.
 
 - [ ] **Step 6: Clippy + fmt + commit**
@@ -2258,7 +2258,7 @@ Expected: PASS.
 ```bash
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent/src/main.rs crates/savvagent-host/src/session.rs crates/savvagent/locales/ crates/savvagent/tests/slash_commands.rs
+git add crates/otto/src/main.rs crates/otto-host/src/session.rs crates/otto/locales/ crates/otto/tests/slash_commands.rs
 git commit -m "feat: /use <provider> switches active provider and clears history"
 ```
 
@@ -2267,14 +2267,14 @@ git commit -m "feat: /use <provider> switches active provider and clears history
 ## Task 12: `/model` filtering by active provider
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs` (`handle_model_command`)
-- Modify: `crates/savvagent/src/plugin/builtin/model/screen.rs`
+- Modify: `crates/otto/src/main.rs` (`handle_model_command`)
+- Modify: `crates/otto/src/plugin/builtin/model/screen.rs`
 
 Today's `/model` already lists models — we now filter to only the active provider's catalog.
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `crates/savvagent/tests/slash_commands.rs`:
+Add to `crates/otto/tests/slash_commands.rs`:
 
 ```rust
 #[tokio::test]
@@ -2288,7 +2288,7 @@ async fn model_picker_only_lists_active_providers_models() {
 
 - [ ] **Step 2: Filter at picker open time**
 
-Edit `crates/savvagent/src/plugin/effects.rs` where `ScreenArgs::ModelPicker { current_id, models }` is constructed (in `open_screen`). Replace the `models: app.cached_models.clone()` line with a filtered version that pulls from the host's active provider's capabilities:
+Edit `crates/otto/src/plugin/effects.rs` where `ScreenArgs::ModelPicker { current_id, models }` is constructed (in `open_screen`). Replace the `models: app.cached_models.clone()` line with a filtered version that pulls from the host's active provider's capabilities:
 
 ```rust
 let models = if let Some(host) = current_host_via_slot.await {
@@ -2311,7 +2311,7 @@ Where `handle_model_command` accepts a model id directly (no UI), validate again
 
 - [ ] **Step 4: Run tests**
 
-Run: `cargo test -p savvagent --test slash_commands model_picker_only_lists_active`
+Run: `cargo test -p otto --test slash_commands model_picker_only_lists_active`
 Expected: PASS.
 
 - [ ] **Step 5: Clippy + fmt + commit**
@@ -2319,7 +2319,7 @@ Expected: PASS.
 ```bash
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent/src/main.rs crates/savvagent/src/plugin/effects.rs crates/savvagent/src/plugin/builtin/model/screen.rs crates/savvagent-host/src/session.rs crates/savvagent/tests/slash_commands.rs
+git add crates/otto/src/main.rs crates/otto/src/plugin/effects.rs crates/otto/src/plugin/builtin/model/screen.rs crates/otto-host/src/session.rs crates/otto/tests/slash_commands.rs
 git commit -m "feat(tui): /model picker filters to active provider's catalog"
 ```
 
@@ -2328,15 +2328,15 @@ git commit -m "feat(tui): /model picker filters to active provider's catalog"
 ## Task 13: Status bar lists all pool members + active marker
 
 **Files:**
-- Modify: `crates/savvagent/src/ui.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs` (render_slot)
+- Modify: `crates/otto/src/ui.rs`
+- Modify: `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs` (render_slot)
 - Modify: same for gemini, openai, local
 
 Today each provider plugin renders its own `home.footer.left` slot when connected. After Phase 1, ALL connected providers render; the active one gets a leading "▸ ".
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/savvagent/src/plugin/builtin/provider_anthropic/mod.rs`:
+In `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`:
 
 ```rust
 #[test]
@@ -2360,20 +2360,20 @@ The plugin needs to know whether it's the active provider. Options:
 - A `HostEvent::ActiveProviderChanged { id }` event the plugin subscribes to and stores locally.
 - A `Plugin::render_slot` parameter carrying app-level context.
 
-Option A is the cleaner long-term fit (event bus pattern already exists). Add `HostEvent::ActiveProviderChanged { id: ProviderId }` to `savvagent-plugin::HostEvent`. Dispatch it from `Host::set_active_provider` and from `Host::start` (initial active). The plugin caches the most recent id and compares against its own `PROVIDER_ID` in `render_slot`.
+Option A is the cleaner long-term fit (event bus pattern already exists). Add `HostEvent::ActiveProviderChanged { id: ProviderId }` to `otto-plugin::HostEvent`. Dispatch it from `Host::set_active_provider` and from `Host::start` (initial active). The plugin caches the most recent id and compares against its own `PROVIDER_ID` in `render_slot`.
 
 Add `set_active_for_render(&mut self, active: bool)` as test seam.
 
 - [ ] **Step 3: Apply to all four provider plugins + run tests**
 
-Repeat for gemini, openai, local. Run `cargo test -p savvagent provider_anthropic provider_gemini provider_openai provider_local`. Expect PASS.
+Repeat for gemini, openai, local. Run `cargo test -p otto provider_anthropic provider_gemini provider_openai provider_local`. Expect PASS.
 
 - [ ] **Step 4: Clippy + fmt + commit**
 
 ```bash
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent/src/plugin/builtin/provider_*/ crates/savvagent-plugin/src/ crates/savvagent-host/src/session.rs
+git add crates/otto/src/plugin/builtin/provider_*/ crates/otto-plugin/src/ crates/otto-host/src/session.rs
 git commit -m "feat(tui): status bar marks the active provider"
 ```
 
@@ -2382,12 +2382,12 @@ git commit -m "feat(tui): status bar marks the active provider"
 ## Task 14: Connect picker alt-Enter for `/connect <id> --rekey`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/connect/screen.rs`
-- Modify: `crates/savvagent/locales/en.yml`
+- Modify: `crates/otto/src/plugin/builtin/connect/screen.rs`
+- Modify: `crates/otto/locales/en.yml`
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/savvagent/src/plugin/builtin/connect/screen.rs::tests`:
+In `crates/otto/src/plugin/builtin/connect/screen.rs::tests`:
 
 ```rust
 #[tokio::test]
@@ -2416,7 +2416,7 @@ async fn alt_enter_emits_rekey_slash() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `cargo test -p savvagent connect::screen::tests::alt_enter`
+Run: `cargo test -p otto connect::screen::tests::alt_enter`
 Expected: FAIL — current `on_key` doesn't inspect modifiers on Enter.
 
 - [ ] **Step 3: Update `on_key`**
@@ -2450,13 +2450,13 @@ picker:
 
 - [ ] **Step 4: Run tests + commit**
 
-Run: `cargo test -p savvagent connect::screen::tests`
+Run: `cargo test -p otto connect::screen::tests`
 Expected: PASS.
 
 ```bash
 rustup run stable cargo fmt --all -- --check
-rustup run stable cargo clippy -p savvagent -- -D warnings
-git add crates/savvagent/src/plugin/builtin/connect/screen.rs crates/savvagent/locales/
+rustup run stable cargo clippy -p otto -- -D warnings
+git add crates/otto/src/plugin/builtin/connect/screen.rs crates/otto/locales/
 git commit -m "feat(tui): Alt-Enter on connect picker re-enters API key"
 ```
 
@@ -2465,7 +2465,7 @@ git commit -m "feat(tui): Alt-Enter on connect picker re-enters API key"
 ## Task 15: TUI startup wires `StartupConnectPolicy` + per-provider timeout
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs`
+- Modify: `crates/otto/src/main.rs`
 
 Today the TUI's startup constructs a single host via `bootstrap_host`. After Phase 1, startup must:
 1. Load `config.toml` + run migration if needed.
@@ -2475,7 +2475,7 @@ Today the TUI's startup constructs a single host via `bootstrap_host`. After Pha
 
 - [ ] **Step 1: Write the failing test**
 
-Add `crates/savvagent/tests/startup_policy.rs`:
+Add `crates/otto/tests/startup_policy.rs`:
 
 ```rust
 #[tokio::test]
@@ -2503,7 +2503,7 @@ Expected: FAIL.
 
 - [ ] **Step 3: Refactor startup**
 
-In `crates/savvagent/src/main.rs`, refactor `bootstrap_host` (or its replacement) to:
+In `crates/otto/src/main.rs`, refactor `bootstrap_host` (or its replacement) to:
 
 ```rust
 async fn bootstrap_host_with_pool(
@@ -2544,7 +2544,7 @@ Add `try_build_registration` to each provider plugin (consuming its keyring-load
 
 - [ ] **Step 4: Run the test**
 
-Run: `cargo test -p savvagent --test startup_policy`
+Run: `cargo test -p otto --test startup_policy`
 Expected: PASS.
 
 - [ ] **Step 5: Clippy + fmt + commit**
@@ -2552,7 +2552,7 @@ Expected: PASS.
 ```bash
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent/src/main.rs crates/savvagent/src/plugin/builtin/provider_*/ crates/savvagent/tests/startup_policy.rs
+git add crates/otto/src/main.rs crates/otto/src/plugin/builtin/provider_*/ crates/otto/tests/startup_policy.rs
 git commit -m "feat(tui): startup applies StartupConnectPolicy + per-provider timeout"
 ```
 
@@ -2561,13 +2561,13 @@ git commit -m "feat(tui): startup applies StartupConnectPolicy + per-provider ti
 ## Task 16: `perform_connect` updates to call `Host::add_provider`
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs`
+- Modify: `crates/otto/src/main.rs`
 
 Today `perform_connect` builds a fresh host and swaps the slot. After Phase 1, it builds a `ProviderRegistration` and calls `host.add_provider(reg)`.
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `crates/savvagent/tests/slash_commands.rs`:
+Add to `crates/otto/tests/slash_commands.rs`:
 
 ```rust
 #[tokio::test]
@@ -2593,10 +2593,10 @@ Replace the body so it:
 - [ ] **Step 3: Run tests + commit**
 
 ```bash
-cargo test -p savvagent --test slash_commands connect_adds_to_pool
+cargo test -p otto --test slash_commands connect_adds_to_pool
 rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace -- -D warnings
-git add crates/savvagent/src/main.rs crates/savvagent/tests/slash_commands.rs
+git add crates/otto/src/main.rs crates/otto/tests/slash_commands.rs
 git commit -m "feat(tui): /connect adds to pool instead of replacing host"
 ```
 
@@ -2605,7 +2605,7 @@ git commit -m "feat(tui): /connect adds to pool instead of replacing host"
 ## Task 17: Re-prompt regression test
 
 **Files:**
-- Create or modify: `crates/savvagent/tests/connect_regression.rs`
+- Create or modify: `crates/otto/tests/connect_regression.rs`
 
 The user's original complaint deserves an explicit, named test that locks in the fix.
 
@@ -2614,7 +2614,7 @@ The user's original complaint deserves an explicit, named test that locks in the
 ```rust
 //! Regression test for the "/connect re-prompts when key is stored" bug.
 
-use savvagent_plugin::Effect;
+use otto_plugin::Effect;
 use serial_test::serial;
 
 #[tokio::test]
@@ -2623,11 +2623,11 @@ async fn connect_with_stored_key_does_not_open_modal() {
     rust_i18n::set_locale("en");
 
     // Pre-populate keyring (use the platform keyring; test is serial).
-    let _ = keyring::Entry::new("savvagent", "anthropic")
+    let _ = keyring::Entry::new("otto", "anthropic")
         .map(|e| e.set_password("test-key"));
 
     // Construct the plugin and dispatch /connect.
-    let mut p = savvagent::plugin::builtin::provider_anthropic::ProviderAnthropicPlugin::new();
+    let mut p = otto::plugin::builtin::provider_anthropic::ProviderAnthropicPlugin::new();
     let effs = p.handle_slash("connect anthropic", vec![]).await.unwrap();
     assert!(
         !effs.iter().any(|e| matches!(e, Effect::PromptApiKey { .. })),
@@ -2635,7 +2635,7 @@ async fn connect_with_stored_key_does_not_open_modal() {
     );
 
     // Cleanup.
-    let _ = keyring::Entry::new("savvagent", "anthropic")
+    let _ = keyring::Entry::new("otto", "anthropic")
         .map(|e| e.delete_credential());
 }
 ```
@@ -2643,8 +2643,8 @@ async fn connect_with_stored_key_does_not_open_modal() {
 - [ ] **Step 2: Run + commit**
 
 ```bash
-cargo test -p savvagent --test connect_regression
-git add crates/savvagent/tests/connect_regression.rs
+cargo test -p otto --test connect_regression
+git add crates/otto/tests/connect_regression.rs
 git commit -m "test: lock in /connect-with-stored-key silent path"
 ```
 
@@ -2664,7 +2664,7 @@ Per spec, every release ships with notes + README sync (see [[feedback_release_n
 
 The current workspace version is 0.11.0 (post-self-update). Phase 1 is feature work → MINOR bump → 0.12.0 (per [[feedback_semver]]). Update:
 - `Cargo.toml` `[workspace.package].version = "0.12.0"`
-- Any literal version strings in `[workspace.dependencies]` for savvagent-* crates.
+- Any literal version strings in `[workspace.dependencies]` for otto-* crates.
 
 - [ ] **Step 2: CHANGELOG entry**
 
@@ -2677,16 +2677,16 @@ Add to `CHANGELOG.md`:
 - Multi-provider connection pool. `/connect <provider>` is now silent when the keyring already has a stored key; the API-key modal only opens when a key is missing or `--rekey` is passed.
 - `/disconnect <provider> [--force]` removes a provider from the pool. Drain mode waits for in-flight turns; Force mode signals cooperative cancel, waits 500ms, then aborts.
 - `/use <provider>` switches the active provider and clears the conversation (Phase 1 invariant: one active provider per conversation).
-- `~/.savvagent/config.toml` for startup connect policy (`opt-in` / `all` / `last-used` / `none`) and per-provider connect timeout.
+- `~/.otto/config.toml` for startup connect policy (`opt-in` / `all` / `last-used` / `none`) and per-provider connect timeout.
 - First-launch migration picker for users upgrading with multiple stored keys.
 
 ### Changed
 - The host's single `provider: Box<dyn ProviderClient>` field is replaced by a `HashMap<ProviderId, PoolEntry>` with `Arc`-held clients and active-turn leases. `HostConfig::providers` carries the registration set in.
 - `/model` lists only the active provider's models. Switching providers requires `/use <provider>`.
-- `SAVVAGENT_MODEL` accepts both legacy bare-model form and new `provider/model` form; ambiguous bare forms log a warning and fall back to default.
+- `OTTO_MODEL` accepts both legacy bare-model form and new `provider/model` form; ambiguous bare forms log a warning and fall back to default.
 
 ### Migration notes
-- Pre-existing users with multiple stored keys see a one-time picker on first launch; the selection writes `startup_providers` to `~/.savvagent/config.toml`.
+- Pre-existing users with multiple stored keys see a one-time picker on first launch; the selection writes `startup_providers` to `~/.otto/config.toml`.
 - Single-key users see no UI change beyond the silent re-connect behavior.
 ```
 
@@ -2695,7 +2695,7 @@ Add to `CHANGELOG.md`:
 Sections that need touching:
 - "Running providers as standalone MCP servers" — add a note that `/connect <provider>` is now silent.
 - New section "Connected provider pool" describing single-active-provider semantics for Phase 1 and `/disconnect`, `/use`.
-- "Configuration files" — document `~/.savvagent/config.toml`.
+- "Configuration files" — document `~/.otto/config.toml`.
 
 (Engineer drafts copy by reading the spec sections "Connect semantics" and "Startup auto-connect policy" and translating to README voice.)
 
@@ -2758,8 +2758,8 @@ Per [[feedback_keep_issue_updated]]: post a comment summarizing what Phase 1 shi
 - `StartupConnectPolicy` + per-provider timeout → Tasks 3, 15 ✓
 - Active provider invariant + `/use` → Tasks 4, 11 ✓
 - `/model` filtered by active → Task 12 ✓
-- Legacy `SAVVAGENT_MODEL` resolver → Task 6 ✓
-- `~/.savvagent/config.toml` + migration picker → Tasks 8, 9 ✓
+- Legacy `OTTO_MODEL` resolver → Task 6 ✓
+- `~/.otto/config.toml` + migration picker → Tasks 8, 9 ✓
 - Status bar lists all pool members + active marker → Task 13 ✓
 - Re-prompt regression test → Task 17 ✓
 - README + CHANGELOG + version bump → Task 18 ✓
@@ -2769,7 +2769,7 @@ Per [[feedback_keep_issue_updated]]: post a comment summarizing what Phase 1 shi
 - Phase 2 gate (cross-vendor tool_use ID compatibility tests) → separate plan
 - `@provider:model` override + cross-provider conversations → separate plan
 - Modality routing → separate plan
-- Routing rules from `~/.savvagent/routing.toml` → separate plan
+- Routing rules from `~/.otto/routing.toml` → separate plan
 - Heuristic classifier → separate plan
 - Transcript per-turn routing badge → arrives with `@`-override in Phase 3 plan
 - `routing.toml` schema and parser → arrives in Phase 5 plan
@@ -2784,7 +2784,7 @@ Per [[feedback_keep_issue_updated]]: post a comment summarizing what Phase 1 shi
 - Lock hygiene: enforced by lease pattern itself + reviewed in Task 4's pool_lifecycle test.
 - Startup policy (Task 15 test): `opt-in` only connects allow-list.
 - Migration (Tasks 8, 9 tests): pure logic in unit tests; UI picker in integration test.
-- Legacy `SAVVAGENT_MODEL` (Task 6 test): all 6 resolution paths.
+- Legacy `OTTO_MODEL` (Task 6 test): all 6 resolution paths.
 - Re-prompt regression (Task 17): the exact bug that motivated this whole change.
 
 Plan is complete and internally consistent.

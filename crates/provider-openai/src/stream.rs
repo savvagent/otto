@@ -18,9 +18,9 @@
 
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
-use savvagent_fence::{FenceChunk, FenceParser};
-use savvagent_mcp::{EmitError, StreamEmitter};
-use savvagent_protocol::{self as spp, BlockDelta, ContentBlock, StreamEvent, Usage, UsageDelta};
+use otto_fence::{FenceChunk, FenceParser};
+use otto_mcp::{EmitError, StreamEmitter};
+use otto_protocol::{self as spp, BlockDelta, ContentBlock, StreamEvent, Usage, UsageDelta};
 
 use crate::api;
 use crate::translate::{parse_tool_arguments, stop_reason_from_str, usage_from_openai};

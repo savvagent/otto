@@ -8,9 +8,9 @@
 
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
-use savvagent_fence::{FenceChunk, FenceParser};
-use savvagent_mcp::StreamEmitter;
-use savvagent_protocol::{
+use otto_fence::{FenceChunk, FenceParser};
+use otto_mcp::StreamEmitter;
+use otto_protocol::{
     self as spp, BlockDelta, ContentBlock, StopReason, StreamEvent, Usage, UsageDelta,
 };
 use serde::Deserialize;

@@ -1,13 +1,13 @@
 //! Bash command execution as a Model Context Protocol stdio server.
 //!
 //! Exposes one tool, [`run`](BashTools::run), that an agent host can call
-//! over MCP. The bundled `savvagent-tool-bash` binary wraps [`BashTools`] in
-//! an `rmcp` stdio transport — see the shim in `crates/savvagent/src/bin/`.
+//! over MCP. The bundled `otto-tool-bash` binary wraps [`BashTools`] in
+//! an `rmcp` stdio transport — see the shim in `crates/otto/src/bin/`.
 //!
 //! # Layer 1 path containment
 //!
 //! Construct via [`BashTools::with_root`] (or set
-//! `SAVVAGENT_TOOL_BASH_ROOT` for the bundled binary) to confine the tool's
+//! `OTTO_TOOL_BASH_ROOT` for the bundled binary) to confine the tool's
 //! working directory to a single project root. With containment on:
 //!
 //! - `cwd = None` → the project root is used.
@@ -286,10 +286,10 @@ impl ServerHandler for BashTools {
             .with_protocol_version(ProtocolVersion::default())
             .with_server_info(
                 Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
-                    .with_description("Savvagent bash tool (run)"),
+                    .with_description("Otto bash tool (run)"),
             )
             .with_instructions(
-                "Bash tool server for Savvagent. Hosts should keep the policy default \
+                "Bash tool server for Otto. Hosts should keep the policy default \
                  of `bash: ask` so every invocation goes through a permission prompt; \
                  the tool itself enforces no allowlist.",
             )
@@ -324,7 +324,7 @@ fn truncate_lossy(mut bytes: Vec<u8>) -> (String, bool) {
 // ---------------------------------------------------------------------------
 
 /// Serve [`BashTools`] over a stdio MCP transport. Shared between the
-/// `savvagent-tool-bash` binary in the `savvagent` crate and any future
+/// `otto-tool-bash` binary in the `otto` crate and any future
 /// standalone packaging.
 pub async fn run() -> anyhow::Result<()> {
     use rmcp::{ServiceExt, transport::stdio};
@@ -339,7 +339,7 @@ pub async fn run() -> anyhow::Result<()> {
         .init();
 
     tracing::info!(
-        "savvagent-tool-bash {} starting on stdio",
+        "otto-tool-bash {} starting on stdio",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -350,7 +350,7 @@ pub async fn run() -> anyhow::Result<()> {
 }
 
 fn build_tools_from_env() -> BashTools {
-    let env_root = std::env::var("SAVVAGENT_TOOL_BASH_ROOT")
+    let env_root = std::env::var("OTTO_TOOL_BASH_ROOT")
         .ok()
         .filter(|s| !s.is_empty());
     if let Some(root) = env_root {
@@ -363,7 +363,7 @@ fn build_tools_from_env() -> BashTools {
                 tracing::warn!(
                     root = %root,
                     error = %e,
-                    "SAVVAGENT_TOOL_BASH_ROOT failed to canonicalize; falling back to CWD",
+                    "OTTO_TOOL_BASH_ROOT failed to canonicalize; falling back to CWD",
                 );
             }
         }

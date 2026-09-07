@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land Layer 4 of the router stack — a hardcoded heuristic classifier that, when the user opts in via `heuristics = true` in `~/.savvagent/routing.toml`, routes short-factoid turns (≤200 chars + `?`) to cheap models and coding-keyword turns to premium models. Override, Modality, and matching Rules still win when they apply.
+**Goal:** Land Layer 4 of the router stack — a hardcoded heuristic classifier that, when the user opts in via `heuristics = true` in `~/.otto/routing.toml`, routes short-factoid turns (≤200 chars + `?`) to cheap models and coding-keyword turns to premium models. Override, Modality, and matching Rules still win when they apply.
 
 **Architecture:**
-- New host-side module `crates/savvagent-host/src/router/heuristics.rs` owns `HeuristicKind`, `classify(user_text)`, and `pick_for_kind(kind, active_provider, active_model, providers)`. Pure functions; no async, no I/O.
+- New host-side module `crates/otto-host/src/router/heuristics.rs` owns `HeuristicKind`, `classify(user_text)`, and `pick_for_kind(kind, active_provider, active_model, providers)`. Pure functions; no async, no I/O.
 - `Router::pick` gains a Layer-4 step between Rules (Layer 3) and Default (Layer 5). No signature change — every input the classifier needs is already in scope.
 - `RoutingReason::Heuristic { kind: HeuristicKind }` is the new variant on the existing `#[non_exhaustive]` enum.
-- TUI's `render_routing_show` (in `crates/savvagent/src/main.rs`) swaps the Phase 5 "ships in a future release" placeholder for a new active-classifier description line when `heuristics = true`.
+- TUI's `render_routing_show` (in `crates/otto/src/main.rs`) swaps the Phase 5 "ships in a future release" placeholder for a new active-classifier description line when `heuristics = true`.
 - Workspace version bumps to `0.20.0` (per-phase scaffolding; the actual tag rolls up all phases later per [[project_multi_provider_release.md]] in user memory).
 
 **Tech Stack:** Rust 2024, Tokio, `async-trait`, `rust_i18n` (locale loading), `toml` (already in workspace). No new dependencies.
@@ -20,15 +20,15 @@
 ## File structure (Phase 6)
 
 **New files:**
-- `crates/savvagent-host/src/router/heuristics.rs` — `HeuristicKind`, `classify`, `pick_for_kind`, plus unit tests.
-- `crates/savvagent-host/tests/heuristic_e2e.rs` — three end-to-end scenarios (short factoid, coding keyword, heuristic off).
+- `crates/otto-host/src/router/heuristics.rs` — `HeuristicKind`, `classify`, `pick_for_kind`, plus unit tests.
+- `crates/otto-host/tests/heuristic_e2e.rs` — three end-to-end scenarios (short factoid, coding keyword, heuristic off).
 
 **Modified files:**
-- `crates/savvagent-host/src/router/mod.rs` — declare `heuristics` submodule + re-export `HeuristicKind`.
-- `crates/savvagent-host/src/router/router.rs` — add `RoutingReason::Heuristic { kind: HeuristicKind }` variant; extend Display; add Layer-4 step inside `Router::pick`; add the seven new router-integration tests.
-- `crates/savvagent-host/src/lib.rs` — re-export `HeuristicKind`.
-- `crates/savvagent/src/main.rs` — replace the `routing.show-heuristics-pending` branch in `render_routing_show` with a new `routing.show-heuristics-active` branch gated on `rules.heuristics`; extend `render_routing_show_tests` with two new cases.
-- `crates/savvagent/locales/en.toml`, `es.toml`, `pt.toml`, `hi.toml` — add `routing.show-heuristics-active` key under `[routing]`.
+- `crates/otto-host/src/router/mod.rs` — declare `heuristics` submodule + re-export `HeuristicKind`.
+- `crates/otto-host/src/router/router.rs` — add `RoutingReason::Heuristic { kind: HeuristicKind }` variant; extend Display; add Layer-4 step inside `Router::pick`; add the seven new router-integration tests.
+- `crates/otto-host/src/lib.rs` — re-export `HeuristicKind`.
+- `crates/otto/src/main.rs` — replace the `routing.show-heuristics-pending` branch in `render_routing_show` with a new `routing.show-heuristics-active` branch gated on `rules.heuristics`; extend `render_routing_show_tests` with two new cases.
+- `crates/otto/locales/en.toml`, `es.toml`, `pt.toml`, `hi.toml` — add `routing.show-heuristics-active` key under `[routing]`.
 - `Cargo.toml` (workspace root) — bump `[workspace.package].version` to `0.20.0` and every `version = "0.19.0"` literal in `[workspace.dependencies]` to `0.20.0`.
 - `CHANGELOG.md` — add `## 0.20.0 - 2026-05-19` entry.
 - `README.md` — add a short "Heuristic classifier" subsection under the routing-rules section.
@@ -38,19 +38,19 @@
 ## Task 1: `HeuristicKind` + `classify` pure function
 
 **Files:**
-- Create: `crates/savvagent-host/src/router/heuristics.rs`
-- Modify: `crates/savvagent-host/src/router/mod.rs`
+- Create: `crates/otto-host/src/router/heuristics.rs`
+- Modify: `crates/otto-host/src/router/mod.rs`
 
 Pure data + classification. No async, no `Router` change yet — the goal is to make `classify(user_text)` self-contained and well-tested before wiring anything to a turn.
 
 - [ ] **Step 1: Declare the module**
 
-Edit `crates/savvagent-host/src/router/mod.rs`. Add `pub mod heuristics;` alphabetically next to the other declarations, and extend the existing public re-export block. Final state of the relevant section:
+Edit `crates/otto-host/src/router/mod.rs`. Add `pub mod heuristics;` alphabetically next to the other declarations, and extend the existing public re-export block. Final state of the relevant section:
 
 ```rust
 //! Routing layers. Owns the layered [`router::Router`] (override →
 //! modality → rules → heuristic → default) plus the supporting modules
-//! that each layer pulls in (rules from `~/.savvagent/routing.toml`,
+//! that each layer pulls in (rules from `~/.otto/routing.toml`,
 //! modality detection, `@`-prefix parsing, heuristic classifier).
 
 pub mod heuristics;
@@ -78,7 +78,7 @@ The module-level docstring at the top of `mod.rs` already reads `override → mo
 
 - [ ] **Step 2: Write the failing tests**
 
-Create `crates/savvagent-host/src/router/heuristics.rs` with the test cases first (TDD). At this point the test module will not compile because `HeuristicKind` / `classify` do not exist; that's the failing state we want:
+Create `crates/otto-host/src/router/heuristics.rs` with the test cases first (TDD). At this point the test module will not compile because `HeuristicKind` / `classify` do not exist; that's the failing state we want:
 
 ```rust
 //! Layer 4 of the router stack — hardcoded heuristic classifier.
@@ -170,13 +170,13 @@ mod tests {
 
 - [ ] **Step 3: Run tests to verify they fail to compile**
 
-Run: `cargo test -p savvagent-host --lib router::heuristics 2>&1 | head -40`
+Run: `cargo test -p otto-host --lib router::heuristics 2>&1 | head -40`
 
 Expected: `error[E0412]: cannot find type 'HeuristicKind' in this scope` (or similar — the test file references items that don't exist yet).
 
 - [ ] **Step 4: Implement `HeuristicKind` and `classify`**
 
-Insert above the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/router/heuristics.rs`:
+Insert above the `#[cfg(test)] mod tests` block in `crates/otto-host/src/router/heuristics.rs`:
 
 ```rust
 /// Coding-flavored substring keywords (lowercase). Substring (not
@@ -240,14 +240,14 @@ pub fn classify(user_text: &str) -> Option<HeuristicKind> {
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent-host --lib router::heuristics`
+Run: `cargo test -p otto-host --lib router::heuristics`
 
 Expected: all 7 tests pass.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/heuristics.rs crates/savvagent-host/src/router/mod.rs
+git add crates/otto-host/src/router/heuristics.rs crates/otto-host/src/router/mod.rs
 git commit -m "feat(host): HeuristicKind + classify (Phase 6 scaffold)"
 ```
 
@@ -256,18 +256,18 @@ git commit -m "feat(host): HeuristicKind + classify (Phase 6 scaffold)"
 ## Task 2: `pick_for_kind` picker function
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/heuristics.rs`
+- Modify: `crates/otto-host/src/router/heuristics.rs`
 
 Pure picker that maps a `HeuristicKind` + pool state to a `(provider, model)` pick. Returns `None` for the "no-op" cases (active already in tier; no matching tier in pool).
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/router/heuristics.rs`:
+Append to the `#[cfg(test)] mod tests` block in `crates/otto-host/src/router/heuristics.rs`:
 
 ```rust
     use crate::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
     use crate::router::ProviderView;
-    use savvagent_protocol::ProviderId;
+    use otto_protocol::ProviderId;
 
     fn pid(s: &str) -> ProviderId {
         ProviderId::new(s).expect("valid provider id")
@@ -438,19 +438,19 @@ Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/route
 
 - [ ] **Step 2: Run tests to verify they fail to compile**
 
-Run: `cargo test -p savvagent-host --lib router::heuristics 2>&1 | head -30`
+Run: `cargo test -p otto-host --lib router::heuristics 2>&1 | head -30`
 
 Expected: `error[E0425]: cannot find function 'pick_for_kind'` (or similar).
 
 - [ ] **Step 3: Implement `pick_for_kind`**
 
-Insert above the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/router/heuristics.rs`, alongside the existing `classify` function:
+Insert above the `#[cfg(test)] mod tests` block in `crates/otto-host/src/router/heuristics.rs`, alongside the existing `classify` function:
 
 ```rust
 use crate::capabilities::CostTier;
 use crate::router::ProviderView;
 use crate::router::rules::DefaultPick;
-use savvagent_protocol::ProviderId;
+use otto_protocol::ProviderId;
 
 /// Pick a `(provider, model)` for a classified turn. Returns `None` when:
 /// - The active provider's active model is already in the desired tier
@@ -516,18 +516,18 @@ pub fn pick_for_kind(
 }
 ```
 
-**Note on `models()` accessor:** `ProviderCapabilities::models() -> &[ModelCapabilities]` is **already present** at `crates/savvagent-host/src/capabilities.rs:137`. No edit to `capabilities.rs` is needed; the `git add … capabilities.rs` in Step 5 is therefore a no-op (and the file should not appear in the commit).
+**Note on `models()` accessor:** `ProviderCapabilities::models() -> &[ModelCapabilities]` is **already present** at `crates/otto-host/src/capabilities.rs:137`. No edit to `capabilities.rs` is needed; the `git add … capabilities.rs` in Step 5 is therefore a no-op (and the file should not appear in the commit).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent-host --lib router::heuristics`
+Run: `cargo test -p otto-host --lib router::heuristics`
 
 Expected: all 14 tests pass (7 from Task 1 + 7 new).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/heuristics.rs
+git add crates/otto-host/src/router/heuristics.rs
 git commit -m "feat(host): heuristics::pick_for_kind + tier-priority picker (Phase 6)"
 ```
 
@@ -536,14 +536,14 @@ git commit -m "feat(host): heuristics::pick_for_kind + tier-priority picker (Pha
 ## Task 3: `RoutingReason::Heuristic` variant + re-exports
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/router.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Modify: `crates/otto-host/src/router/router.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 Adds the new reason variant and its Display. No `Router::pick` wiring yet — that's Task 4.
 
 - [ ] **Step 1: Write the failing Display test**
 
-Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/router/router.rs`:
+Append to the `#[cfg(test)] mod tests` block in `crates/otto-host/src/router/router.rs`:
 
 ```rust
     #[test]
@@ -562,13 +562,13 @@ Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/route
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `cargo test -p savvagent-host --lib router::router::tests::routing_reason_heuristic_displays 2>&1 | head -20`
+Run: `cargo test -p otto-host --lib router::router::tests::routing_reason_heuristic_displays 2>&1 | head -20`
 
 Expected: `no variant or associated item named 'Heuristic' found for enum 'RoutingReason'`.
 
 - [ ] **Step 3: Add the variant + Display arm**
 
-Edit `crates/savvagent-host/src/router/router.rs`. In the `RoutingReason` enum (around line 39), add the new variant alphabetically between `Default` and `Rule` is not required; place it between `Rule` and `Default` to mirror the layer order:
+Edit `crates/otto-host/src/router/router.rs`. In the `RoutingReason` enum (around line 39), add the new variant alphabetically between `Default` and `Rule` is not required; place it between `Rule` and `Default` to mirror the layer order:
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -621,7 +621,7 @@ Update the doc comment at the top of the file (`router.rs` lines 1-18) to reflec
 //!
 //! - Layer 1 — `@provider[:model]` override (Override reason)
 //! - Layer 2 — required-modality redirect (Modality reason)
-//! - Layer 3 — user rules from `~/.savvagent/routing.toml` (Rule reason)
+//! - Layer 3 — user rules from `~/.otto/routing.toml` (Rule reason)
 //! - Layer 4 — heuristic classifier, opt-in via `heuristics = true` in
 //!             routing.toml (Heuristic reason)
 //! - Layer 5 — fall through to the active provider + its default model
@@ -633,7 +633,7 @@ Update the doc comment at the top of the file (`router.rs` lines 1-18) to reflec
 
 - [ ] **Step 4: Re-export `HeuristicKind` from the crate root**
 
-Edit `crates/savvagent-host/src/lib.rs`. Update the existing `pub use router::{ … }` block to include `HeuristicKind`:
+Edit `crates/otto-host/src/lib.rs`. Update the existing `pub use router::{ … }` block to include `HeuristicKind`:
 
 ```rust
 pub use router::{
@@ -647,20 +647,20 @@ pub use router::{
 
 - [ ] **Step 5: Run the test to verify it passes**
 
-Run: `cargo test -p savvagent-host --lib router::router::tests::routing_reason_heuristic_displays`
+Run: `cargo test -p otto-host --lib router::router::tests::routing_reason_heuristic_displays`
 
 Expected: PASS.
 
 Also confirm the crate still builds:
 
-Run: `cargo build -p savvagent-host`
+Run: `cargo build -p otto-host`
 
 Expected: clean build (no `dead_code` warning on the new variant since it's now referenced by the Display impl + the test).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/router.rs crates/savvagent-host/src/lib.rs
+git add crates/otto-host/src/router/router.rs crates/otto-host/src/lib.rs
 git commit -m "feat(host): RoutingReason::Heuristic variant + Display (Phase 6)"
 ```
 
@@ -669,13 +669,13 @@ git commit -m "feat(host): RoutingReason::Heuristic variant + Display (Phase 6)"
 ## Task 4: Layer 4 wiring inside `Router::pick`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/router/router.rs`
+- Modify: `crates/otto-host/src/router/router.rs`
 
 Wire the heuristic layer into `Router::pick`. No signature change. Seven new tests cover the layered-precedence contract.
 
 - [ ] **Step 1: Write the failing router-integration tests**
 
-Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/router/router.rs`. (The helpers `caps`, `caps_with_vision`, `rules_with_one_rule`, etc. already exist there from Phase 5 — reuse them. Define a new helper for tier-bearing caps:)
+Append to the `#[cfg(test)] mod tests` block in `crates/otto-host/src/router/router.rs`. (The helpers `caps`, `caps_with_vision`, `rules_with_one_rule`, etc. already exist there from Phase 5 — reuse them. Define a new helper for tier-bearing caps:)
 
 ```rust
     fn caps_tier(model: &str, tier: CostTier) -> ProviderCapabilities {
@@ -984,13 +984,13 @@ Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/route
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent-host --lib router::router::tests::pick_heuristic 2>&1 | head -40`
+Run: `cargo test -p otto-host --lib router::router::tests::pick_heuristic 2>&1 | head -40`
 
 Expected: tests `pick_heuristic_short_factoid_routes_to_cheap`, `pick_heuristic_coding_routes_to_premium`, and `pick_heuristic_returns_default_when_active_already_in_tier` FAIL because `Router::pick` does not yet call the heuristic layer — they expect `Heuristic(short)` / `Heuristic(coding)` but get `Default`. The "off / rule beats / modality beats / override beats" tests pass since they expect non-Heuristic outcomes.
 
 - [ ] **Step 3: Wire Layer 4 in `Router::pick`**
 
-Edit `crates/savvagent-host/src/router/router.rs`, inside the `Router::pick` function. Insert the new layer between the rules layer and the default-fallthrough return (today's code: the `if let Some((name, pick)) = rules.evaluate(...) { … }` block ends, then the function falls through to the Default return). Add the heuristic layer immediately after the rules block:
+Edit `crates/otto-host/src/router/router.rs`, inside the `Router::pick` function. Insert the new layer between the rules layer and the default-fallthrough return (today's code: the `if let Some((name, pick)) = rules.evaluate(...) { … }` block ends, then the function falls through to the Default return). Add the heuristic layer immediately after the rules block:
 
 ```rust
         if let Some((name, pick)) = rules.evaluate(&signals, providers) {
@@ -1040,27 +1040,27 @@ Also update the doc comment on `Router::pick` to flip "Heuristic — not yet imp
     /// 1. **Override** — `@`-prefix from the user input.
     /// 2. **Modality** — same-provider redirect when the active model
     ///    lacks a required modality.
-    /// 3. **Rules** — first matching rule from `~/.savvagent/routing.toml`.
+    /// 3. **Rules** — first matching rule from `~/.otto/routing.toml`.
     /// 4. **Heuristic** — opt-in classifier gated on `rules.heuristics`.
     /// 5. **Default** — active provider + active model.
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent-host --lib router::router::tests`
+Run: `cargo test -p otto-host --lib router::router::tests`
 
 Expected: all router-integration tests (pre-existing + 7 new + the Display test from Task 3) pass.
 
 Run the broader crate tests too, to confirm no Phase 5 regressions:
 
-Run: `cargo test -p savvagent-host`
+Run: `cargo test -p otto-host`
 
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/router/router.rs
+git add crates/otto-host/src/router/router.rs
 git commit -m "feat(host): Router::pick Layer 4 — heuristic classifier (Phase 6)"
 ```
 
@@ -1069,13 +1069,13 @@ git commit -m "feat(host): Router::pick Layer 4 — heuristic classifier (Phase 
 ## Task 5: End-to-end integration tests
 
 **Files:**
-- Create: `crates/savvagent-host/tests/heuristic_e2e.rs`
+- Create: `crates/otto-host/tests/heuristic_e2e.rs`
 
-Three end-to-end scenarios that exercise the full `Host::run_turn_streaming` path with the heuristic classifier enabled. Mirrors the structure of `crates/savvagent-host/tests/route_rules_e2e.rs`.
+Three end-to-end scenarios that exercise the full `Host::run_turn_streaming` path with the heuristic classifier enabled. Mirrors the structure of `crates/otto-host/tests/route_rules_e2e.rs`.
 
 - [ ] **Step 1: Write the end-to-end tests**
 
-Create `crates/savvagent-host/tests/heuristic_e2e.rs`:
+Create `crates/otto-host/tests/heuristic_e2e.rs`:
 
 ```rust
 //! End-to-end heuristic-classifier integration tests.
@@ -1094,13 +1094,13 @@ use std::io::Write;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use savvagent_host::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
-use savvagent_host::{
+use otto_host::capabilities::{CostTier, ModelCapabilities, ProviderCapabilities};
+use otto_host::{
     HeuristicKind, Host, HostConfig, ProviderEndpoint, ProviderRegistration, RoutingReason,
     StartupConnectPolicy, TurnEvent,
 };
-use savvagent_mcp::ProviderClient;
-use savvagent_protocol::{
+use otto_mcp::ProviderClient;
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ContentBlock, ListModelsResponse, ProviderError, ProviderId,
     StopReason, StreamEvent,
 };
@@ -1350,14 +1350,14 @@ async fn heuristic_off_falls_through_to_default() {
 
 - [ ] **Step 2: Run the tests to verify they pass**
 
-Run: `cargo test -p savvagent-host --test heuristic_e2e`
+Run: `cargo test -p otto-host --test heuristic_e2e`
 
 Expected: all 3 tests pass. If any test hangs, double-check streaming permissions — synthetic turns with tool calls require a pre-registered `Allow` rule per [[feedback_streaming_test_permissions]]. (This test path does not use tools, so an `Allow` rule should not be needed; if a hang appears anyway, mirror the pre-registration pattern from `tests/modality_routing.rs`.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/heuristic_e2e.rs
+git add crates/otto-host/tests/heuristic_e2e.rs
 git commit -m "test(host): end-to-end Phase 6 heuristic classifier (3 scenarios)"
 ```
 
@@ -1366,17 +1366,17 @@ git commit -m "test(host): end-to-end Phase 6 heuristic classifier (3 scenarios)
 ## Task 6: TUI `/route show` active-classifier line + locales
 
 **Files:**
-- Modify: `crates/savvagent/locales/en.toml`
-- Modify: `crates/savvagent/locales/es.toml`
-- Modify: `crates/savvagent/locales/pt.toml`
-- Modify: `crates/savvagent/locales/hi.toml`
-- Modify: `crates/savvagent/src/main.rs`
+- Modify: `crates/otto/locales/en.toml`
+- Modify: `crates/otto/locales/es.toml`
+- Modify: `crates/otto/locales/pt.toml`
+- Modify: `crates/otto/locales/hi.toml`
+- Modify: `crates/otto/src/main.rs`
 
 Swap Phase 5's "ships in a future release" placeholder for a description of what the active classifier does.
 
 - [ ] **Step 1: Write the failing render tests**
 
-Append to the `render_routing_show_tests` module in `crates/savvagent/src/main.rs` (around line 3045, just before the closing brace of the `#[cfg(test)] mod render_routing_show_tests { … }` block):
+Append to the `render_routing_show_tests` module in `crates/otto/src/main.rs` (around line 3045, just before the closing brace of the `#[cfg(test)] mod render_routing_show_tests { … }` block):
 
 ```rust
     #[test]
@@ -1431,17 +1431,17 @@ Append to the `render_routing_show_tests` module in `crates/savvagent/src/main.r
     }
 ```
 
-`HOME_LOCK` lives at `crate::test_helpers::HOME_LOCK` (defined in `crates/savvagent/src/test_helpers.rs`). The test code above already uses that path; no further hunting needed.
+`HOME_LOCK` lives at `crate::test_helpers::HOME_LOCK` (defined in `crates/otto/src/test_helpers.rs`). The test code above already uses that path; no further hunting needed.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test -p savvagent --lib render_routing_show_tests::heuristic 2>&1 | head -30`
+Run: `cargo test -p otto --lib render_routing_show_tests::heuristic 2>&1 | head -30`
 
 Expected: `heuristic_active_line_shown_when_heuristics_true` FAILS because today's code emits `routing.show-heuristics-pending` ("ships in a future release"), not the new active line.
 
 - [ ] **Step 3: Add the new locale key in en.toml**
 
-Edit `crates/savvagent/locales/en.toml`. Inside the existing `[routing]` table (currently at lines 352-365), insert one new key just below `show-heuristics-pending` and before `show-last`:
+Edit `crates/otto/locales/en.toml`. Inside the existing `[routing]` table (currently at lines 352-365), insert one new key just below `show-heuristics-pending` and before `show-last`:
 
 ```toml
 show-heuristics-active  = "heuristics: enabled — short questions (≤200 chars + '?') route to cheap models; coding-flavored prompts (refactor/implement/debug/...) route to premium models. Substring keyword match."
@@ -1451,7 +1451,7 @@ show-heuristics-active  = "heuristics: enabled — short questions (≤200 chars
 
 - [ ] **Step 4: Add placeholders in the other locales**
 
-Edit `crates/savvagent/locales/es.toml`, `pt.toml`, and `hi.toml`. In each file, insert the same key under `[routing]` with a TODO placeholder. Pattern matches Phase 5 (rust_i18n falls back to en automatically):
+Edit `crates/otto/locales/es.toml`, `pt.toml`, and `hi.toml`. In each file, insert the same key under `[routing]` with a TODO placeholder. Pattern matches Phase 5 (rust_i18n falls back to en automatically):
 
 ```toml
 show-heuristics-active  = "TODO: translate — heuristics enabled, short questions route to cheap models; coding prompts route to premium models"
@@ -1459,7 +1459,7 @@ show-heuristics-active  = "TODO: translate — heuristics enabled, short questio
 
 - [ ] **Step 5: Swap the render branch in main.rs**
 
-Edit `crates/savvagent/src/main.rs::render_routing_show` (around line 1349). Replace:
+Edit `crates/otto/src/main.rs::render_routing_show` (around line 1349). Replace:
 
 ```rust
     if rules.heuristics {
@@ -1477,14 +1477,14 @@ with:
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cargo test -p savvagent --lib render_routing_show_tests`
+Run: `cargo test -p otto --lib render_routing_show_tests`
 
 Expected: all `render_routing_show_tests` cases (pre-existing + 2 new) pass.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent/src/main.rs crates/savvagent/locales/en.toml crates/savvagent/locales/es.toml crates/savvagent/locales/pt.toml crates/savvagent/locales/hi.toml
+git add crates/otto/src/main.rs crates/otto/locales/en.toml crates/otto/locales/es.toml crates/otto/locales/pt.toml crates/otto/locales/hi.toml
 git commit -m "feat(tui): /route show describes active classifier when heuristics=true (Phase 6)"
 ```
 
@@ -1525,7 +1525,7 @@ Edit `CHANGELOG.md`. Insert a new section between the existing header lines (abo
 
 ### Added
 
-- **Heuristic classifier (Layer 4 of the router)**. Opt-in via `heuristics = true` in `~/.savvagent/routing.toml`. Short questions (≤200 chars + `?`) route to a cheap model (`CostTier::Free` or `Cheap`); coding-flavored prompts (substring match against `refactor`, `implement`, `debug`, `fix bug`, `compile`, `stack trace`, `function`, `class`, `error`) route to a premium model (`Premium` or `Standard`). Same-provider preferred; sibling providers are walked only when the active provider has no matching model. Off by default.
+- **Heuristic classifier (Layer 4 of the router)**. Opt-in via `heuristics = true` in `~/.otto/routing.toml`. Short questions (≤200 chars + `?`) route to a cheap model (`CostTier::Free` or `Cheap`); coding-flavored prompts (substring match against `refactor`, `implement`, `debug`, `fix bug`, `compile`, `stack trace`, `function`, `class`, `error`) route to a premium model (`Premium` or `Standard`). Same-provider preferred; sibling providers are walked only when the active provider has no matching model. Off by default.
 - **`RoutingReason::Heuristic { kind }`** variant on the existing `#[non_exhaustive]` enum. Transcript badge renders `Heuristic(short)` / `Heuristic(coding)`.
 - **`/route show`** now describes the active classifier (categories + triggers) when `heuristics = true`. When `heuristics = false`, no heuristic line is printed.
 
@@ -1546,7 +1546,7 @@ Edit `README.md`. Find the existing routing-rules section (added in Phase 5; gre
 ```markdown
 ### Heuristic classifier (opt-in)
 
-Add `heuristics = true` to `~/.savvagent/routing.toml` to turn on Layer 4 of the router — a hardcoded classifier that picks a cheaper or stronger model based on the shape of the user input:
+Add `heuristics = true` to `~/.otto/routing.toml` to turn on Layer 4 of the router — a hardcoded classifier that picks a cheaper or stronger model based on the shape of the user input:
 
 - **Short question** (≤200 chars + a `?`) → cheapest connected model (`CostTier::Free` or `Cheap`).
 - **Coding-flavored prompt** (contains any of `refactor`, `implement`, `debug`, `fix bug`, `compile`, `stack trace`, `function`, `class`, `error`) → strongest connected model (`Premium` or `Standard`).
@@ -1601,18 +1601,18 @@ rustup run stable cargo fmt --all -- --check
 rustup run stable cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Expected: clean. Per [[feedback_dead_code_in_binary_crate.md]], any new `pub` item in the `savvagent` binary crate must be consumed by non-test code — verify nothing in the new code path triggers a `dead_code` error. (Everything in this plan flows through `Router::pick` and `render_routing_show`, both reached from production code, so no `#[allow(dead_code)]` should be needed.)
+Expected: clean. Per [[feedback_dead_code_in_binary_crate.md]], any new `pub` item in the `otto` binary crate must be consumed by non-test code — verify nothing in the new code path triggers a `dead_code` error. (Everything in this plan flows through `Router::pick` and `render_routing_show`, both reached from production code, so no `#[allow(dead_code)]` should be needed.)
 
 - [ ] **Step 3: Spot-check `/route show` manually (optional but recommended)**
 
 Build and launch the TUI:
 
 ```bash
-cargo run -p savvagent
+cargo run -p otto
 ```
 
 Inside the TUI:
-1. Create or edit `~/.savvagent/routing.toml` with `heuristics = true` and run `/route reload`.
+1. Create or edit `~/.otto/routing.toml` with `heuristics = true` and run `/route reload`.
 2. Run `/route show` — confirm the new active-classifier line appears (`heuristics: enabled — short questions...`).
 3. Send a turn `"what is 2+2?"` — confirm the transcript badge reads `Heuristic(short)` and the chosen model is the cheapest connected one.
 4. Send `"refactor this function"` — confirm badge reads `Heuristic(coding)` and the chosen model is the premium one.

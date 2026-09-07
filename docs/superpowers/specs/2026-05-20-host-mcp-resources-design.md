@@ -84,7 +84,7 @@ injection (host→model) preserves the layering.
 ## Module layout
 
 ```
-crates/savvagent-host/src/
+crates/otto-host/src/
 ├── tools.rs               # ToolRegistry (existing) — gains ResourceCapturingHandler
 ├── resources.rs           # NEW: ResourceCache, ResourceSnapshot, owner-tracking
 └── session.rs             # Host — owns ResourceCache; TurnEvent::ResourceUpdated;

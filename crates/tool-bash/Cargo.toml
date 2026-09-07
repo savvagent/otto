@@ -7,8 +7,8 @@ repository.workspace = true
 rust-version.workspace = true
 description = "Bash command execution as a stdio MCP server (run)"
 
-# Library only. The `savvagent-tool-bash` binary that hosts spawn lives in the
-# `savvagent` crate (a thin shim around `tool_bash::run`) so the release archive
+# Library only. The `otto-tool-bash` binary that hosts spawn lives in the
+# `otto` crate (a thin shim around `tool_bash::run`) so the release archive
 # can ship every binary under a single installer — same pattern as `tool-fs`.
 [lib]
 name = "tool_bash"

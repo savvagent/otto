@@ -10,7 +10,7 @@
 //! skipping, and `.git/` exclusion are inherited for free.
 //!
 //! Layer-1 path containment via [`GrepTools::with_root`] (or set
-//! `SAVVAGENT_TOOL_GREP_ROOT` for the bundled binary) is **non-optional**:
+//! `OTTO_TOOL_GREP_ROOT` for the bundled binary) is **non-optional**:
 //! every path in the result is canonicalized and required to lie within
 //! the configured root. Sensitive paths (`.env*`, `.ssh/`, anything
 //! containing `credential` case-insensitively) are filtered server-side
@@ -150,12 +150,12 @@ impl ServerHandler for GrepTools {
             .with_server_info(
                 Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"))
                     .with_description(
-                        "Savvagent code-search tool (search). \
+                        "Otto code-search tool (search). \
                          Layer-1 path containment is non-optional in production builds.",
                     ),
             )
             .with_instructions(
-                "Code search tool server for Savvagent. Layer-1 path containment is \
+                "Code search tool server for Otto. Layer-1 path containment is \
                  non-optional in production builds; sensitive paths are filtered \
                  server-side before results are returned.",
             )
@@ -163,7 +163,7 @@ impl ServerHandler for GrepTools {
 }
 
 /// Serve [`GrepTools`] over a stdio MCP transport. Shared between the
-/// `savvagent-tool-grep` binary and the bundled shim in the `savvagent`
+/// `otto-tool-grep` binary and the bundled shim in the `otto`
 /// crate's release archive.
 pub async fn run() -> anyhow::Result<()> {
     use rmcp::{ServiceExt, transport::stdio};
@@ -178,7 +178,7 @@ pub async fn run() -> anyhow::Result<()> {
         .init();
 
     tracing::info!(
-        "savvagent-tool-grep {} starting on stdio",
+        "otto-tool-grep {} starting on stdio",
         env!("CARGO_PKG_VERSION")
     );
 
@@ -188,13 +188,13 @@ pub async fn run() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build a [`GrepTools`] honoring `SAVVAGENT_TOOL_GREP_ROOT`. Falls back to
+/// Build a [`GrepTools`] honoring `OTTO_TOOL_GREP_ROOT`. Falls back to
 /// the process CWD. Layer-1 path containment is non-optional: if neither
 /// the env var nor CWD can be canonicalized into a valid root, this
 /// returns an error so the binary exits non-zero rather than silently
 /// serving without containment.
 fn build_tools_from_env() -> anyhow::Result<GrepTools> {
-    let env_root = std::env::var("SAVVAGENT_TOOL_GREP_ROOT")
+    let env_root = std::env::var("OTTO_TOOL_GREP_ROOT")
         .ok()
         .filter(|s| !s.is_empty());
     if let Some(root) = env_root {
@@ -210,10 +210,10 @@ fn build_tools_from_env() -> anyhow::Result<GrepTools> {
                 tracing::error!(
                     root = %root,
                     error = %e,
-                    "SAVVAGENT_TOOL_GREP_ROOT failed to canonicalize; refusing to start",
+                    "OTTO_TOOL_GREP_ROOT failed to canonicalize; refusing to start",
                 );
                 Err(anyhow::anyhow!(
-                    "SAVVAGENT_TOOL_GREP_ROOT={root} failed to canonicalize: {e}"
+                    "OTTO_TOOL_GREP_ROOT={root} failed to canonicalize: {e}"
                 ))
             }
         };

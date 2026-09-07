@@ -35,17 +35,17 @@ mod bindings;
 use std::cell::Cell;
 
 use bindings::Guest;
-use bindings::exports::savvagent::plugin::screens::{
+use bindings::exports::otto::plugin::screens::{
     Guest as ScreensGuest, GuestScreenInstance, ScreenArgs, ScreenInstance,
 };
-use bindings::savvagent::plugin::types as t;
+use bindings::otto::plugin::types as t;
 
 struct Component;
 
 impl Guest for Component {
     fn manifest() -> Result<t::PluginManifest, t::PluginError> {
         Ok(t::PluginManifest {
-            id: "savvagent.hello-interactive".to_string(),
+            id: "otto.hello-interactive".to_string(),
             name: "Hello (Interactive)".to_string(),
             version: "0.1.0".to_string(),
             description:

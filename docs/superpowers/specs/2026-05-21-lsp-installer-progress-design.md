@@ -1,7 +1,7 @@
 # LSP installer — live install-progress UX
 
 Status: draft for review · 2026-05-21
-Owner: savvagent-rs · `internal:lsp-installer`
+Owner: otto-rs · `internal:lsp-installer`
 Follow-up to: `docs/superpowers/specs/2026-05-20-lsp-installer-design.md`
 
 ## Goal
@@ -74,7 +74,7 @@ The footer changes to:
 
 ```
   All done — 3 installed, 1 failed.
-  Press Enter to close. Restart savvagent to pick up the new servers.
+  Press Enter to close. Restart otto to pick up the new servers.
 ```
 
 On Enter the screen closes and emits a small batch of `PushNote`
@@ -93,12 +93,12 @@ The screen tips line spells this out so it isn't a surprise.
 
 ## Architecture
 
-Two new files inside `crates/savvagent/src/plugin/builtin/lsp_installer/`:
+Two new files inside `crates/otto/src/plugin/builtin/lsp_installer/`:
 
 - `progress.rs` — `ProgressState`, `EntryStatus`, the install driver
   task, the channel wiring.
 - `progress_screen.rs` — `LspProgressScreen` implementing
-  `savvagent_plugin::Screen`.
+  `otto_plugin::Screen`.
 
 `mod.rs` gains a new entry in `Contributions::screens` and a new arm in
 `create_screen`. `screen.rs` (the picker) swaps the `Confirm` arm from
@@ -163,8 +163,8 @@ When `LspProgressScreen::new(ids)` runs:
    `LspInstallerPlugin::handle_install` today). Unknown ids land in
    `ProgressState.entries` with `Failed{ reason: "no catalog entry", fatal: false }`
    so the user sees what was skipped.
-2. Resolve `Target::current()`, `~/.savvagent/lsp-bin`,
-   `~/.savvagent/lsp.toml`. Any of these failing → push a single
+2. Resolve `Target::current()`, `~/.otto/lsp-bin`,
+   `~/.otto/lsp.toml`. Any of these failing → push a single
    pre-failure entry, mark `finished=true`, no spawn.
 3. Build the `Downloader` and `NpmRunner` once.
 4. `tokio::spawn` the driver task. The task:

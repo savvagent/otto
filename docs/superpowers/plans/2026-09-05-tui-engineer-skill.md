@@ -22,7 +22,7 @@ pattern, and the cross-platform lesson from #18 — never hardcode `/bin/true`, 
 **Tech Stack:** Markdown documentation only (`SKILL.md` frontmatter + prose, matching
 `.claude/skills/rust-engineer/SKILL.md`'s shape).
 
-**Spec:** none — fast-path per `savvagent-development`'s trivial-task criteria (single file, no new
+**Spec:** none — fast-path per `otto-development`'s trivial-task criteria (single file, no new
 interface, no behavior change; see PR body).
 
 **Release line:** v0.20.2 (patch — docs-only, no new interface).
@@ -43,19 +43,19 @@ interface, no behavior change; see PR body).
       branch shows only `rust-engineer/SKILL.md` before this task — the gap issue #24 describes.
 - [x] Add frontmatter matching `rust-engineer`'s shape: `name: tui-engineer`, a `description` field
       stating when to use it (designing/building/reviewing ratatui/crossterm TUIs; applies whenever
-      touching `crates/savvagent` — `app.rs`, `tui.rs`, `ui.rs`, `canvas_input.rs`, plugin
+      touching `crates/otto` — `app.rs`, `tui.rs`, `ui.rs`, `canvas_input.rs`, plugin
       screens/widgets), `tools: Read, Write, Edit, Bash, Glob, Grep`, `model: sonnet`.
 - [x] Write the body covering (as prose sections, not a rigid checklist): core principles, layout &
       responsiveness, widgets & styling, async integration (including this repo's host-swap
       `RwLock` rule and the `crossterm::EventStream` + `tokio::select!` pattern), accessibility,
       testing conventions matching this repo's existing `ui::tests::*`/`canvas_input::tests::*`
-      patterns, a performance checklist, and a "Project-specific notes (savvagent-cli)" section
+      patterns, a performance checklist, and a "Project-specific notes (otto)" section
       citing the `Host` `Arc<RwLock<Option<Arc<Host>>>>` pattern, the `Effect`-based canvas dispatch
-      pattern (`crates/savvagent/src/canvas_input.rs`), and the `/bin/true`-hardcoding lesson from
+      pattern (`crates/otto/src/canvas_input.rs`), and the `/bin/true`-hardcoding lesson from
       #18 (resolve system commands via `PATH`, never a hardcoded platform-specific absolute path).
 - [x] Verify accuracy against the current codebase: confirm the `Host` swap pattern
-      (`crates/savvagent/src/app.rs`, `tui.rs`), the `Effect`/`apply_canvas_effects` pattern
-      (`crates/savvagent/src/canvas_input.rs`), and the `open_url_system_browser` `PATH`-resolution
+      (`crates/otto/src/app.rs`, `tui.rs`), the `Effect`/`apply_canvas_effects` pattern
+      (`crates/otto/src/canvas_input.rs`), and the `open_url_system_browser` `PATH`-resolution
       tests referenced in the skill still match the code as described.
 - [x] Public-interface check: none — docs only, no SPP/tool/plugin/slash-command/on-disk-format
       change.

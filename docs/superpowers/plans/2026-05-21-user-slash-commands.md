@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Let users add slash commands by dropping markdown files under `.savvagent/commands/` (project) or `~/.savvagent/commands/` (user), with `.claude/commands/` fallback for compatibility, YAML frontmatter for metadata, and templating tokens (`$ARGUMENTS`, `$N`, `!<cmd>`, `@<file>`) in the body.
+**Goal:** Let users add slash commands by dropping markdown files under `.otto/commands/` (project) or `~/.otto/commands/` (user), with `.claude/commands/` fallback for compatibility, YAML frontmatter for metadata, and templating tokens (`$ARGUMENTS`, `$N`, `!<cmd>`, `@<file>`) in the body.
 
-**Architecture:** One new built-in plugin `internal:user-slash-commands` under `crates/savvagent/src/plugin/builtin/user_slash_commands/`. Synchronous discovery in `Plugin::manifest()` (cached behind a `OnceCell`); contributes one `SlashSpec` per discovered file plus a static `/reload-commands` entry. Dispatch path: trust check → template expansion → emit `Effect::PromptSend { text }` (existing). Trust modal is a new `Screen`. Three new `Effect` variants: `SetNextTurnModelOverride`, `SetTrustLevel`, `ReindexPlugin`.
+**Architecture:** One new built-in plugin `internal:user-slash-commands` under `crates/otto/src/plugin/builtin/user_slash_commands/`. Synchronous discovery in `Plugin::manifest()` (cached behind a `OnceCell`); contributes one `SlashSpec` per discovered file plus a static `/reload-commands` entry. Dispatch path: trust check → template expansion → emit `Effect::PromptSend { text }` (existing). Trust modal is a new `Screen`. Three new `Effect` variants: `SetNextTurnModelOverride`, `SetTrustLevel`, `ReindexPlugin`.
 
 **Tech Stack:** Rust 2024, `serde_yaml_ng` (already workspace dep) for frontmatter, `ignore` (already workspace dep) for directory walking, `serde_json` for the trust file, async-trait `Plugin` impl, `tokio::process::Command` for shell substitution, `tempfile` for tests.
 
@@ -24,20 +24,20 @@ The plan delta for the one-turn model override remains: `Effect::SetNextTurnMode
 ## File map
 
 **Create:**
-- `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs` — `Plugin` impl, dispatch, contributions.
-- `crates/savvagent/src/plugin/builtin/user_slash_commands/frontmatter.rs` — YAML parse.
-- `crates/savvagent/src/plugin/builtin/user_slash_commands/name.rs` — namespaced slug validation.
-- `crates/savvagent/src/plugin/builtin/user_slash_commands/discovery.rs` — directory walks + precedence.
-- `crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs` — `$ARGUMENTS`/`$N`/`@`/`!` expansion.
-- `crates/savvagent/src/plugin/builtin/user_slash_commands/trust.rs` — `~/.savvagent/trusted-projects.json` round-trip.
-- `crates/savvagent/src/plugin/builtin/user_slash_commands/trust_modal.rs` — `Screen` impl for first-run trust prompt.
+- `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs` — `Plugin` impl, dispatch, contributions.
+- `crates/otto/src/plugin/builtin/user_slash_commands/frontmatter.rs` — YAML parse.
+- `crates/otto/src/plugin/builtin/user_slash_commands/name.rs` — namespaced slug validation.
+- `crates/otto/src/plugin/builtin/user_slash_commands/discovery.rs` — directory walks + precedence.
+- `crates/otto/src/plugin/builtin/user_slash_commands/template.rs` — `$ARGUMENTS`/`$N`/`@`/`!` expansion.
+- `crates/otto/src/plugin/builtin/user_slash_commands/trust.rs` — `~/.otto/trusted-projects.json` round-trip.
+- `crates/otto/src/plugin/builtin/user_slash_commands/trust_modal.rs` — `Screen` impl for first-run trust prompt.
 
 **Modify:**
-- `crates/savvagent-plugin/src/effect.rs` — add three `Effect` variants.
-- `crates/savvagent/src/plugin/builtin/mod.rs` — declare the new module.
-- `crates/savvagent/src/plugin/mod.rs` (around `register_builtins()`) — register the plugin.
-- `crates/savvagent/src/plugin/effects.rs` — `apply_effects` arms for the new variants.
-- `crates/savvagent/src/app.rs` — add `next_turn_model_override`, `pending_slash_after_trust` fields; consume override in worker spawn.
+- `crates/otto-plugin/src/effect.rs` — add three `Effect` variants.
+- `crates/otto/src/plugin/builtin/mod.rs` — declare the new module.
+- `crates/otto/src/plugin/mod.rs` (around `register_builtins()`) — register the plugin.
+- `crates/otto/src/plugin/effects.rs` — `apply_effects` arms for the new variants.
+- `crates/otto/src/app.rs` — add `next_turn_model_override`, `pending_slash_after_trust` fields; consume override in worker spawn.
 - `README.md` — new section + on-disk paths reference.
 - `CHANGELOG.md` — release entry.
 
@@ -46,7 +46,7 @@ The plan delta for the one-turn model override remains: `Effect::SetNextTurnMode
 ## Conventions
 
 - All `cargo test` invocations specify the crate to keep iteration fast.
-- Tests touching `HOME` must take `HOME_LOCK` (see `crates/savvagent/src/plugin/builtin/themes/` for the existing pattern); tests touching `rust_i18n::set_locale` must reset to `"en"` inside the lock per the codebase's locale-isolation rule.
+- Tests touching `HOME` must take `HOME_LOCK` (see `crates/otto/src/plugin/builtin/themes/` for the existing pattern); tests touching `rust_i18n::set_locale` must reset to `"en"` inside the lock per the codebase's locale-isolation rule.
 - Commits land on the current branch (no branching mid-plan unless the engineer prefers PR-per-task; either is fine).
 
 ---
@@ -54,22 +54,22 @@ The plan delta for the one-turn model override remains: `Effect::SetNextTurnMode
 ### Task 1: Skeleton plugin + registration
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`
-- Modify: `crates/savvagent/src/plugin/mod.rs:80-110` (`register_builtins`)
+- Create: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs`
+- Modify: `crates/otto/src/plugin/mod.rs:80-110` (`register_builtins`)
 
 - [ ] **Step 1: Write the smoke test**
 
-In `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs`:
+In `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs`:
 
 ```rust
 //! `internal:user-slash-commands` — discovers and dispatches user-defined
-//! slash commands from `.savvagent/commands/` and `.claude/commands/`.
+//! slash commands from `.otto/commands/` and `.claude/commands/`.
 //!
 //! See `docs/superpowers/specs/2026-05-21-user-slash-commands-design.md`.
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Contributions, Effect, Manifest, Plugin, PluginError, PluginId, PluginKind, SlashSpec,
 };
 
@@ -103,7 +103,7 @@ impl Plugin for UserSlashCommandsPlugin {
             id: PluginId::new("internal:user-slash-commands").expect("valid built-in id"),
             name: "User slash commands".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            description: "User-defined commands from .savvagent/commands/ and .claude/commands/"
+            description: "User-defined commands from .otto/commands/ and .claude/commands/"
                 .into(),
             kind: PluginKind::Core,
             contributions,
@@ -142,18 +142,18 @@ mod tests {
 
 - [ ] **Step 2: Wire the module in `builtin/mod.rs`**
 
-Append to `crates/savvagent/src/plugin/builtin/mod.rs` (alphabetical position is fine; mirror the style of neighboring entries):
+Append to `crates/otto/src/plugin/builtin/mod.rs` (alphabetical position is fine; mirror the style of neighboring entries):
 
 ```rust
 /// `internal:user-slash-commands` — discovers user-authored slash commands
-/// from `.savvagent/commands/` / `.claude/commands/` and dispatches them
+/// from `.otto/commands/` / `.claude/commands/` and dispatches them
 /// with templating expansion.
 pub mod user_slash_commands;
 ```
 
 - [ ] **Step 3: Register the plugin in `register_builtins()`**
 
-In `crates/savvagent/src/plugin/mod.rs`, inside the `plugins` Vec around line 90, add (alphabetical insertion is fine — locate the position between `themes` and any later entry, or append before the closing `]`):
+In `crates/otto/src/plugin/mod.rs`, inside the `plugins` Vec around line 90, add (alphabetical insertion is fine — locate the position between `themes` and any later entry, or append before the closing `]`):
 
 ```rust
         Box::new(builtin::user_slash_commands::UserSlashCommandsPlugin::new()),
@@ -162,7 +162,7 @@ In `crates/savvagent/src/plugin/mod.rs`, inside the `plugins` Vec around line 90
 - [ ] **Step 4: Run the smoke test**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::tests::manifest_has_reload_commands
+cargo test -p otto --lib plugin::builtin::user_slash_commands::tests::manifest_has_reload_commands
 ```
 
 Expected: PASS (one test).
@@ -178,9 +178,9 @@ Expected: success, no warnings introduced.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs \
-        crates/savvagent/src/plugin/builtin/mod.rs \
-        crates/savvagent/src/plugin/mod.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/mod.rs \
+        crates/otto/src/plugin/builtin/mod.rs \
+        crates/otto/src/plugin/mod.rs
 git commit -m "feat(plugin/user-slash-commands): plugin skeleton with /reload-commands"
 ```
 
@@ -189,12 +189,12 @@ git commit -m "feat(plugin/user-slash-commands): plugin skeleton with /reload-co
 ### Task 2: Frontmatter parsing
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_slash_commands/frontmatter.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod frontmatter;`)
+- Create: `crates/otto/src/plugin/builtin/user_slash_commands/frontmatter.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod frontmatter;`)
 
 - [ ] **Step 1: Write the failing tests**
 
-In `crates/savvagent/src/plugin/builtin/user_slash_commands/frontmatter.rs`:
+In `crates/otto/src/plugin/builtin/user_slash_commands/frontmatter.rs`:
 
 ```rust
 //! Parses optional YAML frontmatter from command markdown files.
@@ -381,15 +381,15 @@ mod tests {
 
 - [ ] **Step 2: Declare the module**
 
-Add to `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs`:
+Add to `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs`:
 
 ```rust
 mod frontmatter;
 ```
 
-- [ ] **Step 3: Add `serde_yaml_ng` to `crates/savvagent/Cargo.toml`**
+- [ ] **Step 3: Add `serde_yaml_ng` to `crates/otto/Cargo.toml`**
 
-If not already a direct dep of the `savvagent` crate, add it to `[dependencies]`:
+If not already a direct dep of the `otto` crate, add it to `[dependencies]`:
 
 ```toml
 serde_yaml_ng.workspace = true
@@ -400,7 +400,7 @@ Verify the existing workspace declaration in `Cargo.toml` (already `serde_yaml_n
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::frontmatter::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::frontmatter::tests
 ```
 
 Expected: 6 PASS, 0 FAIL.
@@ -408,9 +408,9 @@ Expected: 6 PASS, 0 FAIL.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/Cargo.toml \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/frontmatter.rs
+git add crates/otto/Cargo.toml \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/frontmatter.rs
 git commit -m "feat(plugin/user-slash-commands): YAML frontmatter parsing"
 ```
 
@@ -419,12 +419,12 @@ git commit -m "feat(plugin/user-slash-commands): YAML frontmatter parsing"
 ### Task 3: Namespaced command-name validation
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_slash_commands/name.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod name;`)
+- Create: `crates/otto/src/plugin/builtin/user_slash_commands/name.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod name;`)
 
 - [ ] **Step 1: Write the failing tests**
 
-In `crates/savvagent/src/plugin/builtin/user_slash_commands/name.rs`:
+In `crates/otto/src/plugin/builtin/user_slash_commands/name.rs`:
 
 ```rust
 //! Validates and constructs namespaced slash-command names from file paths.
@@ -542,7 +542,7 @@ mod name;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::name::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::name::tests
 ```
 
 Expected: 6 PASS.
@@ -550,8 +550,8 @@ Expected: 6 PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/name.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/name.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs
 git commit -m "feat(plugin/user-slash-commands): namespaced name validation"
 ```
 
@@ -560,13 +560,13 @@ git commit -m "feat(plugin/user-slash-commands): namespaced name validation"
 ### Task 4: Discovery — single directory walk
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_slash_commands/discovery.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod discovery;`)
-- Modify: `crates/savvagent/Cargo.toml` (add `ignore`, `tempfile` dev-dep)
+- Create: `crates/otto/src/plugin/builtin/user_slash_commands/discovery.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod discovery;`)
+- Modify: `crates/otto/Cargo.toml` (add `ignore`, `tempfile` dev-dep)
 
 - [ ] **Step 1: Add deps**
 
-In `crates/savvagent/Cargo.toml`:
+In `crates/otto/Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -582,7 +582,7 @@ tempfile = "3"
 
 - [ ] **Step 2: Write the failing tests + skeleton**
 
-In `crates/savvagent/src/plugin/builtin/user_slash_commands/discovery.rs`:
+In `crates/otto/src/plugin/builtin/user_slash_commands/discovery.rs`:
 
 ```rust
 //! Walks the four well-known command directories and produces a
@@ -613,12 +613,12 @@ pub struct Discovered {
 /// Where this command came from. Drives precedence and trust.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Origin {
-    /// `<project>/.savvagent/commands/`
-    ProjectSavvagent,
+    /// `<project>/.otto/commands/`
+    ProjectOtto,
     /// `<project>/.claude/commands/`
     ProjectClaude,
-    /// `~/.savvagent/commands/`
-    UserSavvagent,
+    /// `~/.otto/commands/`
+    UserOtto,
     /// `~/.claude/commands/`
     UserClaude,
 }
@@ -626,7 +626,7 @@ pub enum Origin {
 impl Origin {
     /// `true` if this origin is project-local (subject to trust prompts).
     pub fn is_project(self) -> bool {
-        matches!(self, Origin::ProjectSavvagent | Origin::ProjectClaude)
+        matches!(self, Origin::ProjectOtto | Origin::ProjectClaude)
     }
 }
 
@@ -712,7 +712,7 @@ mod tests {
     fn missing_root_returns_empty() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("nonexistent");
-        let (out, warns) = walk_one(&root, Origin::ProjectSavvagent);
+        let (out, warns) = walk_one(&root, Origin::ProjectOtto);
         assert!(out.is_empty());
         assert!(warns.is_empty());
     }
@@ -728,7 +728,7 @@ mod tests {
         );
         write(tmp.path(), "not-markdown.txt", "ignored");
 
-        let (out, warns) = walk_one(tmp.path(), Origin::ProjectSavvagent);
+        let (out, warns) = walk_one(tmp.path(), Origin::ProjectOtto);
         let names: Vec<_> = out.iter().map(|d| d.name.as_str()).collect();
         assert!(names.contains(&"review"));
         assert!(names.contains(&"team:lint"));
@@ -740,7 +740,7 @@ mod tests {
     fn invalid_slug_is_skipped_with_warning() {
         let tmp = TempDir::new().unwrap();
         write(tmp.path(), "GoodName.md", "body");
-        let (out, warns) = walk_one(tmp.path(), Origin::ProjectSavvagent);
+        let (out, warns) = walk_one(tmp.path(), Origin::ProjectOtto);
         assert!(out.is_empty());
         assert_eq!(warns.len(), 1);
         assert!(warns[0].contains("GoodName.md"));
@@ -750,7 +750,7 @@ mod tests {
     fn malformed_frontmatter_is_skipped_with_warning() {
         let tmp = TempDir::new().unwrap();
         write(tmp.path(), "bad.md", "---\n: : :\n---\nbody");
-        let (out, warns) = walk_one(tmp.path(), Origin::ProjectSavvagent);
+        let (out, warns) = walk_one(tmp.path(), Origin::ProjectOtto);
         assert!(out.is_empty());
         assert_eq!(warns.len(), 1);
     }
@@ -776,7 +776,7 @@ mod discovery;
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::discovery::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::discovery::tests
 ```
 
 Expected: 5 PASS.
@@ -784,9 +784,9 @@ Expected: 5 PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/Cargo.toml \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/discovery.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs
+git add crates/otto/Cargo.toml \
+        crates/otto/src/plugin/builtin/user_slash_commands/discovery.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs
 git commit -m "feat(plugin/user-slash-commands): single-directory discovery walker"
 ```
 
@@ -795,7 +795,7 @@ git commit -m "feat(plugin/user-slash-commands): single-directory discovery walk
 ### Task 5: Discovery — four-path precedence
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/discovery.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/discovery.rs`
 
 - [ ] **Step 1: Add failing test**
 
@@ -803,13 +803,13 @@ Append to the existing `tests` module in `discovery.rs`:
 
 ```rust
     #[test]
-    fn precedence_project_over_user_and_savvagent_over_claude() {
+    fn precedence_project_over_user_and_otto_over_claude() {
         let proj = TempDir::new().unwrap();
         let home = TempDir::new().unwrap();
         write(
-            &proj.path().join(".savvagent/commands"),
+            &proj.path().join(".otto/commands"),
             "x.md",
-            "from project savvagent",
+            "from project otto",
         );
         write(
             &proj.path().join(".claude/commands"),
@@ -817,9 +817,9 @@ Append to the existing `tests` module in `discovery.rs`:
             "from project claude",
         );
         write(
-            &home.path().join(".savvagent/commands"),
+            &home.path().join(".otto/commands"),
             "x.md",
-            "from user savvagent",
+            "from user otto",
         );
         write(
             &home.path().join(".claude/commands"),
@@ -828,16 +828,16 @@ Append to the existing `tests` module in `discovery.rs`:
         );
         // Add a user-only command to verify it survives.
         write(
-            &home.path().join(".savvagent/commands"),
+            &home.path().join(".otto/commands"),
             "user_only.md",
             "user only",
         );
 
         let index = walk_all(proj.path(), home.path());
-        // x should resolve to project-savvagent body.
+        // x should resolve to project-otto body.
         let x = &index.commands.get("x").unwrap();
-        assert_eq!(x.origin, Origin::ProjectSavvagent);
-        assert!(x.body.contains("from project savvagent"));
+        assert_eq!(x.origin, Origin::ProjectOtto);
+        assert!(x.body.contains("from project otto"));
         // user_only is present.
         assert!(index.commands.contains_key("user_only"));
     }
@@ -860,22 +860,22 @@ pub struct Index {
     pub warnings: Vec<String>,
 }
 
-/// Walk all four directories with precedence: project-savvagent >
-/// project-claude > user-savvagent > user-claude. First hit per name
+/// Walk all four directories with precedence: project-otto >
+/// project-claude > user-otto > user-claude. First hit per name
 /// wins; later hits at lower precedence are silently dropped.
 pub fn walk_all(project_root: &Path, home: &Path) -> Index {
     let layers = [
         (
-            project_root.join(".savvagent").join("commands"),
-            Origin::ProjectSavvagent,
+            project_root.join(".otto").join("commands"),
+            Origin::ProjectOtto,
         ),
         (
             project_root.join(".claude").join("commands"),
             Origin::ProjectClaude,
         ),
         (
-            home.join(".savvagent").join("commands"),
-            Origin::UserSavvagent,
+            home.join(".otto").join("commands"),
+            Origin::UserOtto,
         ),
         (home.join(".claude").join("commands"), Origin::UserClaude),
     ];
@@ -894,7 +894,7 @@ pub fn walk_all(project_root: &Path, home: &Path) -> Index {
 - [ ] **Step 3: Run the new test**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::discovery::tests::precedence_project_over_user_and_savvagent_over_claude
+cargo test -p otto --lib plugin::builtin::user_slash_commands::discovery::tests::precedence_project_over_user_and_otto_over_claude
 ```
 
 Expected: PASS.
@@ -902,7 +902,7 @@ Expected: PASS.
 - [ ] **Step 4: Run all discovery tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::discovery::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::discovery::tests
 ```
 
 Expected: 6 PASS.
@@ -910,7 +910,7 @@ Expected: 6 PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/discovery.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/discovery.rs
 git commit -m "feat(plugin/user-slash-commands): four-path precedence walk"
 ```
 
@@ -919,15 +919,15 @@ git commit -m "feat(plugin/user-slash-commands): four-path precedence walk"
 ### Task 6: Trust file round-trip
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_slash_commands/trust.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod trust;`)
+- Create: `crates/otto/src/plugin/builtin/user_slash_commands/trust.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod trust;`)
 
 - [ ] **Step 1: Write the failing tests + impl**
 
-In `crates/savvagent/src/plugin/builtin/user_slash_commands/trust.rs`:
+In `crates/otto/src/plugin/builtin/user_slash_commands/trust.rs`:
 
 ```rust
-//! Loads and saves `~/.savvagent/trusted-projects.json` — the persistent
+//! Loads and saves `~/.otto/trusted-projects.json` — the persistent
 //! store of "always trust this project's commands" decisions.
 
 use std::collections::BTreeMap;
@@ -956,7 +956,7 @@ struct FileSchema {
 /// File path the trust store lives at. `home` is the user's home dir
 /// (caller supplies it so the function is testable).
 pub fn trust_file_path(home: &Path) -> PathBuf {
-    home.join(".savvagent").join("trusted-projects.json")
+    home.join(".otto").join("trusted-projects.json")
 }
 
 /// Load the persisted trust set. Missing or malformed files return an
@@ -1037,7 +1037,7 @@ mod tests {
     #[test]
     fn malformed_file_returns_empty_with_warning() {
         let tmp = TempDir::new().unwrap();
-        std::fs::create_dir_all(tmp.path().join(".savvagent")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".otto")).unwrap();
         std::fs::write(trust_file_path(tmp.path()), "{ not json").unwrap();
         let (m, warn) = load(tmp.path());
         assert!(m.is_empty());
@@ -1057,7 +1057,7 @@ mod trust;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::trust::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::trust::tests
 ```
 
 Expected: 3 PASS.
@@ -1065,8 +1065,8 @@ Expected: 3 PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/trust.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/trust.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs
 git commit -m "feat(plugin/user-slash-commands): trusted-projects.json round-trip"
 ```
 
@@ -1075,12 +1075,12 @@ git commit -m "feat(plugin/user-slash-commands): trusted-projects.json round-tri
 ### Task 7: Template expansion — `$ARGUMENTS` and `$N`
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod template;`)
+- Create: `crates/otto/src/plugin/builtin/user_slash_commands/template.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod template;`)
 
 - [ ] **Step 1: Write the failing tests + impl**
 
-In `crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs`:
+In `crates/otto/src/plugin/builtin/user_slash_commands/template.rs`:
 
 ```rust
 //! Single-pass templating expansion for command bodies.
@@ -1158,7 +1158,7 @@ mod template;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::template::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::template::tests
 ```
 
 Expected: 4 PASS.
@@ -1166,8 +1166,8 @@ Expected: 4 PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/template.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs
 git commit -m "feat(plugin/user-slash-commands): \$ARGUMENTS and \$N expansion"
 ```
 
@@ -1176,7 +1176,7 @@ git commit -m "feat(plugin/user-slash-commands): \$ARGUMENTS and \$N expansion"
 ### Task 8: Template expansion — `@<path>` file inclusion
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/template.rs`
 
 - [ ] **Step 1: Add the failing test**
 
@@ -1267,12 +1267,12 @@ pub fn expand_files(body: &str) -> Expanded {
 
 - [ ] **Step 3: Add `tempfile` to dev-dependencies if not already there (done in Task 4)**
 
-Verify `[dev-dependencies] tempfile = "3"` is in `crates/savvagent/Cargo.toml`.
+Verify `[dev-dependencies] tempfile = "3"` is in `crates/otto/Cargo.toml`.
 
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::template::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::template::tests
 ```
 
 Expected: 6 PASS.
@@ -1280,7 +1280,7 @@ Expected: 6 PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/template.rs
 git commit -m "feat(plugin/user-slash-commands): @<path> file inclusion"
 ```
 
@@ -1289,7 +1289,7 @@ git commit -m "feat(plugin/user-slash-commands): @<path> file inclusion"
 ### Task 9: Template expansion — `!<cmd>` shell substitution
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/template.rs`
 
 - [ ] **Step 1: Add failing tests**
 
@@ -1398,7 +1398,7 @@ async fn run_shell(cmd: &str) -> Result<String, String> {
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::template::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::template::tests
 ```
 
 Expected: 9 PASS (4 args + 2 file + 3 shell).
@@ -1406,7 +1406,7 @@ Expected: 9 PASS (4 args + 2 file + 3 shell).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/template.rs
 git commit -m "feat(plugin/user-slash-commands): !<cmd> shell substitution"
 ```
 
@@ -1415,7 +1415,7 @@ git commit -m "feat(plugin/user-slash-commands): !<cmd> shell substitution"
 ### Task 10: Combined `expand_all` orchestration
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/template.rs`
 
 - [ ] **Step 1: Add the failing test**
 
@@ -1501,7 +1501,7 @@ pub async fn expand_all(
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::template::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::template::tests
 ```
 
 Expected: 11 PASS.
@@ -1509,7 +1509,7 @@ Expected: 11 PASS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/template.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/template.rs
 git commit -m "feat(plugin/user-slash-commands): expand_all orchestration"
 ```
 
@@ -1518,11 +1518,11 @@ git commit -m "feat(plugin/user-slash-commands): expand_all orchestration"
 ### Task 11: New `Effect` variants (`SetNextTurnModelOverride`, `SetTrustLevel`, `ReindexPlugin`)
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/effect.rs`
+- Modify: `crates/otto-plugin/src/effect.rs`
 
 - [ ] **Step 1: Add the variants**
 
-At the bottom of the `Effect` enum in `crates/savvagent-plugin/src/effect.rs` (before the closing `}` — the enum is `#[non_exhaustive]` so adding variants is non-breaking):
+At the bottom of the `Effect` enum in `crates/otto-plugin/src/effect.rs` (before the closing `}` — the enum is `#[non_exhaustive]` so adding variants is non-breaking):
 
 ```rust
     /// Override the model used by the next *single* turn submitted via
@@ -1538,7 +1538,7 @@ At the bottom of the `Effect` enum in `crates/savvagent-plugin/src/effect.rs` (b
     /// Result of a trust prompt. Emitted by the trust modal screen and
     /// consumed by the runtime to update the in-memory trust map (and
     /// to persist `Always` decisions to
-    /// `~/.savvagent/trusted-projects.json`). When applied, the runtime
+    /// `~/.otto/trusted-projects.json`). When applied, the runtime
     /// resumes the slash command that triggered the prompt (stored on
     /// `App::pending_slash_after_trust`).
     SetTrustLevel {
@@ -1590,7 +1590,7 @@ mod added_effects_smoke {
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent-plugin --lib effect::added_effects_smoke
+cargo test -p otto-plugin --lib effect::added_effects_smoke
 ```
 
 Expected: 1 PASS.
@@ -1601,12 +1601,12 @@ Expected: 1 PASS.
 cargo build --workspace
 ```
 
-Expected: success. If `apply_effects` in `crates/savvagent/src/plugin/effects.rs` has an exhaustive match without a wildcard, the build fails here — that's the trigger to add the `_ => {}` arm or proceed to Task 13 immediately.
+Expected: success. If `apply_effects` in `crates/otto/src/plugin/effects.rs` has an exhaustive match without a wildcard, the build fails here — that's the trigger to add the `_ => {}` arm or proceed to Task 13 immediately.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/effect.rs
+git add crates/otto-plugin/src/effect.rs
 git commit -m "feat(plugin/effect): SetNextTurnModelOverride, SetTrustLevel, ReindexPlugin"
 ```
 
@@ -1615,11 +1615,11 @@ git commit -m "feat(plugin/effect): SetNextTurnModelOverride, SetTrustLevel, Rei
 ### Task 12: `App` field additions for override + pending dispatch
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
+- Modify: `crates/otto/src/app.rs`
 
 - [ ] **Step 1: Locate the `App` struct**
 
-Open `crates/savvagent/src/app.rs`. The `App` struct is around line 380-700 (it's large). Find an appropriate clustering of optional fields (look for similar `Option<…>` fields, e.g. `pending_model_change` referenced from `effects.rs:925`).
+Open `crates/otto/src/app.rs`. The `App` struct is around line 380-700 (it's large). Find an appropriate clustering of optional fields (look for similar `Option<…>` fields, e.g. `pending_model_change` referenced from `effects.rs:925`).
 
 - [ ] **Step 2: Add the two new fields**
 
@@ -1627,7 +1627,7 @@ Insert near the other `pending_*` fields:
 
 ```rust
     /// One-turn model override populated by
-    /// [`savvagent_plugin::Effect::SetNextTurnModelOverride`] and consumed
+    /// [`otto_plugin::Effect::SetNextTurnModelOverride`] and consumed
     /// by the worker spawn at the start of the next turn. `None` means
     /// "use the provider's currently-active model."
     pub next_turn_model_override: Option<String>,
@@ -1658,7 +1658,7 @@ Expected: success.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs
+git add crates/otto/src/app.rs
 git commit -m "feat(app): next_turn_model_override + pending_slash_after_trust fields"
 ```
 
@@ -1667,11 +1667,11 @@ git commit -m "feat(app): next_turn_model_override + pending_slash_after_trust f
 ### Task 13: `apply_effects` arm for `SetNextTurnModelOverride`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/effects.rs`
+- Modify: `crates/otto/src/plugin/effects.rs`
 
 - [ ] **Step 1: Locate the dispatch site**
 
-In `crates/savvagent/src/plugin/effects.rs`, find the existing `Effect::PromptSend` arm at line 215 (`Effect::PromptSend { text } => app.submit_prompt(text),`). The other arms surround it.
+In `crates/otto/src/plugin/effects.rs`, find the existing `Effect::PromptSend` arm at line 215 (`Effect::PromptSend { text } => app.submit_prompt(text),`). The other arms surround it.
 
 - [ ] **Step 2: Add the new arm**
 
@@ -1690,7 +1690,7 @@ In the existing test module at the bottom of `effects.rs`, add:
 ```rust
     #[tokio::test]
     async fn set_next_turn_model_override_writes_field() {
-        use savvagent_plugin::Effect;
+        use otto_plugin::Effect;
         let mut app = test_app();
         let effs = vec![Effect::SetNextTurnModelOverride {
             id: "claude-sonnet-4-6".into(),
@@ -1708,7 +1708,7 @@ In the existing test module at the bottom of `effects.rs`, add:
 - [ ] **Step 4: Run the test**
 
 ```bash
-cargo test -p savvagent --lib plugin::effects::tests::set_next_turn_model_override_writes_field
+cargo test -p otto --lib plugin::effects::tests::set_next_turn_model_override_writes_field
 ```
 
 Expected: PASS.
@@ -1716,7 +1716,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/effects.rs
+git add crates/otto/src/plugin/effects.rs
 git commit -m "feat(plugin/effects): apply SetNextTurnModelOverride"
 ```
 
@@ -1725,13 +1725,13 @@ git commit -m "feat(plugin/effects): apply SetNextTurnModelOverride"
 ### Task 14: Consume the model override in the worker spawn
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs` (the worker spawn path)
-- Modify: `crates/savvagent/src/tui.rs` (if the spawn site lives there — confirm by grepping for `submit_prompt`)
+- Modify: `crates/otto/src/app.rs` (the worker spawn path)
+- Modify: `crates/otto/src/tui.rs` (if the spawn site lives there — confirm by grepping for `submit_prompt`)
 
 - [ ] **Step 1: Locate the turn-spawn site**
 
 ```bash
-rg -n "submit_prompt\|spawn_turn\|run_turn_streaming" crates/savvagent/src/app.rs crates/savvagent/src/tui.rs | head -10
+rg -n "submit_prompt\|spawn_turn\|run_turn_streaming" crates/otto/src/app.rs crates/otto/src/tui.rs | head -10
 ```
 
 Identify where the worker task is spawned and the host's `complete`/`run_turn_streaming` is invoked.
@@ -1744,7 +1744,7 @@ Just before the worker spawn, take the override out of `App`:
 let model_override = self.next_turn_model_override.take();
 ```
 
-Pass `model_override` into the worker task. If the host's API exposes a per-turn model selection, plumb it through there; otherwise (most likely case) call `host.set_model(model_override)` before the turn and restore the previous model after — but **only** if the override is `Some`. Inspect `crates/savvagent-host/src/lib.rs` for the actual API; adapt the call to fit the existing pattern.
+Pass `model_override` into the worker task. If the host's API exposes a per-turn model selection, plumb it through there; otherwise (most likely case) call `host.set_model(model_override)` before the turn and restore the previous model after — but **only** if the override is `Some`. Inspect `crates/otto-host/src/lib.rs` for the actual API; adapt the call to fit the existing pattern.
 
 - [ ] **Step 3: Write an integration test**
 
@@ -1753,7 +1753,7 @@ If the host exposes a `set_model` or per-turn override knob, mock or assert that
 - [ ] **Step 4: Build and run the existing test suite to confirm no regression**
 
 ```bash
-cargo test -p savvagent
+cargo test -p otto
 ```
 
 Expected: existing tests still pass; any new test added in Step 3 also passes.
@@ -1761,7 +1761,7 @@ Expected: existing tests still pass; any new test added in Step 3 also passes.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs crates/savvagent/src/tui.rs
+git add crates/otto/src/app.rs crates/otto/src/tui.rs
 git commit -m "feat(app): consume next_turn_model_override on worker spawn"
 ```
 
@@ -1770,12 +1770,12 @@ git commit -m "feat(app): consume next_turn_model_override on worker spawn"
 ### Task 15: `apply_effects` arm for `ReindexPlugin`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/effects.rs`
-- Reference: `crates/savvagent/src/plugin/manifests.rs::Indexes::build`
+- Modify: `crates/otto/src/plugin/effects.rs`
+- Reference: `crates/otto/src/plugin/manifests.rs::Indexes::build`
 
 - [ ] **Step 1: Add a method to rebuild a single plugin's contributions**
 
-The cleanest path is a new method on the runtime's manifest index. Read `crates/savvagent/src/plugin/manifests.rs` and find `Indexes::build`. Add a sibling method:
+The cleanest path is a new method on the runtime's manifest index. Read `crates/otto/src/plugin/manifests.rs` and find `Indexes::build`. Add a sibling method:
 
 ```rust
     /// Re-call `Plugin::manifest()` for `plugin_id` and replace this
@@ -1784,7 +1784,7 @@ The cleanest path is a new method on the runtime's manifest index. Read `crates/
     /// untouched.
     pub fn reindex_plugin(
         &mut self,
-        plugin_id: &savvagent_plugin::PluginId,
+        plugin_id: &otto_plugin::PluginId,
         registry: &crate::plugin::registry::PluginRegistry,
     ) {
         // Remove existing entries owned by plugin_id from each index.
@@ -1807,7 +1807,7 @@ Open `Indexes::build` and factor the per-plugin insertion into a helper that bot
 
 - [ ] **Step 2: Add the effect arm**
 
-In `crates/savvagent/src/plugin/effects.rs`, near the existing slash-related arms:
+In `crates/otto/src/plugin/effects.rs`, near the existing slash-related arms:
 
 ```rust
         Effect::ReindexPlugin { id } => {
@@ -1839,7 +1839,7 @@ If the existing test helpers don't expose enough seams to write this concretely,
 - [ ] **Step 4: Build and run**
 
 ```bash
-cargo test -p savvagent
+cargo test -p otto
 ```
 
 Expected: existing tests still pass.
@@ -1847,7 +1847,7 @@ Expected: existing tests still pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/effects.rs crates/savvagent/src/plugin/manifests.rs
+git add crates/otto/src/plugin/effects.rs crates/otto/src/plugin/manifests.rs
 git commit -m "feat(plugin/effects): apply ReindexPlugin via Indexes::reindex_plugin"
 ```
 
@@ -1856,13 +1856,13 @@ git commit -m "feat(plugin/effects): apply ReindexPlugin via Indexes::reindex_pl
 ### Task 16: Trust modal `Screen` impl
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/user_slash_commands/trust_modal.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod trust_modal;`)
+- Create: `crates/otto/src/plugin/builtin/user_slash_commands/trust_modal.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs` (add `mod trust_modal;`)
 
 - [ ] **Step 1: Read an existing modal Screen for the pattern**
 
 ```bash
-ls crates/savvagent/src/plugin/builtin/themes/
+ls crates/otto/src/plugin/builtin/themes/
 ```
 
 Pick the smallest modal `Screen` impl (e.g. theme picker) as the template.
@@ -1876,7 +1876,7 @@ In `trust_modal.rs`:
 //! command directories that include shell substitution.
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, Region, Screen, ScreenArgs,
     StyledLine, StyledSpan,
 };
@@ -1907,7 +1907,7 @@ impl Screen for TrustModal {
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         let mut lines = vec![StyledLine {
             spans: vec![StyledSpan::plain(
-                "This project ships commands under .savvagent/commands/ and .claude/commands/.",
+                "This project ships commands under .otto/commands/ and .claude/commands/.",
             )],
         }];
         lines.push(StyledLine {
@@ -1972,7 +1972,7 @@ mod tests {
     fn key(c: char) -> KeyEventPortable {
         KeyEventPortable {
             code: KeyCodePortable::Char(c),
-            mods: savvagent_plugin::KeyMods::default(),
+            mods: otto_plugin::KeyMods::default(),
         }
     }
 
@@ -2018,7 +2018,7 @@ mod tests {
 }
 ```
 
-If `StyledSpan::plain` or `KeyEventPortable`/`KeyMods::default()` don't match the exact public API, check `crates/savvagent-plugin/src/styled.rs` and `types.rs` and adjust. The intent is what matters: three lines of decision text and a key handler that maps y/n/q.
+If `StyledSpan::plain` or `KeyEventPortable`/`KeyMods::default()` don't match the exact public API, check `crates/otto-plugin/src/styled.rs` and `types.rs` and adjust. The intent is what matters: three lines of decision text and a key handler that maps y/n/q.
 
 - [ ] **Step 3: Declare the module + contribute the ScreenSpec**
 
@@ -2031,9 +2031,9 @@ mod trust_modal;
 And update `UserSlashCommandsPlugin::manifest()`'s `contributions` to register the screen:
 
 ```rust
-        contributions.screens = vec![savvagent_plugin::ScreenSpec {
+        contributions.screens = vec![otto_plugin::ScreenSpec {
             id: "trust_modal".into(),
-            layout: savvagent_plugin::ScreenLayout::CenteredModal {
+            layout: otto_plugin::ScreenLayout::CenteredModal {
                 width_pct: 60,
                 height_pct: 30,
                 title: Some("Trust project commands?".into()),
@@ -2047,8 +2047,8 @@ And implement `Plugin::create_screen` on `UserSlashCommandsPlugin`:
     fn create_screen(
         &self,
         id: &str,
-        args: savvagent_plugin::ScreenArgs,
-    ) -> Result<Box<dyn savvagent_plugin::Screen>, PluginError> {
+        args: otto_plugin::ScreenArgs,
+    ) -> Result<Box<dyn otto_plugin::Screen>, PluginError> {
         match id {
             "trust_modal" => Ok(Box::new(trust_modal::TrustModal::from_args(args)?)),
             _ => Err(PluginError::ScreenNotFound(id.into())),
@@ -2059,7 +2059,7 @@ And implement `Plugin::create_screen` on `UserSlashCommandsPlugin`:
 - [ ] **Step 4: Run the tests**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::trust_modal::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::trust_modal::tests
 ```
 
 Expected: 4 PASS.
@@ -2067,8 +2067,8 @@ Expected: 4 PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/trust_modal.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/trust_modal.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs
 git commit -m "feat(plugin/user-slash-commands): trust-prompt modal screen"
 ```
 
@@ -2077,8 +2077,8 @@ git commit -m "feat(plugin/user-slash-commands): trust-prompt modal screen"
 ### Task 17: `apply_effects` arm for `SetTrustLevel`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/effects.rs`
-- Modify: `crates/savvagent/src/app.rs` (add an in-memory trust map field)
+- Modify: `crates/otto/src/plugin/effects.rs`
+- Modify: `crates/otto/src/app.rs` (add an in-memory trust map field)
 
 - [ ] **Step 1: Add the in-memory map to `App`**
 
@@ -2086,10 +2086,10 @@ In `app.rs`, near `pending_slash_after_trust`:
 
 ```rust
     /// In-memory trust state for the session. Loaded from
-    /// `~/.savvagent/trusted-projects.json` at startup; `Always`
+    /// `~/.otto/trusted-projects.json` at startup; `Always`
     /// decisions persist back to that file via `Effect::SetTrustLevel`.
     pub trust_levels:
-        std::collections::BTreeMap<std::path::PathBuf, savvagent_plugin::Effect>,
+        std::collections::BTreeMap<std::path::PathBuf, otto_plugin::Effect>,
 ```
 
 Actually use the concrete `TrustLevel` type, not `Effect`. Replace with:
@@ -2195,7 +2195,7 @@ If `crate::test_utils::HOME_LOCK` doesn't exist, search for `HOME_LOCK` in the c
 - [ ] **Step 5: Run**
 
 ```bash
-cargo test -p savvagent --lib plugin::effects::tests::set_trust_level_always_persists_and_resumes
+cargo test -p otto --lib plugin::effects::tests::set_trust_level_always_persists_and_resumes
 ```
 
 Expected: PASS.
@@ -2203,7 +2203,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/effects.rs crates/savvagent/src/app.rs
+git add crates/otto/src/plugin/effects.rs crates/otto/src/app.rs
 git commit -m "feat(plugin/effects): apply SetTrustLevel with persistence and resume"
 ```
 
@@ -2212,7 +2212,7 @@ git commit -m "feat(plugin/effects): apply SetTrustLevel with persistence and re
 ### Task 18: Plugin `manifest()` — synchronous initial discovery
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs`
 
 - [ ] **Step 1: Add the cached discovery field**
 
@@ -2258,7 +2258,7 @@ impl UserSlashCommandsPlugin {
 }
 ```
 
-Add `once_cell = "1"` and `dirs = "5"` to `crates/savvagent/Cargo.toml` if not already there (likely already present — check first).
+Add `once_cell = "1"` and `dirs = "5"` to `crates/otto/Cargo.toml` if not already there (likely already present — check first).
 
 - [ ] **Step 2: Build dynamic `SlashSpec` list in `manifest()`**
 
@@ -2289,9 +2289,9 @@ Replace the existing `manifest()` body:
             });
         }
         // Static: trust modal screen.
-        contributions.screens = vec![savvagent_plugin::ScreenSpec {
+        contributions.screens = vec![otto_plugin::ScreenSpec {
             id: "trust_modal".into(),
-            layout: savvagent_plugin::ScreenLayout::CenteredModal {
+            layout: otto_plugin::ScreenLayout::CenteredModal {
                 width_pct: 60,
                 height_pct: 30,
                 title: Some("Trust project commands?".into()),
@@ -2301,7 +2301,7 @@ Replace the existing `manifest()` body:
             id: PluginId::new("internal:user-slash-commands").expect("valid built-in id"),
             name: "User slash commands".into(),
             version: env!("CARGO_PKG_VERSION").into(),
-            description: "User-defined commands from .savvagent/commands/ and .claude/commands/"
+            description: "User-defined commands from .otto/commands/ and .claude/commands/"
                 .into(),
             kind: PluginKind::Core,
             contributions,
@@ -2317,7 +2317,7 @@ Replace the existing `manifest()` body:
         use std::fs;
         let proj = tempfile::TempDir::new().unwrap();
         let home = tempfile::TempDir::new().unwrap();
-        let dir = proj.path().join(".savvagent/commands");
+        let dir = proj.path().join(".otto/commands");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("review.md"),
@@ -2351,7 +2351,7 @@ Replace the existing `manifest()` body:
 - [ ] **Step 4: Run**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::tests::manifest_includes_discovered_commands
+cargo test -p otto --lib plugin::builtin::user_slash_commands::tests::manifest_includes_discovered_commands
 ```
 
 Expected: PASS.
@@ -2359,8 +2359,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs \
-        crates/savvagent/Cargo.toml
+git add crates/otto/src/plugin/builtin/user_slash_commands/mod.rs \
+        crates/otto/Cargo.toml
 git commit -m "feat(plugin/user-slash-commands): manifest contributes discovered commands"
 ```
 
@@ -2369,7 +2369,7 @@ git commit -m "feat(plugin/user-slash-commands): manifest contributes discovered
 ### Task 19: Plugin `handle_slash` — main dispatch (no trust check yet)
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs`
 
 - [ ] **Step 1: Implement `handle_slash` for happy-path discovered commands**
 
@@ -2396,8 +2396,8 @@ git commit -m "feat(plugin/user-slash-commands): manifest contributes discovered
             Ok(e) => e,
             Err(msg) => {
                 return Ok(vec![Effect::PushNote {
-                    line: savvagent_plugin::StyledLine {
-                        spans: vec![savvagent_plugin::StyledSpan::plain(format!(
+                    line: otto_plugin::StyledLine {
+                        spans: vec![otto_plugin::StyledSpan::plain(format!(
                             "[error] {msg}"
                         ))],
                     },
@@ -2407,8 +2407,8 @@ git commit -m "feat(plugin/user-slash-commands): manifest contributes discovered
         let mut effs = Vec::new();
         for w in expanded.warnings {
             effs.push(Effect::PushNote {
-                line: savvagent_plugin::StyledLine {
-                    spans: vec![savvagent_plugin::StyledSpan::plain(format!("[warn] {w}"))],
+                line: otto_plugin::StyledLine {
+                    spans: vec![otto_plugin::StyledSpan::plain(format!("[warn] {w}"))],
                 },
             });
         }
@@ -2430,7 +2430,7 @@ git commit -m "feat(plugin/user-slash-commands): manifest contributes discovered
         use std::fs;
         let proj = tempfile::TempDir::new().unwrap();
         let home = tempfile::TempDir::new().unwrap();
-        let dir = proj.path().join(".savvagent/commands");
+        let dir = proj.path().join(".otto/commands");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("hello.md"),
@@ -2468,7 +2468,7 @@ git commit -m "feat(plugin/user-slash-commands): manifest contributes discovered
         use std::fs;
         let proj = tempfile::TempDir::new().unwrap();
         let home = tempfile::TempDir::new().unwrap();
-        let dir = proj.path().join(".savvagent/commands");
+        let dir = proj.path().join(".otto/commands");
         fs::create_dir_all(&dir).unwrap();
         fs::write(
             dir.join("h.md"),
@@ -2489,7 +2489,7 @@ git commit -m "feat(plugin/user-slash-commands): manifest contributes discovered
 - [ ] **Step 3: Run**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::tests
 ```
 
 Expected: previous tests still pass plus 3 new ones.
@@ -2497,7 +2497,7 @@ Expected: previous tests still pass plus 3 new ones.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/mod.rs
 git commit -m "feat(plugin/user-slash-commands): handle_slash dispatches discovered commands"
 ```
 
@@ -2506,7 +2506,7 @@ git commit -m "feat(plugin/user-slash-commands): handle_slash dispatches discove
 ### Task 20: `/reload-commands` clears cache + emits `ReindexPlugin`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs`
 
 - [ ] **Step 1: Convert the OnceCell to a `Mutex<Option<Index>>` so it can be cleared**
 
@@ -2552,8 +2552,8 @@ In `handle_slash`:
                     id: PluginId::new("internal:user-slash-commands").unwrap(),
                 },
                 Effect::PushNote {
-                    line: savvagent_plugin::StyledLine {
-                        spans: vec![savvagent_plugin::StyledSpan::plain(
+                    line: otto_plugin::StyledLine {
+                        spans: vec![otto_plugin::StyledSpan::plain(
                             "user-slash-commands: reloaded",
                         )],
                     },
@@ -2584,7 +2584,7 @@ In `handle_slash`:
             .all(|s| s.name != "added"));
 
         // Add a command on disk.
-        let dir = proj.path().join(".savvagent/commands");
+        let dir = proj.path().join(".otto/commands");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("added.md"), "body").unwrap();
 
@@ -2605,7 +2605,7 @@ In `handle_slash`:
 - [ ] **Step 4: Run**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::tests::reload_emits_reindex_and_picks_up_new_files
+cargo test -p otto --lib plugin::builtin::user_slash_commands::tests::reload_emits_reindex_and_picks_up_new_files
 ```
 
 Expected: PASS.
@@ -2613,8 +2613,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/discovery.rs
+git add crates/otto/src/plugin/builtin/user_slash_commands/mod.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/discovery.rs
 git commit -m "feat(plugin/user-slash-commands): /reload-commands rescans + reindexes"
 ```
 
@@ -2623,7 +2623,7 @@ git commit -m "feat(plugin/user-slash-commands): /reload-commands rescans + rein
 ### Task 21: Wire in trust check before shell expansion
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_slash_commands/mod.rs`
 
 - [ ] **Step 1: Thread the trust map through the dispatch**
 
@@ -2685,7 +2685,7 @@ impl UserSlashCommandsPlugin {
                 },
                 Effect::OpenScreen {
                     id: "trust_modal".into(),
-                    args: savvagent_plugin::ScreenArgs::Path(
+                    args: otto_plugin::ScreenArgs::Path(
                         self.project_root.clone(),
                     ),
                 },
@@ -2694,11 +2694,11 @@ impl UserSlashCommandsPlugin {
         // …rest of the existing happy path…
 ```
 
-Add the new `Effect::StashPendingSlash { name: String, args: Vec<String> }` variant to `savvagent-plugin::Effect` (mirror Task 11 pattern: variant + apply arm that writes `app.pending_slash_after_trust = Some((name, args));`).
+Add the new `Effect::StashPendingSlash { name: String, args: Vec<String> }` variant to `otto-plugin::Effect` (mirror Task 11 pattern: variant + apply arm that writes `app.pending_slash_after_trust = Some((name, args));`).
 
 - [ ] **Step 3: Update `register_builtins` to pass the shared trust map**
 
-In `crates/savvagent/src/plugin/mod.rs::register_builtins`, after the existing setup, pass the `App`'s shared trust handle to the plugin constructor. If the registry is built before `App`, refactor so the trust map is constructed first as a free-standing `Arc<RwLock<…>>`, passed to both `App` and the plugin.
+In `crates/otto/src/plugin/mod.rs::register_builtins`, after the existing setup, pass the `App`'s shared trust handle to the plugin constructor. If the registry is built before `App`, refactor so the trust map is constructed first as a free-standing `Arc<RwLock<…>>`, passed to both `App` and the plugin.
 
 - [ ] **Step 4: Write a test**
 
@@ -2708,7 +2708,7 @@ In `crates/savvagent/src/plugin/mod.rs::register_builtins`, after the existing s
         use std::fs;
         let proj = tempfile::TempDir::new().unwrap();
         let home = tempfile::TempDir::new().unwrap();
-        let dir = proj.path().join(".savvagent/commands");
+        let dir = proj.path().join(".otto/commands");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("danger.md"), "!echo evil").unwrap();
 
@@ -2735,7 +2735,7 @@ In `crates/savvagent/src/plugin/mod.rs::register_builtins`, after the existing s
 - [ ] **Step 5: Run**
 
 ```bash
-cargo test -p savvagent --lib plugin::builtin::user_slash_commands::tests
+cargo test -p otto --lib plugin::builtin::user_slash_commands::tests
 ```
 
 Expected: all existing tests still pass + 2 new ones.
@@ -2743,11 +2743,11 @@ Expected: all existing tests still pass + 2 new ones.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/effect.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs \
-        crates/savvagent/src/plugin/mod.rs \
-        crates/savvagent/src/plugin/effects.rs \
-        crates/savvagent/src/app.rs
+git add crates/otto-plugin/src/effect.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs \
+        crates/otto/src/plugin/mod.rs \
+        crates/otto/src/plugin/effects.rs \
+        crates/otto/src/app.rs
 git commit -m "feat(plugin/user-slash-commands): trust gate on project-local shell commands"
 ```
 
@@ -2756,15 +2756,15 @@ git commit -m "feat(plugin/user-slash-commands): trust gate on project-local she
 ### Task 22: End-to-end integration test
 
 **Files:**
-- Create: `crates/savvagent/tests/user_slash_commands.rs`
+- Create: `crates/otto/tests/user_slash_commands.rs`
 
 - [ ] **Step 1: Write the integration test**
 
 ```rust
 //! End-to-end: discovery → manifest → handle_slash → expected effects.
 
-use savvagent::plugin::builtin::user_slash_commands::UserSlashCommandsPlugin;
-use savvagent_plugin::{Effect, Plugin};
+use otto::plugin::builtin::user_slash_commands::UserSlashCommandsPlugin;
+use otto_plugin::{Effect, Plugin};
 use std::fs;
 use tempfile::TempDir;
 
@@ -2772,7 +2772,7 @@ use tempfile::TempDir;
 async fn end_to_end_review_command() {
     let proj = TempDir::new().unwrap();
     let home = TempDir::new().unwrap();
-    let dir = proj.path().join(".savvagent/commands");
+    let dir = proj.path().join(".otto/commands");
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join("review.md"),
@@ -2815,7 +2815,7 @@ async fn end_to_end_review_command() {
 - [ ] **Step 2: Run**
 
 ```bash
-cargo test -p savvagent --test user_slash_commands
+cargo test -p otto --test user_slash_commands
 ```
 
 Expected: PASS.
@@ -2823,8 +2823,8 @@ Expected: PASS.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent/tests/user_slash_commands.rs \
-        crates/savvagent/src/plugin/builtin/user_slash_commands/mod.rs
+git add crates/otto/tests/user_slash_commands.rs \
+        crates/otto/src/plugin/builtin/user_slash_commands/mod.rs
 git commit -m "test(plugin/user-slash-commands): end-to-end integration test"
 ```
 
@@ -2845,12 +2845,12 @@ In `README.md`, add (near the existing TUI features / slash command documentatio
 
 Drop a markdown file under any of these directories and it becomes a slash command:
 
-- `<project>/.savvagent/commands/` — project-local, preferred
+- `<project>/.otto/commands/` — project-local, preferred
 - `<project>/.claude/commands/` — Claude Code compatible, project-local
-- `~/.savvagent/commands/` — user-wide
+- `~/.otto/commands/` — user-wide
 - `~/.claude/commands/` — Claude Code compatible, user-wide
 
-Project paths outrank user paths; within the same scope, `.savvagent/` outranks `.claude/`. Subdirectories become namespaces: `commands/team/lint.md` → `/team:lint`.
+Project paths outrank user paths; within the same scope, `.otto/` outranks `.claude/`. Subdirectories become namespaces: `commands/team/lint.md` → `/team:lint`.
 
 ### Format
 
@@ -2875,7 +2875,7 @@ Please review the following diff and flag any issues:
 
 ### Trust prompt
 
-The first time you invoke a project-local command that includes `!<cmd>`, Savvagent asks whether to trust the project. Decisions persist in `~/.savvagent/trusted-projects.json` (only "trust always" is stored).
+The first time you invoke a project-local command that includes `!<cmd>`, Otto asks whether to trust the project. Decisions persist in `~/.otto/trusted-projects.json` (only "trust always" is stored).
 
 ### Reload
 
@@ -2888,9 +2888,9 @@ Parsed but not yet enforced; reserved for the upcoming agents sub-project.
 
 Also update the existing "On-disk paths" reference to include:
 
-- `~/.savvagent/trusted-projects.json` — project-trust persistence
-- `~/.savvagent/commands/` — user-wide slash commands
-- `.savvagent/commands/` (per project) — project-local slash commands
+- `~/.otto/trusted-projects.json` — project-trust persistence
+- `~/.otto/commands/` — user-wide slash commands
+- `.otto/commands/` (per project) — project-local slash commands
 
 - [ ] **Step 2: Add the CHANGELOG entry**
 
@@ -2899,13 +2899,13 @@ In `CHANGELOG.md`, add an `## [Unreleased]` section (or under the next planned v
 ```markdown
 ### Added
 - User-defined slash commands. Drop markdown files under
-  `.savvagent/commands/` (project), `.claude/commands/` (project-claude),
-  `~/.savvagent/commands/`, or `~/.claude/commands/`; each becomes a
+  `.otto/commands/` (project), `.claude/commands/` (project-claude),
+  `~/.otto/commands/`, or `~/.claude/commands/`; each becomes a
   slash command. Frontmatter supports `description`, `argument-hint`,
   `model`, and (forthcoming) `allowed-tools`. Body templating supports
   `$ARGUMENTS`, `$1`/`$N`, `@<file>`, and `!<cmd>`. Project-local
   commands that use `!<cmd>` are gated behind a first-run trust prompt
-  whose decisions persist to `~/.savvagent/trusted-projects.json`.
+  whose decisions persist to `~/.otto/trusted-projects.json`.
   `/reload-commands` rescans directories after edits.
 ```
 
@@ -2941,14 +2941,14 @@ Expected: both pass. Per `[[feedback_match_ci_toolchain_locally]]`, use the stab
 
 ```bash
 cargo build
-mkdir -p .savvagent/commands
-cat > .savvagent/commands/test.md <<'EOF'
+mkdir -p .otto/commands
+cat > .otto/commands/test.md <<'EOF'
 ---
 description: Smoke test
 ---
 Hello $ARGUMENTS
 EOF
-cargo run -p savvagent
+cargo run -p otto
 ```
 
 Inside the TUI:
@@ -2959,7 +2959,7 @@ Inside the TUI:
 - [ ] **Step 4: Clean up the smoke-test file**
 
 ```bash
-rm -rf .savvagent/commands/test.md
+rm -rf .otto/commands/test.md
 ```
 
 (Do not commit the smoke-test fixture.)
@@ -2993,7 +2993,7 @@ This task is intentionally not executed as part of the feature implementation; i
 | `@<path>` expansion + missing-file warning | 8 |
 | `!<cmd>` expansion + non-zero abort | 9 |
 | Single-pass (no recursion) | 10 |
-| Trust file at `~/.savvagent/trusted-projects.json` | 6, 17 |
+| Trust file at `~/.otto/trusted-projects.json` | 6, 17 |
 | First-run trust modal (y/n/q) | 16, 21 |
 | Persist only `Always`; `SessionTextOnly` blocks shell only | 6, 10, 17 |
 | `/reload-commands` slash command | 1, 20 |

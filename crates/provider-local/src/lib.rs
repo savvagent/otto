@@ -1,4 +1,4 @@
-//! Ollama HTTP API as a Savvagent SPP [`ProviderHandler`].
+//! Ollama HTTP API as a Otto SPP [`ProviderHandler`].
 //!
 //! Crate layout:
 //!
@@ -31,8 +31,8 @@ pub mod translate;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use savvagent_mcp::{ProviderHandler, StreamEmitter};
-use savvagent_protocol::{
+use otto_mcp::{ProviderHandler, StreamEmitter};
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ModelInfo, ProviderError,
     StreamEvent,
 };

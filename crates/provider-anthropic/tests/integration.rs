@@ -35,7 +35,7 @@ use rmcp::{
         },
     },
 };
-use savvagent_protocol::{CompleteRequest, CompleteResponse, STREAM_EVENT_KIND, StreamEvent};
+use otto_protocol::{CompleteRequest, CompleteResponse, STREAM_EVENT_KIND, StreamEvent};
 use serde_json::json;
 use tokio::sync::mpsc;
 
@@ -199,7 +199,7 @@ async fn non_streaming_complete_round_trips() {
     assert_eq!(resp.model, "claude-test");
     assert!(matches!(
         resp.content.first(),
-        Some(savvagent_protocol::ContentBlock::Text { text }) if text == "hi back"
+        Some(otto_protocol::ContentBlock::Text { text }) if text == "hi back"
     ));
     assert_eq!(resp.usage.output_tokens, 2);
 
@@ -252,7 +252,7 @@ async fn streaming_complete_emits_progress_and_final_response() {
     assert_eq!(resp.usage.output_tokens, 4);
     assert!(matches!(
         resp.content.first(),
-        Some(savvagent_protocol::ContentBlock::Text { text }) if text == "hello world"
+        Some(otto_protocol::ContentBlock::Text { text }) if text == "hello world"
     ));
 
     // Drain progress notifications. The deadline is a worst-case bound; in
@@ -309,7 +309,7 @@ async fn streaming_complete_emits_progress_and_final_response() {
         .iter()
         .filter_map(|e| match e {
             StreamEvent::ContentBlockDelta {
-                delta: savvagent_protocol::BlockDelta::TextDelta { text },
+                delta: otto_protocol::BlockDelta::TextDelta { text },
                 ..
             } => Some(text.clone()),
             _ => None,

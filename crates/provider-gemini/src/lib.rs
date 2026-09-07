@@ -1,4 +1,4 @@
-//! Google Gemini API as a Savvagent SPP [`ProviderHandler`].
+//! Google Gemini API as a Otto SPP [`ProviderHandler`].
 //!
 //! Crate layout:
 //!
@@ -6,7 +6,7 @@
 //!   `generateContent` request/response shapes.
 //! - [`translate`] — pure functions converting between SPP and
 //!   [`api`] types.
-//! - [`stream`] — Gemini SSE → SPP [`StreamEvent`](savvagent_protocol::StreamEvent)
+//! - [`stream`] — Gemini SSE → SPP [`StreamEvent`](otto_protocol::StreamEvent)
 //!   adapter.
 //! - [`GeminiProvider`] — [`ProviderHandler`] impl that wires the pieces
 //!   together over an HTTP client.
@@ -33,8 +33,8 @@ use async_trait::async_trait;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use savvagent_mcp::{ProviderHandler, StreamEmitter};
-use savvagent_protocol::{
+use otto_mcp::{ProviderHandler, StreamEmitter};
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ProviderError, StreamEvent,
 };
 
@@ -268,14 +268,14 @@ pub fn router(provider: Arc<GeminiProvider>) -> axum::Router {
     axum::Router::new().nest_service(DEFAULT_MCP_PATH, service)
 }
 
-/// Default bind address for the standalone `savvagent-gemini` binary.
+/// Default bind address for the standalone `otto-gemini` binary.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8788";
 
 /// Run the standalone Gemini MCP HTTP server. Reads `GEMINI_API_KEY`
-/// (or `GOOGLE_API_KEY`), `SAVVAGENT_GEMINI_LISTEN`, and `GEMINI_BASE_URL`
+/// (or `GOOGLE_API_KEY`), `OTTO_GEMINI_LISTEN`, and `GEMINI_BASE_URL`
 /// from the environment (a `.env` file walking up from the CWD is honored).
-/// Shared between this crate's `savvagent-gemini` binary and the bundled
-/// shim in the `savvagent` crate.
+/// Shared between this crate's `otto-gemini` binary and the bundled
+/// shim in the `otto` crate.
 pub async fn run() -> std::process::ExitCode {
     use std::env;
     use std::process::ExitCode;
@@ -290,7 +290,7 @@ pub async fn run() -> std::process::ExitCode {
         .with_target(false)
         .init();
 
-    let listen = env::var("SAVVAGENT_GEMINI_LISTEN").unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
+    let listen = env::var("OTTO_GEMINI_LISTEN").unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
     let base_url = env::var("GEMINI_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
 
     let provider = match GeminiProvider::builder().base_url(base_url).build() {
@@ -312,7 +312,7 @@ pub async fn run() -> std::process::ExitCode {
     };
     let local = listener.local_addr().expect("local_addr");
     tracing::info!(
-        "savvagent-gemini {} listening on http://{local}{DEFAULT_MCP_PATH}",
+        "otto-gemini {} listening on http://{local}{DEFAULT_MCP_PATH}",
         env!("CARGO_PKG_VERSION")
     );
 

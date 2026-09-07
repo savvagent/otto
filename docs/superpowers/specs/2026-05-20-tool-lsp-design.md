@@ -9,7 +9,7 @@ that work, scoped to the LSP half.
 
 ## Problem
 
-Savvagent has no language intelligence. The model has to grep, read,
+Otto has no language intelligence. The model has to grep, read,
 and reason about code without semantic information — where is this
 defined, who calls it, what types does this expression have, what
 diagnostics does the compiler raise after my edit. LSP servers
@@ -25,8 +25,8 @@ diagnostics through the new resource-push plumbing.
 
 A single new crate, `crates/tool-lsp`, that:
 
-1. **Reads a generic config**, `~/.savvagent/lsp.toml` (global) merged
-   with `<repo>/.savvagent/lsp.toml` (per-repo override), describing
+1. **Reads a generic config**, `~/.otto/lsp.toml` (global) merged
+   with `<repo>/.otto/lsp.toml` (per-repo override), describing
    language → command mappings. No language is hardcoded.
 2. **Resolves workspace roots on every call** by walking parents from
    the call's `path` argument until one of the configured
@@ -106,14 +106,14 @@ args = ["--stdio"]
 ```
 
 **Merge semantics.** The global file
-(`~/.savvagent/lsp.toml`) is loaded first; per-repo
-(`<repo>/.savvagent/lsp.toml`, if present) overrides by `language.id`.
+(`~/.otto/lsp.toml`) is loaded first; per-repo
+(`<repo>/.otto/lsp.toml`, if present) overrides by `language.id`.
 A repo-level entry fully replaces the global entry for that language
 — we don't deep-merge fields, because partial merges over `args` and
 `env` create surprising results.
 
 **No defaults shipped.** v1 does not bundle a built-in language list.
-The first time a user runs Savvagent in a Rust project with no config,
+The first time a user runs Otto in a Rust project with no config,
 they get nothing from tool-lsp; we document copy-pasteable entries in
 the README for `rust-analyzer`, `typescript-language-server`,
 `pyright-langserver`, and `gopls`. A future PR can ship a default
@@ -124,9 +124,9 @@ config that picks up servers found on `$PATH`.
 Every tool call takes a relative-to-host-cwd `path` (never an explicit
 workspace_root). Internally:
 
-1. Resolve `path` against `SAVVAGENT_TOOL_LSP_ROOT` (mirrors the
+1. Resolve `path` against `OTTO_TOOL_LSP_ROOT` (mirrors the
    pattern from `tool-fs` — `ToolRegistry::connect` already sets that
-   env on every tool spawn; we add `SAVVAGENT_TOOL_LSP_ROOT` alongside
+   env on every tool spawn; we add `OTTO_TOOL_LSP_ROOT` alongside
    `_FS_ROOT`/`_BASH_ROOT`/`_GREP_ROOT`).
 2. Map the file extension to a `LanguageId` via the loaded config.
    Unknown extension → tool returns
@@ -189,7 +189,7 @@ pub struct LspSession {
 
 `range` is always `{start: {line, character}, end: {line, character}}`,
 0-indexed (matches LSP). `path` in outputs is always relative to
-`SAVVAGENT_TOOL_LSP_ROOT`. `preview` on references is a one-line
+`OTTO_TOOL_LSP_ROOT`. `preview` on references is a one-line
 excerpt of the source — we pull it from `tool-fs`'s view of the file
 or read it directly from disk on the tool-lsp side.
 
@@ -266,8 +266,8 @@ processes and reads files, but does not mutate). The default
 permission policy treats them like other read tools — same tier as
 `tool-fs::read_file` and `tool-fs::list_dir`.
 
-`SAVVAGENT_TOOL_LSP_ROOT` is enforced inside tool-lsp the same way
-`SAVVAGENT_TOOL_FS_ROOT` is enforced inside tool-fs: any `path` that
+`OTTO_TOOL_LSP_ROOT` is enforced inside tool-lsp the same way
+`OTTO_TOOL_FS_ROOT` is enforced inside tool-fs: any `path` that
 resolves outside the root via `..` traversal is rejected with a
 tool-error outcome.
 
@@ -301,7 +301,7 @@ network access at the tool-lsp level via the existing
 ## Workspace wiring
 
 `tool-lsp` is added to the workspace's default tool set in
-`crates/savvagent/src/main.rs`:
+`crates/otto/src/main.rs`:
 
 ```rust
 config
@@ -315,8 +315,8 @@ config
 ```
 
 `tool_lsp_path()` mirrors `tool_fs_path()`: `$PATH`-resolve
-`savvagent-tool-lsp`, then fall back to
-`SAVVAGENT_TOOL_LSP_BIN`, then to the workspace `target/` location.
+`otto-tool-lsp`, then fall back to
+`OTTO_TOOL_LSP_BIN`, then to the workspace `target/` location.
 
 ## PR slicing
 

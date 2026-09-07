@@ -1,4 +1,4 @@
-//! OpenAI Chat Completions API as a Savvagent SPP [`ProviderHandler`].
+//! OpenAI Chat Completions API as a Otto SPP [`ProviderHandler`].
 //!
 //! Crate layout:
 //!
@@ -6,7 +6,7 @@
 //!   `POST /v1/chat/completions` request/response shapes.
 //! - [`translate`] — pure functions converting between SPP and
 //!   [`api`] types.
-//! - [`stream`] — OpenAI SSE → SPP [`StreamEvent`](savvagent_protocol::StreamEvent)
+//! - [`stream`] — OpenAI SSE → SPP [`StreamEvent`](otto_protocol::StreamEvent)
 //!   adapter.
 //! - [`mcp`] — [`ProviderHandler`] MCP server wrapper.
 //! - [`OpenAiProvider`] — [`ProviderHandler`] impl that wires the pieces
@@ -30,8 +30,8 @@ use async_trait::async_trait;
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use savvagent_mcp::{ProviderHandler, StreamEmitter};
-use savvagent_protocol::{
+use otto_mcp::{ProviderHandler, StreamEmitter};
+use otto_protocol::{
     CompleteRequest, CompleteResponse, ErrorKind, ListModelsResponse, ModelInfo, ProviderError,
     StreamEvent,
 };
@@ -318,11 +318,11 @@ pub fn router(provider: Arc<OpenAiProvider>) -> axum::Router {
     axum::Router::new().nest_service(DEFAULT_MCP_PATH, service)
 }
 
-/// Default bind address for the standalone `savvagent-openai` binary.
+/// Default bind address for the standalone `otto-openai` binary.
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8789";
 
 /// Run the standalone OpenAI MCP HTTP server. Reads `OPENAI_API_KEY`,
-/// `SAVVAGENT_OPENAI_LISTEN`, and `OPENAI_BASE_URL` from the environment (a
+/// `OTTO_OPENAI_LISTEN`, and `OPENAI_BASE_URL` from the environment (a
 /// `.env` file walking up from the CWD is honored).
 pub async fn run() -> std::process::ExitCode {
     use std::env;
@@ -338,7 +338,7 @@ pub async fn run() -> std::process::ExitCode {
         .with_target(false)
         .init();
 
-    let listen = env::var("SAVVAGENT_OPENAI_LISTEN").unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
+    let listen = env::var("OTTO_OPENAI_LISTEN").unwrap_or_else(|_| DEFAULT_LISTEN.to_string());
     let base_url = env::var("OPENAI_BASE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
 
     let provider = match OpenAiProvider::builder().base_url(base_url).build() {
@@ -360,7 +360,7 @@ pub async fn run() -> std::process::ExitCode {
     };
     let local = listener.local_addr().expect("local_addr");
     tracing::info!(
-        "savvagent-openai {} listening on http://{local}{DEFAULT_MCP_PATH}",
+        "otto-openai {} listening on http://{local}{DEFAULT_MCP_PATH}",
         env!("CARGO_PKG_VERSION")
     );
 

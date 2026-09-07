@@ -1,13 +1,13 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/savvagent",
-    "crates/savvagent-plugin",
-    "crates/savvagent-plugin-wit",
-    "crates/savvagent-plugin-wasm",
-    "crates/savvagent-protocol",
-    "crates/savvagent-mcp",
-    "crates/savvagent-host",
+    "crates/otto",
+    "crates/otto-plugin",
+    "crates/otto-plugin-wit",
+    "crates/otto-plugin-wasm",
+    "crates/otto-protocol",
+    "crates/otto-mcp",
+    "crates/otto-host",
     "crates/provider-anthropic",
     "crates/provider-gemini",
     "crates/provider-local",
@@ -17,28 +17,28 @@ members = [
     "crates/tool-grep",
     "crates/tool-lsp",
     "crates/tool-web",
-    "crates/savvagent-fence",
-    "crates/savvagent-canvas",
-    "crates/savvagent-host/tests/fixtures/resource-tool",
+    "crates/otto-fence",
+    "crates/otto-canvas",
+    "crates/otto-host/tests/fixtures/resource-tool",
     "crates/tool-lsp/tests/fixtures/fake-lsp",
 ]
-default-members = ["crates/savvagent"]
+default-members = ["crates/otto"]
 
 [workspace.package]
 version = "0.23.1"
 edition = "2024"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/savvagent/savvagent-cli"
+repository = "https://github.com/savvagent/otto"
 rust-version = "1.89"
 
 [workspace.dependencies]
 # Local crates
-savvagent-plugin = { path = "crates/savvagent-plugin", version = "0.23.1" }
-savvagent-plugin-wit = { path = "crates/savvagent-plugin-wit", version = "0.23.1" }
-savvagent-plugin-wasm = { path = "crates/savvagent-plugin-wasm", version = "0.23.1" }
-savvagent-protocol = { path = "crates/savvagent-protocol", version = "0.23.1" }
-savvagent-mcp = { path = "crates/savvagent-mcp", version = "0.23.1" }
-savvagent-host = { path = "crates/savvagent-host", version = "0.23.1" }
+otto-plugin = { path = "crates/otto-plugin", version = "0.23.1" }
+otto-plugin-wit = { path = "crates/otto-plugin-wit", version = "0.23.1" }
+otto-plugin-wasm = { path = "crates/otto-plugin-wasm", version = "0.23.1" }
+otto-protocol = { path = "crates/otto-protocol", version = "0.23.1" }
+otto-mcp = { path = "crates/otto-mcp", version = "0.23.1" }
+otto-host = { path = "crates/otto-host", version = "0.23.1" }
 provider-anthropic = { path = "crates/provider-anthropic", version = "0.23.1" }
 provider-gemini = { path = "crates/provider-gemini", version = "0.23.1" }
 provider-local = { path = "crates/provider-local", version = "0.23.1" }
@@ -48,8 +48,8 @@ tool-fs = { path = "crates/tool-fs", version = "0.23.1" }
 tool-grep = { path = "crates/tool-grep", version = "0.23.1" }
 tool-lsp = { path = "crates/tool-lsp", version = "0.23.1" }
 tool-web = { path = "crates/tool-web", version = "0.23.1" }
-savvagent-fence = { path = "crates/savvagent-fence", version = "0.23.1" }
-savvagent-canvas = { path = "crates/savvagent-canvas", version = "0.23.1" }
+otto-fence = { path = "crates/otto-fence", version = "0.23.1" }
+otto-canvas = { path = "crates/otto-canvas", version = "0.23.1" }
 
 # Blitz building blocks — pinned per Phase 0 spike findings
 # (`docs/superpowers/notes/2026-05-21-blitz-spike.md`). We depend on the
@@ -138,7 +138,7 @@ ignore = "0.4"
 globset = "0.4"
 
 # External-plugin (sub-project D) WIT tooling. `wit-bindgen` is the guest-side
-# code generator; host bindings live in `savvagent-plugin-wasm` and come from
+# code generator; host bindings live in `otto-plugin-wasm` and come from
 # `wasmtime::component::bindgen!`. The wit-bindgen workspace pin reserves a
 # single source of truth for the version downstream guest crates (Task 12
 # example plugins) pick up.
@@ -171,7 +171,7 @@ sha2 = "0.10"
 hex = "0.4"
 which = "6"
 
-# TUI deps (only used by savvagent crate, but pinned here for consistency)
+# TUI deps (only used by otto crate, but pinned here for consistency)
 crossterm = "0.29"
 # Image widget used by Entry::Canvas rendering. Requires ratatui ^0.30 which
 # matches the workspace pin. Default features include crossterm + image-defaults

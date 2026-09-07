@@ -7,7 +7,7 @@ Related: #67 (auto-install all release binaries) — ships in the same release.
 
 ## Problem
 
-Users who upgrade savvagent currently have no in-band way to see what
+Users who upgrade otto currently have no in-band way to see what
 changed. The CHANGELOG.md lives at the repo root on GitHub; reading it
 requires switching to a browser. With `/update` going automatic in this
 release (issue #67), discoverability of "what just landed" matters more
@@ -22,7 +22,7 @@ plugin:
 1. Registers one slash command, `/changelog`, that emits an
    `Effect::OpenScreen` for a screen the same plugin contributes.
 2. On screen open, spawns a tokio task to fetch
-   `https://raw.githubusercontent.com/robhicks/savvagent-rs/master/CHANGELOG.md`.
+   `https://raw.githubusercontent.com/robhicks/otto-rs/master/CHANGELOG.md`.
    The screen renders a "Fetching changelog…" placeholder while the
    request is in flight.
 3. When the fetch resolves, the screen swaps to a `Loaded` state holding
@@ -46,7 +46,7 @@ clears on process exit.
 ## Why a plugin (not direct ui.rs surgery)
 
 Per the project memory's "new TUI features must be plugins" rule, every
-new modal/screen goes through the savvagent-plugin trait surface. The
+new modal/screen goes through the otto-plugin trait surface. The
 existing `internal:view-file` plugin is the closest analog: a slash
 command + a screen marker. The CHANGELOG plugin differs in two ways:
 
@@ -63,7 +63,7 @@ command + a screen marker. The CHANGELOG plugin differs in two ways:
 ## Module layout
 
 ```
-crates/savvagent/src/plugin/builtin/changelog/
+crates/otto/src/plugin/builtin/changelog/
 ├── mod.rs       # ChangelogPlugin: manifest, handle_slash, create_screen
 ├── fetch.rs     # ChangelogFetcher trait + reqwest-backed impl
 └── screen.rs    # ChangelogScreen: state machine, render, on_key
@@ -90,7 +90,7 @@ cache}.rs`.
    and re-spawns the same fetch task.
 6. On `Esc/q`, the screen emits `Effect::CloseScreen`.
 
-## Wire surface (savvagent-plugin)
+## Wire surface (otto-plugin)
 
 A new `ScreenArgs::Changelog` variant is added; opening the screen
 takes no parameters today. (The variant exists rather than reusing
@@ -101,7 +101,7 @@ public surface.)
 
 ## Locales
 
-New `[changelog]` section in `crates/savvagent/locales/{en,es,hi,pt}.toml`:
+New `[changelog]` section in `crates/otto/locales/{en,es,hi,pt}.toml`:
 
 | key | English |
 |---|---|
@@ -143,7 +143,7 @@ No new runtime requirements (`reqwest` is already in the workspace).
   trait-injected `ChangelogFetcher` keeps the network out of the suite,
   same pattern as `ReleasesFetcher` in `self_update`.
 - **Unit tests in `fetch.rs`.** Confirm the production fetcher targets
-  the documented URL and sets the savvagent User-Agent. The
+  the documented URL and sets the otto User-Agent. The
   reqwest-backed call itself is not exercised in unit tests; an
   integration test with `wiremock` could be added later if flakes show
   up, but the URL/UA assertions cover the regression surface.

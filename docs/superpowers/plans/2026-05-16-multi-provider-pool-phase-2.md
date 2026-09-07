@@ -5,9 +5,9 @@
 **Goal:** Stand up the cross-vendor `tool_use_id` compatibility CI gate (the "Phase 2 gate" from the spec). Every `(sender_provider, receiver_provider)` pair across the three shipping vendors (Anthropic, Gemini, OpenAI) is exercised through a matrix test that synthesizes history with foreign-prefixed `tool_use_id`s and asserts each vendor's translator round-trips them without breaking the receiver's semantic contract. **What "round-trips" means is per-vendor** (this is the substance of the cross-vendor compatibility question, not an implementation detail to wave away): for **Anthropic** and **OpenAI**, which carry `tool_use_id` / `tool_call_id` on the wire, the foreign id must appear verbatim in the canonical field of the outgoing request body. For **Gemini**, which routes function results by `name` rather than id (Gemini's API has no id field), the translator's existing `id_to_name` lookup must resolve the foreign id to the correct function name on the wire — the test asserts the corresponding `functionResponse` part carries the right name, which is the contract that matters since Gemini cannot leak an unrecognized id to the wire even in principle. The gate runs in PR CI against axum-backed mock vendor servers, with `#[ignore]`-marked twins for nightly/manual runs against live APIs. **Build the matrix first, ship no fallback adapter unless a pair fails** (per design decision deferred to a Phase 2.5 patch if real-vendor testing surfaces a regression).
 
 **Architecture:**
-- New `crates/savvagent-host/tests/cross_vendor_history.rs` integration test holds nine `#[tokio::test]` functions — one per `(sender, receiver)` pair — so `cargo test … --no-fail-fast` produces per-pair pass/fail lines in CI output.
-- Shared helpers live in `crates/savvagent-host/tests/support/mod.rs`: synthetic-history builder (`history_with_foreign_id`), axum-based fake-vendor spawners with body-capture state (`spawn_fake_anthropic`, `spawn_fake_gemini`, `spawn_fake_openai`), and success-response fixture builders. We **reuse the axum fake-server pattern already established in `crates/provider-*/tests/integration.rs`** rather than introducing a new HTTP mocking framework — same outcome (hand-written JSON fixtures, offline PR CI), zero new workspace deps.
-- The host crate gains dev-dependencies on `provider-anthropic`, `provider-gemini`, `provider-openai` (clean direction — these crates don't depend on `savvagent-host`, so no cycle).
+- New `crates/otto-host/tests/cross_vendor_history.rs` integration test holds nine `#[tokio::test]` functions — one per `(sender, receiver)` pair — so `cargo test … --no-fail-fast` produces per-pair pass/fail lines in CI output.
+- Shared helpers live in `crates/otto-host/tests/support/mod.rs`: synthetic-history builder (`history_with_foreign_id`), axum-based fake-vendor spawners with body-capture state (`spawn_fake_anthropic`, `spawn_fake_gemini`, `spawn_fake_openai`), and success-response fixture builders. We **reuse the axum fake-server pattern already established in `crates/provider-*/tests/integration.rs`** rather than introducing a new HTTP mocking framework — same outcome (hand-written JSON fixtures, offline PR CI), zero new workspace deps.
+- The host crate gains dev-dependencies on `provider-anthropic`, `provider-gemini`, `provider-openai` (clean direction — these crates don't depend on `otto-host`, so no cycle).
 - Each test points the provider's `provider_for_tests(base_url)` factory at the fake server, calls `ProviderHandler::complete` directly (the layer where the SPP→vendor translator runs), then asserts (a) the call returned `Ok`, and (b) the captured outgoing request body satisfies a **vendor-specific structural assertion** (see "Goal" — Anthropic/OpenAI look for the foreign id in the canonical id field via per-vendor inspectors in `support/mod.rs`; Gemini looks for a `functionResponse` part with the resolved tool name).
 - A new `cross-vendor-gate` job in `.github/workflows/ci.yml` runs only this test with `--no-fail-fast` so PRs that break the matrix show every failing pair.
 - Live-vendor variants are `#[ignore]`-marked; manually invoked via `cargo test … -- --ignored` with the appropriate `*_API_KEY` env vars set. No nightly workflow ships this phase — that's a follow-up tracked in release notes.
@@ -22,11 +22,11 @@
 ## File structure (Phase 2)
 
 **New files:**
-- `crates/savvagent-host/tests/cross_vendor_history.rs` — nine pair tests + their `#[ignore]`-marked live twins.
-- `crates/savvagent-host/tests/support/mod.rs` — fake-vendor spawners, body-capture state, synthetic-history helpers, success-fixture builders.
+- `crates/otto-host/tests/cross_vendor_history.rs` — nine pair tests + their `#[ignore]`-marked live twins.
+- `crates/otto-host/tests/support/mod.rs` — fake-vendor spawners, body-capture state, synthetic-history helpers, success-fixture builders.
 
 **Modified files:**
-- `crates/savvagent-host/Cargo.toml` — add `provider-anthropic`, `provider-gemini`, `provider-openai`, and `axum` (with the `json` feature) to `[dev-dependencies]`. `serde_json` and `futures` are intentionally **not** re-declared because they are already in the host crate's `[dependencies]` and Cargo makes runtime deps available to tests automatically; duplicating them as dev-deps would add visual noise without effect.
+- `crates/otto-host/Cargo.toml` — add `provider-anthropic`, `provider-gemini`, `provider-openai`, and `axum` (with the `json` feature) to `[dev-dependencies]`. `serde_json` and `futures` are intentionally **not** re-declared because they are already in the host crate's `[dependencies]` and Cargo makes runtime deps available to tests automatically; duplicating them as dev-deps would add visual noise without effect.
 - `.github/workflows/ci.yml` — add `cross-vendor-gate` job after `test`.
 - `Cargo.toml` (workspace) — bump `[workspace.package].version` to `0.16.0` and every literal in `[workspace.dependencies]` to `0.16.0`.
 - `CHANGELOG.md` — add `## 0.16.0 - 2026-05-16` entry.
@@ -34,21 +34,21 @@
 
 ---
 
-## Task 1: Add dev-dependencies to savvagent-host
+## Task 1: Add dev-dependencies to otto-host
 
 **Files:**
-- Modify: `crates/savvagent-host/Cargo.toml`
+- Modify: `crates/otto-host/Cargo.toml`
 
 We need the three real provider crates available to the integration test, plus axum for the fake servers. The host crate depends on none of these at runtime; this is a dev-only layering choice.
 
 - [ ] **Step 1: Inspect current `[dev-dependencies]` section**
 
-Run: `cat crates/savvagent-host/Cargo.toml`
+Run: `cat crates/otto-host/Cargo.toml`
 Expected: section currently contains `tempfile`, `tokio` (with macros + rt-multi-thread), `tracing-subscriber`.
 
 - [ ] **Step 2: Add the new dev-deps**
 
-Edit `crates/savvagent-host/Cargo.toml`, replace the existing `[dev-dependencies]` block with:
+Edit `crates/otto-host/Cargo.toml`, replace the existing `[dev-dependencies]` block with:
 
 ```toml
 [dev-dependencies]
@@ -70,13 +70,13 @@ axum = { workspace = true, features = ["json"] }
 
 - [ ] **Step 3: Verify cargo accepts the new deps**
 
-Run: `cargo check -p savvagent-host --tests`
+Run: `cargo check -p otto-host --tests`
 Expected: clean build (no test files reference these yet; we're only confirming the dep graph resolves).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-host/Cargo.toml
+git add crates/otto-host/Cargo.toml
 git commit -m "build(host): add provider crates + axum as dev-deps for cross-vendor gate"
 ```
 
@@ -85,13 +85,13 @@ git commit -m "build(host): add provider crates + axum as dev-deps for cross-ven
 ## Task 2: Synthetic-history helper + fake-vendor spawners
 
 **Files:**
-- Create: `crates/savvagent-host/tests/support/mod.rs`
+- Create: `crates/otto-host/tests/support/mod.rs`
 
 Self-contained test-support module. The same helpers serve all nine pair tests. The axum fake-server pattern is lifted (with adaptations for body capture) from `crates/provider-anthropic/tests/integration.rs`.
 
 - [ ] **Step 1: Create the support module with synthetic-history helper**
 
-Create `crates/savvagent-host/tests/support/mod.rs`:
+Create `crates/otto-host/tests/support/mod.rs`:
 
 ```rust
 //! Test support for `cross_vendor_history.rs`.
@@ -117,7 +117,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::post,
 };
-use savvagent_protocol::{CompleteRequest, ContentBlock, Message, Role};
+use otto_protocol::{CompleteRequest, ContentBlock, Message, Role};
 use serde_json::{Value, json};
 
 /// Build an SPP `Vec<Message>` that contains an assistant `ToolUse` block
@@ -166,7 +166,7 @@ pub fn history_with_foreign_id(sender_provider: &str) -> Vec<Message> {
 /// model, with one synthetic tool (`list_dir`) declared so the receiver's
 /// translator has a tool surface to attach.
 pub fn build_request(model: &str, history: Vec<Message>) -> CompleteRequest {
-    use savvagent_protocol::ToolDef;
+    use otto_protocol::ToolDef;
     CompleteRequest {
         model: model.into(),
         messages: history,
@@ -455,13 +455,13 @@ pub fn gemini_body_has_resolved_function_name(body: &Value, expected_name: &str)
 
 - [ ] **Step 2: Confirm the support module compiles in isolation**
 
-Run: `cargo check -p savvagent-host --tests`
+Run: `cargo check -p otto-host --tests`
 Expected: clean build. The `#![allow(dead_code)]` at the top of the file suppresses warnings because no test file references the helpers yet.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/support/mod.rs
+git add crates/otto-host/tests/support/mod.rs
 git commit -m "test(host): add cross-vendor test support module (fake vendor servers + synthetic history)"
 ```
 
@@ -470,13 +470,13 @@ git commit -m "test(host): add cross-vendor test support module (fake vendor ser
 ## Task 3: First pair — (anthropic → anthropic) control test
 
 **Files:**
-- Create: `crates/savvagent-host/tests/cross_vendor_history.rs`
+- Create: `crates/otto-host/tests/cross_vendor_history.rs`
 
 This is the "same vendor sees its own id" control case. It establishes the test scaffold every subsequent pair will follow: build history with a foreign-prefixed id (here `"anthropic:..."`), spin the fake vendor, call `ProviderHandler::complete` via `provider_for_tests`, assert `Ok`, assert the foreign id appears in the captured outgoing body. Test failure here means the test scaffold itself is broken.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-host/tests/cross_vendor_history.rs`:
+Create `crates/otto-host/tests/cross_vendor_history.rs`:
 
 ```rust
 //! Cross-vendor `tool_use_id` compatibility matrix.
@@ -494,7 +494,7 @@ Create `crates/savvagent-host/tests/cross_vendor_history.rs`:
 
 mod support;
 
-use savvagent_mcp::ProviderHandler;
+use otto_mcp::ProviderHandler;
 use support::{
     FakeState, anthropic_body_has_foreign_id, anthropic_success_response, build_request,
     gemini_body_has_resolved_function_name, gemini_success_response, history_with_foreign_id,
@@ -522,7 +522,7 @@ async fn anthropic_to_anthropic_control() {
         .expect("anthropic accepts anthropic-prefixed tool_use_id");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -538,13 +538,13 @@ async fn anthropic_to_anthropic_control() {
 
 - [ ] **Step 2: Run the test to verify it passes**
 
-Run: `cargo test -p savvagent-host --test cross_vendor_history anthropic_to_anthropic_control -- --nocapture`
+Run: `cargo test -p otto-host --test cross_vendor_history anthropic_to_anthropic_control -- --nocapture`
 Expected: `test anthropic_to_anthropic_control ... ok`. If it fails, the scaffold has a bug — fix before moving on.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/cross_vendor_history.rs
+git add crates/otto-host/tests/cross_vendor_history.rs
 git commit -m "test(host): cross-vendor gate — anthropic→anthropic control pair"
 ```
 
@@ -553,13 +553,13 @@ git commit -m "test(host): cross-vendor gate — anthropic→anthropic control p
 ## Task 4: (anthropic → gemini) and (anthropic → openai) pairs
 
 **Files:**
-- Modify: `crates/savvagent-host/tests/cross_vendor_history.rs`
+- Modify: `crates/otto-host/tests/cross_vendor_history.rs`
 
 These two are the first real cross-vendor cases. Gemini's translator routes function results by name (it builds an `id_to_name` lookup from prior assistant turns — see `crates/provider-gemini/src/translate.rs:142-158`), so the foreign id never reaches the wire body in a literal `tool_use_id` field; instead we assert the call succeeds (Gemini's translator does not reject the request). OpenAI preserves `tool_use_id` verbatim as `tool_call_id`, so we assert the foreign string appears in the body.
 
 - [ ] **Step 1: Append the two tests**
 
-Append to `crates/savvagent-host/tests/cross_vendor_history.rs`:
+Append to `crates/otto-host/tests/cross_vendor_history.rs`:
 
 ```rust
 // ===========================================================================
@@ -586,7 +586,7 @@ async fn anthropic_to_gemini() {
         .expect("gemini accepts anthropic-prefixed tool_use_id in history");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -619,7 +619,7 @@ async fn anthropic_to_openai() {
         .expect("openai accepts anthropic-prefixed tool_use_id");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -635,13 +635,13 @@ async fn anthropic_to_openai() {
 
 - [ ] **Step 2: Run both tests**
 
-Run: `cargo test -p savvagent-host --test cross_vendor_history -- --nocapture --test-threads=1 anthropic_to`
+Run: `cargo test -p otto-host --test cross_vendor_history -- --nocapture --test-threads=1 anthropic_to`
 Expected: `test anthropic_to_anthropic_control ... ok`, `test anthropic_to_gemini ... ok`, `test anthropic_to_openai ... ok`. Three tests pass.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/cross_vendor_history.rs
+git add crates/otto-host/tests/cross_vendor_history.rs
 git commit -m "test(host): cross-vendor gate — anthropic→{gemini,openai} pairs"
 ```
 
@@ -650,13 +650,13 @@ git commit -m "test(host): cross-vendor gate — anthropic→{gemini,openai} pai
 ## Task 5: (gemini → *) sender pairs
 
 **Files:**
-- Modify: `crates/savvagent-host/tests/cross_vendor_history.rs`
+- Modify: `crates/otto-host/tests/cross_vendor_history.rs`
 
 Three tests: `gemini → anthropic`, `gemini → gemini` (control), `gemini → openai`. Same template; just swap the sender prefix and the receiver provider.
 
 - [ ] **Step 1: Append the three tests**
 
-Append to `crates/savvagent-host/tests/cross_vendor_history.rs`:
+Append to `crates/otto-host/tests/cross_vendor_history.rs`:
 
 ```rust
 #[tokio::test]
@@ -675,7 +675,7 @@ async fn gemini_to_anthropic() {
         .expect("anthropic accepts gemini-prefixed tool_use_id");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -703,7 +703,7 @@ async fn gemini_to_gemini_control() {
         .expect("gemini accepts gemini-prefixed tool_use_id in history");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -732,7 +732,7 @@ async fn gemini_to_openai() {
         .expect("openai accepts gemini-prefixed tool_use_id");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -748,13 +748,13 @@ async fn gemini_to_openai() {
 
 - [ ] **Step 2: Run all six tests so far**
 
-Run: `cargo test -p savvagent-host --test cross_vendor_history -- --nocapture`
+Run: `cargo test -p otto-host --test cross_vendor_history -- --nocapture`
 Expected: six tests pass (`anthropic_to_*` and `gemini_to_*`).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/cross_vendor_history.rs
+git add crates/otto-host/tests/cross_vendor_history.rs
 git commit -m "test(host): cross-vendor gate — gemini→{anthropic,gemini,openai} pairs"
 ```
 
@@ -763,13 +763,13 @@ git commit -m "test(host): cross-vendor gate — gemini→{anthropic,gemini,open
 ## Task 6: (openai → *) sender pairs
 
 **Files:**
-- Modify: `crates/savvagent-host/tests/cross_vendor_history.rs`
+- Modify: `crates/otto-host/tests/cross_vendor_history.rs`
 
 Final three: `openai → anthropic`, `openai → gemini`, `openai → openai` (control). Matrix is now complete (9 pairs).
 
 - [ ] **Step 1: Append the three tests**
 
-Append to `crates/savvagent-host/tests/cross_vendor_history.rs`:
+Append to `crates/otto-host/tests/cross_vendor_history.rs`:
 
 ```rust
 #[tokio::test]
@@ -788,7 +788,7 @@ async fn openai_to_anthropic() {
         .expect("anthropic accepts openai-prefixed tool_use_id");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -816,7 +816,7 @@ async fn openai_to_gemini() {
         .expect("gemini accepts openai-prefixed tool_use_id in history");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -845,7 +845,7 @@ async fn openai_to_openai_control() {
         .expect("openai accepts openai-prefixed tool_use_id");
     assert!(matches!(
         resp.stop_reason,
-        savvagent_protocol::StopReason::EndTurn
+        otto_protocol::StopReason::EndTurn
     ));
 
     let body = state
@@ -861,13 +861,13 @@ async fn openai_to_openai_control() {
 
 - [ ] **Step 2: Run the full matrix**
 
-Run: `cargo test -p savvagent-host --test cross_vendor_history -- --nocapture`
+Run: `cargo test -p otto-host --test cross_vendor_history -- --nocapture`
 Expected: nine tests pass. Per-pair `... ok` line in the output for each.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/cross_vendor_history.rs
+git add crates/otto-host/tests/cross_vendor_history.rs
 git commit -m "test(host): cross-vendor gate — openai→{anthropic,gemini,openai} pairs (matrix complete)"
 ```
 
@@ -876,13 +876,13 @@ git commit -m "test(host): cross-vendor gate — openai→{anthropic,gemini,open
 ## Task 7: `#[ignore]`-marked live-vendor template
 
 **Files:**
-- Modify: `crates/savvagent-host/tests/cross_vendor_history.rs`
+- Modify: `crates/otto-host/tests/cross_vendor_history.rs`
 
 Add **one** live-vendor variant per receiver (three tests total — one against the real Anthropic, one against real Gemini, one against real OpenAI; sender is anthropic-prefixed for all three since the matrix already showed sender prefix doesn't matter). These are `#[ignore]` so PR CI skips them. They run via `cargo test --test cross_vendor_history -- --ignored` when the operator sets the relevant `*_API_KEY` env var. Marker tests, not exhaustive — full live matrix is a follow-up tracked in the release notes.
 
 - [ ] **Step 1: Append the live-vendor module**
 
-Append to `crates/savvagent-host/tests/cross_vendor_history.rs`:
+Append to `crates/otto-host/tests/cross_vendor_history.rs`:
 
 ```rust
 // ===========================================================================
@@ -893,7 +893,7 @@ Append to `crates/savvagent-host/tests/cross_vendor_history.rs`:
 // the operator has no credentials for.
 // ===========================================================================
 
-fn live_request_for(model: &str, sender: &str) -> savvagent_protocol::CompleteRequest {
+fn live_request_for(model: &str, sender: &str) -> otto_protocol::CompleteRequest {
     build_request(model, history_with_foreign_id(sender))
 }
 
@@ -954,20 +954,20 @@ async fn anthropic_to_openai_live() {
 
 - [ ] **Step 2: Confirm the live tests compile but are skipped by default**
 
-Run: `cargo test -p savvagent-host --test cross_vendor_history`
+Run: `cargo test -p otto-host --test cross_vendor_history`
 Expected: `9 passed; 0 failed; 3 ignored` (the nine mocked + three live-`#[ignore]`).
 
 - [ ] **Step 3: Smoke-test the live-test plumbing locally if a key is available**
 
 Skip this step if the implementer has no API keys handy — the live tests are documented as `--ignored` for that reason. With at least one key available:
 
-Run: `ANTHROPIC_API_KEY=sk-… cargo test -p savvagent-host --test cross_vendor_history anthropic_to_anthropic_live -- --ignored --nocapture`
+Run: `ANTHROPIC_API_KEY=sk-… cargo test -p otto-host --test cross_vendor_history anthropic_to_anthropic_live -- --ignored --nocapture`
 Expected: live test passes (real Anthropic accepts a foreign-prefixed `tool_use_id`).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/cross_vendor_history.rs
+git add crates/otto-host/tests/cross_vendor_history.rs
 git commit -m "test(host): cross-vendor gate — #[ignore]-marked live-vendor variants"
 ```
 
@@ -992,13 +992,13 @@ Edit `.github/workflows/ci.yml`. After the `test:` job block and before the `dis
 ```yaml
   # Cross-vendor `tool_use_id` compatibility gate. Each (sender, receiver)
   # pair across the three shipping vendors gets its own #[tokio::test] in
-  # `crates/savvagent-host/tests/cross_vendor_history.rs`; `--no-fail-fast`
+  # `crates/otto-host/tests/cross_vendor_history.rs`; `--no-fail-fast`
   # ensures every failing pair appears in the job log instead of stopping
   # at the first. See docs/superpowers/specs/2026-05-15-multi-provider-pool-and-auto-routing-design.md
   # ("Phase 2 gate") for the contract this job enforces.
   #
   # Live-vendor twins are #[ignore]-marked and run manually via
-  # `cargo test -p savvagent-host --test cross_vendor_history -- --ignored`
+  # `cargo test -p otto-host --test cross_vendor_history -- --ignored`
   # with the appropriate *_API_KEY env vars set; this PR-CI job covers only
   # the offline mocked matrix.
   cross-vendor-gate:
@@ -1017,7 +1017,7 @@ Edit `.github/workflows/ci.yml`. After the `test:` job block and before the `dis
         # natural libtest behavior anyway (all tests in a binary run to
         # completion regardless of intermediate failures); the explicit flag
         # is kept for symmetry with the main `test` job.
-        run: cargo test -p savvagent-host --test cross_vendor_history --no-fail-fast
+        run: cargo test -p otto-host --test cross_vendor_history --no-fail-fast
 ```
 
 - [ ] **Step 3: Validate the workflow YAML parses**
@@ -1054,7 +1054,7 @@ version = "0.16.0"
 
 - [ ] **Step 2: Bump every literal under `[workspace.dependencies]`**
 
-Edit `Cargo.toml`. Every `version = "0.15.0"` literal in the `[workspace.dependencies]` block becomes `version = "0.16.0"`. There are twelve entries (savvagent-plugin, savvagent-protocol, savvagent-mcp, savvagent-host, provider-anthropic, provider-gemini, provider-local, provider-openai, tool-bash, tool-fs, tool-grep, and the savvagent binary if listed). Use:
+Edit `Cargo.toml`. Every `version = "0.15.0"` literal in the `[workspace.dependencies]` block becomes `version = "0.16.0"`. There are twelve entries (otto-plugin, otto-protocol, otto-mcp, otto-host, provider-anthropic, provider-gemini, provider-local, provider-openai, tool-bash, tool-fs, tool-grep, and the otto binary if listed). Use:
 
 Run: `grep -n 'version = "0.15.0"' Cargo.toml`
 Expected: list of every line that needs editing. Update each via Edit tool with `replace_all`.
@@ -1074,7 +1074,7 @@ Edit `CHANGELOG.md`. Insert at the top (after any header, before the previous re
 ### CI
 
 - **Cross-vendor `tool_use_id` compatibility gate.** New
-  `crates/savvagent-host/tests/cross_vendor_history.rs` integration test
+  `crates/otto-host/tests/cross_vendor_history.rs` integration test
   validates that every `(sender_provider, receiver_provider)` pair across
   the three shipping vendors (Anthropic, Gemini, OpenAI) accepts SPP
   history whose `tool_use_id` is prefixed with the originating provider
@@ -1082,7 +1082,7 @@ Edit `CHANGELOG.md`. Insert at the top (after any header, before the previous re
   axum-backed mock vendor servers via the dedicated `cross-vendor-gate`
   job with `--no-fail-fast`, so any regression surfaces every failing
   pair. `#[ignore]`-marked live-vendor twins are runnable manually via
-  `cargo test -p savvagent-host --test cross_vendor_history -- --ignored`
+  `cargo test -p otto-host --test cross_vendor_history -- --ignored`
   with `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` set.
 
 ### Internal
@@ -1102,7 +1102,7 @@ Edit `README.md`. Find an existing testing/CI section (if absent, add one near t
 ```markdown
 ### Cross-vendor compatibility gate
 
-`crates/savvagent-host/tests/cross_vendor_history.rs` exercises every
+`crates/otto-host/tests/cross_vendor_history.rs` exercises every
 sender/receiver pair across the shipping providers to ensure foreign
 `tool_use_id`s round-trip through each vendor's translator. PR CI runs
 the offline (mocked) matrix as a dedicated `cross-vendor-gate` job. Live
@@ -1111,7 +1111,7 @@ variants are `#[ignore]`-marked; run them manually with the appropriate
 
 ```bash
 ANTHROPIC_API_KEY=sk-… GEMINI_API_KEY=AIza… OPENAI_API_KEY=sk-… \
-    cargo test -p savvagent-host --test cross_vendor_history -- --ignored
+    cargo test -p otto-host --test cross_vendor_history -- --ignored
 ```
 ```
 
@@ -1148,7 +1148,7 @@ Expected: no output (clean). Per `[[feedback_dead_code_in_binary_crate]]`, watch
 
 - [ ] **Step 2: Re-run the gate test stand-alone to confirm `--no-fail-fast` behavior matches CI**
 
-Run: `cargo test -p savvagent-host --test cross_vendor_history --no-fail-fast`
+Run: `cargo test -p otto-host --test cross_vendor_history --no-fail-fast`
 Expected: `9 passed; 0 failed; 3 ignored`.
 
 - [ ] **Step 3: Push the branch + open the PR**
@@ -1174,7 +1174,7 @@ Mapping each Phase 2 requirement in the spec to a task above. **Two spec items (
 
 | Spec requirement | Plan task |
 |---|---|
-| Per-vendor compatibility test (`crates/savvagent-host/tests/cross_vendor_history.rs`) | Tasks 2-6 |
+| Per-vendor compatibility test (`crates/otto-host/tests/cross_vendor_history.rs`) | Tasks 2-6 |
 | Synthetic history with foreign-prefix `tool_use_id` + matching `ToolResult` | Task 2 (helper) + each pair test |
 | Submit `CompleteRequest` to each receiver, assert success **plus** receiver-specific structural assertion on the outgoing wire body | Each pair test (Anthropic/OpenAI: `*_body_has_foreign_id` inspector; Gemini: `gemini_body_has_resolved_function_name` inspector — see Goal for why these differ) |
 | Vendor-specific fallback strategy for failing pairs | **Deferred per design Q&A** ("Build matrix first, react if it fails"). Plan ships zero adapter code; if a pair fails the matrix in a follow-up live-vendor run, a Phase 2.5 patch lands the relevant adapter. The plan calls this out twice (Goal, Architecture) so reviewers can object before implementation. |

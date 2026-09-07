@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `savvagent-host` consume MCP resource notifications from tool servers, surface them on `TurnEvent::ResourceUpdated`, expose a built-in `read_resource` tool to the model, and inject `[resource updated: <uri>]` notes into the conversation at the iteration boundary. Prerequisite for `tool-lsp`.
+**Goal:** Make `otto-host` consume MCP resource notifications from tool servers, surface them on `TurnEvent::ResourceUpdated`, expose a built-in `read_resource` tool to the model, and inject `[resource updated: <uri>]` notes into the conversation at the iteration boundary. Prerequisite for `tool-lsp`.
 
 **Architecture:** Replace the empty `()` client handler on every `ToolServer` with a `ResourceCapturingHandler` that forwards `notifications/resources/updated` (and `…/list_changed`) into an mpsc channel owned by the registry. `Host` spawns a pump task that drains that channel into a new `ResourceCache` keyed by URI. Each update emits `TurnEvent::ResourceUpdated`; the cache's dirty set is drained at the start of each tool-use-loop iteration and injected as synthetic user-role text blocks. A built-in `read_resource` synthetic tool lives in `Host::dispatch_tool` and routes to the owning `ToolServer`'s `resources/read`.
 
@@ -19,15 +19,15 @@
 ## File Map
 
 **New files**
-- `crates/savvagent-host/src/resources.rs` — `ResourceCache`, `ResourceSnapshot`, owner-tracking, dirty-set lifecycle. Pure logic; no rmcp imports.
-- `crates/savvagent-host/tests/fixtures/resource-tool/main.rs` — test-only MCP stdio binary that publishes one resource and serves `resources/read`. Drives the end-to-end test.
-- `crates/savvagent-host/tests/fixtures/resource-tool/Cargo.toml` — test fixture crate.
+- `crates/otto-host/src/resources.rs` — `ResourceCache`, `ResourceSnapshot`, owner-tracking, dirty-set lifecycle. Pure logic; no rmcp imports.
+- `crates/otto-host/tests/fixtures/resource-tool/main.rs` — test-only MCP stdio binary that publishes one resource and serves `resources/read`. Drives the end-to-end test.
+- `crates/otto-host/tests/fixtures/resource-tool/Cargo.toml` — test fixture crate.
 
 **Modified files**
-- `crates/savvagent-host/src/tools.rs` — add `ResourceCapturingHandler` (replaces the `()` handler in `ToolServer.service`); accept a resource-event sender at `connect`; route `resources/read` for a known URI to the right server.
-- `crates/savvagent-host/src/session.rs` — `TurnEvent::ResourceUpdated` variant; spawn `resource_pump`; integrate `ResourceCache`; intercept `read_resource` in the tool-call dispatch path; inject `[resource updated: <uri>]` user blocks at iteration boundary.
-- `crates/savvagent-host/src/lib.rs` — `pub mod resources;` declaration; re-export the cache + snapshot types.
-- `crates/savvagent-host/Cargo.toml` — add `[[test]]` entry for the fixture-bin used by integration tests.
+- `crates/otto-host/src/tools.rs` — add `ResourceCapturingHandler` (replaces the `()` handler in `ToolServer.service`); accept a resource-event sender at `connect`; route `resources/read` for a known URI to the right server.
+- `crates/otto-host/src/session.rs` — `TurnEvent::ResourceUpdated` variant; spawn `resource_pump`; integrate `ResourceCache`; intercept `read_resource` in the tool-call dispatch path; inject `[resource updated: <uri>]` user blocks at iteration boundary.
+- `crates/otto-host/src/lib.rs` — `pub mod resources;` declaration; re-export the cache + snapshot types.
+- `crates/otto-host/Cargo.toml` — add `[[test]]` entry for the fixture-bin used by integration tests.
 - `Cargo.toml` (workspace root) — bump `version = "0.22.0"` and matching `[workspace.dependencies]` literals.
 - `CHANGELOG.md` — `## 0.22.0` entry.
 - `README.md` — document `read_resource` in the built-in tool list and the `[resource updated: <uri>]` semantics.
@@ -37,11 +37,11 @@
 ## Task 1: Add `TurnEvent::ResourceUpdated` variant
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs:170-271` (the `TurnEvent` enum)
+- Modify: `crates/otto-host/src/session.rs:170-271` (the `TurnEvent` enum)
 
 - [ ] **Step 1: Write a failing pattern-exhaustiveness test**
 
-Add this test at the bottom of the existing `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/session.rs` (find the last `#[test]`/`#[tokio::test]` in the file and append). Use `grep -n "^#\[cfg(test)\]\|^mod tests" crates/savvagent-host/src/session.rs` to find the right location — the file has one outer test module near the bottom.
+Add this test at the bottom of the existing `#[cfg(test)] mod tests` block in `crates/otto-host/src/session.rs` (find the last `#[test]`/`#[tokio::test]` in the file and append). Use `grep -n "^#\[cfg(test)\]\|^mod tests" crates/otto-host/src/session.rs` to find the right location — the file has one outer test module near the bottom.
 
 ```rust
 #[test]
@@ -66,12 +66,12 @@ fn turn_event_resource_updated_carries_uri_owner_summary() {
 
 - [ ] **Step 2: Run the test to confirm it fails**
 
-Run: `rustup run stable cargo test -p savvagent-host turn_event_resource_updated_carries_uri_owner_summary 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-host turn_event_resource_updated_carries_uri_owner_summary 2>&1 | tail -10`
 Expected: compile error — `no variant or associated item named ResourceUpdated found for enum TurnEvent`.
 
 - [ ] **Step 3: Add the variant**
 
-In `crates/savvagent-host/src/session.rs`, find the `pub enum TurnEvent {` declaration (around line 170) and add this variant immediately before the existing `TurnComplete { … }` variant:
+In `crates/otto-host/src/session.rs`, find the `pub enum TurnEvent {` declaration (around line 170) and add this variant immediately before the existing `TurnComplete { … }` variant:
 
 ```rust
     /// A tool server published `notifications/resources/updated`. The TUI
@@ -92,18 +92,18 @@ In `crates/savvagent-host/src/session.rs`, find the `pub enum TurnEvent {` decla
 
 - [ ] **Step 4: Run the test, confirm pass**
 
-Run: `rustup run stable cargo test -p savvagent-host turn_event_resource_updated_carries_uri_owner_summary 2>&1 | tail -5`
+Run: `rustup run stable cargo test -p otto-host turn_event_resource_updated_carries_uri_owner_summary 2>&1 | tail -5`
 Expected: `test result: ok. 1 passed; …`.
 
-- [ ] **Step 5: Run the rest of savvagent-host tests to confirm no fallout**
+- [ ] **Step 5: Run the rest of otto-host tests to confirm no fallout**
 
-Run: `rustup run stable cargo test -p savvagent-host 2>&1 | tail -5`
+Run: `rustup run stable cargo test -p otto-host 2>&1 | tail -5`
 Expected: all green.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "host: add TurnEvent::ResourceUpdated variant
 
 Adds the host-side event for MCP resource notifications from tool
@@ -117,12 +117,12 @@ of uri/owner/summary trip CI."
 ## Task 2: Create `resources.rs` module with `ResourceCache`
 
 **Files:**
-- Create: `crates/savvagent-host/src/resources.rs`
-- Modify: `crates/savvagent-host/src/lib.rs`
+- Create: `crates/otto-host/src/resources.rs`
+- Modify: `crates/otto-host/src/lib.rs`
 
 - [ ] **Step 1: Add module declaration to lib.rs**
 
-In `crates/savvagent-host/src/lib.rs`, find the existing `pub mod` declarations and append:
+In `crates/otto-host/src/lib.rs`, find the existing `pub mod` declarations and append:
 
 ```rust
 pub mod resources;
@@ -130,7 +130,7 @@ pub mod resources;
 
 - [ ] **Step 2: Create `resources.rs` with the cache types and unit tests**
 
-Create `crates/savvagent-host/src/resources.rs`:
+Create `crates/otto-host/src/resources.rs`:
 
 ```rust
 //! Per-host cache of MCP resources advertised by connected tool servers.
@@ -273,13 +273,13 @@ mod tests {
 
 - [ ] **Step 3: Run the cache tests**
 
-Run: `rustup run stable cargo test -p savvagent-host resources:: 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-host resources:: 2>&1 | tail -10`
 Expected: 6 tests passing.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-host/src/lib.rs crates/savvagent-host/src/resources.rs
+git add crates/otto-host/src/lib.rs crates/otto-host/src/resources.rs
 git commit -m "host: add ResourceCache + ResourceSnapshot
 
 Cache stores ownership + monotonic seq, not bodies — reads pull on
@@ -294,11 +294,11 @@ hashmap iteration order."
 ## Task 3: `ResourceCapturingHandler` + channel
 
 **Files:**
-- Modify: `crates/savvagent-host/src/tools.rs`
+- Modify: `crates/otto-host/src/tools.rs`
 
 - [ ] **Step 1: Add a failing test for the handler**
 
-In `crates/savvagent-host/src/tools.rs`, find the existing `#[cfg(test)] mod lazy_bash_tests {` block (around line 784) and add a new sibling test module immediately after it (still inside the file, before the existing `#[cfg(test)] mod tool_call_outcome_tests`):
+In `crates/otto-host/src/tools.rs`, find the existing `#[cfg(test)] mod lazy_bash_tests {` block (around line 784) and add a new sibling test module immediately after it (still inside the file, before the existing `#[cfg(test)] mod tool_call_outcome_tests`):
 
 ```rust
 #[cfg(test)]
@@ -362,12 +362,12 @@ mod resource_handler_tests {
 
 - [ ] **Step 2: Run the test to confirm compile failure**
 
-Run: `rustup run stable cargo test -p savvagent-host resource_handler_tests 2>&1 | tail -20`
+Run: `rustup run stable cargo test -p otto-host resource_handler_tests 2>&1 | tail -20`
 Expected: compile errors — `ResourceEvent`, `ResourceCapturingHandler`, `forward_updated_for_test` not found.
 
 - [ ] **Step 3: Add the handler type and event enum**
 
-At the top of `crates/savvagent-host/src/tools.rs`, immediately after the existing `use` block, add:
+At the top of `crates/otto-host/src/tools.rs`, immediately after the existing `use` block, add:
 
 ```rust
 use rmcp::model::{ResourceUpdatedNotificationParam};
@@ -483,18 +483,18 @@ impl ClientHandler for ResourceCapturingHandler {
 
 - [ ] **Step 4: Run the handler tests, confirm pass**
 
-Run: `rustup run stable cargo test -p savvagent-host resource_handler_tests 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-host resource_handler_tests 2>&1 | tail -10`
 Expected: 3 tests passing.
 
 - [ ] **Step 5: Run the whole crate to confirm no unrelated breakage**
 
-Run: `rustup run stable cargo test -p savvagent-host 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-host 2>&1 | tail -10`
 Expected: all green.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/tools.rs
+git add crates/otto-host/src/tools.rs
 git commit -m "host: ResourceCapturingHandler + ResourceEvent channel
 
 Replaces the default no-op ClientHandler (the unit type \`()\`) with a
@@ -509,11 +509,11 @@ task. Channel pump + cache integration follow in the task after."
 ## Task 4: Wire `ResourceCapturingHandler` into `ToolRegistry::connect`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/tools.rs`
+- Modify: `crates/otto-host/src/tools.rs`
 
 - [ ] **Step 1: Change `ToolServer.service` type to use the handler**
 
-In `crates/savvagent-host/src/tools.rs`, locate the `struct ToolServer` declaration (around line 167):
+In `crates/otto-host/src/tools.rs`, locate the `struct ToolServer` declaration (around line 167):
 
 ```rust
 struct ToolServer {
@@ -610,7 +610,7 @@ Find all callers:
 
 Run: `grep -rn "ToolRegistry::connect" crates/ 2>&1`
 
-There will be one call in `crates/savvagent-host/src/session.rs` (inside `Host::start`). Locate it and update by changing:
+There will be one call in `crates/otto-host/src/session.rs` (inside `Host::start`). Locate it and update by changing:
 
 ```rust
         let tools = ToolRegistry::connect(
@@ -650,7 +650,7 @@ To avoid the "unused variable" warning that would fail `-D warnings`, prefix it:
 
 - [ ] **Step 5: Build the crate to surface any callers we missed**
 
-Run: `rustup run stable cargo build -p savvagent-host 2>&1 | tail -20`
+Run: `rustup run stable cargo build -p otto-host 2>&1 | tail -20`
 Expected: compiles cleanly.
 
 If there are test-file callers, update them by adding a no-op channel:
@@ -662,15 +662,15 @@ ToolRegistry::connect(..., resource_tx).await?
 
 - [ ] **Step 6: Re-export `ResourceEvent` from `tools.rs`**
 
-In `crates/savvagent-host/src/tools.rs`, the `ResourceEvent` enum is `pub(crate)` — the integration test fixture in a later task needs to see it, but only from within this crate. Keep `pub(crate)` for now.
+In `crates/otto-host/src/tools.rs`, the `ResourceEvent` enum is `pub(crate)` — the integration test fixture in a later task needs to see it, but only from within this crate. Keep `pub(crate)` for now.
 
-Run: `rustup run stable cargo test -p savvagent-host 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-host 2>&1 | tail -10`
 Expected: all green.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent-host/src/tools.rs crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/tools.rs crates/otto-host/src/session.rs
 git commit -m "host: install ResourceCapturingHandler on every ToolServer
 
 connect() now requires a Sender<ResourceEvent>; each eager tool and
@@ -685,11 +685,11 @@ lands in the next commit. No behavior change yet."
 ## Task 5: `Host::resource_pump` task drains channel into `ResourceCache`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 - [ ] **Step 1: Add `resources` field to `Host` and a `Mutex<ResourceCache>`**
 
-In `crates/savvagent-host/src/session.rs`, locate the `pub struct Host {` declaration (around line 274). Add this field at the end of the struct, right before the closing `}`:
+In `crates/otto-host/src/session.rs`, locate the `pub struct Host {` declaration (around line 274). Add this field at the end of the struct, right before the closing `}`:
 
 ```rust
     /// Resource cache populated by the resource_pump task. Read at each
@@ -733,7 +733,7 @@ Note: the existing `Host` is bound to a local named `host` somewhere in `start`.
 
 - [ ] **Step 4: Add the `resource_pump` free function at the bottom of the file**
 
-Append at the very bottom of `crates/savvagent-host/src/session.rs`, after the existing helpers and before any `#[cfg(test)]` modules:
+Append at the very bottom of `crates/otto-host/src/session.rs`, after the existing helpers and before any `#[cfg(test)]` modules:
 
 ```rust
 /// Drain resource events from `rx` into `cache`. When a turn is live
@@ -788,13 +788,13 @@ async fn resource_pump(
 
 - [ ] **Step 5: Run the crate tests to confirm nothing regressed**
 
-Run: `rustup run stable cargo test -p savvagent-host 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-host 2>&1 | tail -10`
 Expected: all green. (No new test for the pump in this task — its behavior is end-to-end-tested via the fixture tool in Task 9.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "host: spawn resource_pump task; emit TurnEvent::ResourceUpdated
 
 The pump owns the resource channel receiver and the ResourceCache
@@ -809,12 +809,12 @@ explicit URI updates today."
 ## Task 6: Built-in `read_resource` synthetic tool
 
 **Files:**
-- Modify: `crates/savvagent-host/src/tools.rs`
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/tools.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 - [ ] **Step 1: Add a constant for the tool name + the synthetic ToolDef**
 
-At the top of `crates/savvagent-host/src/tools.rs`, just after the existing `const TOOL_BASH_MARKER: &str = "tool-bash";` line (around line 46), add:
+At the top of `crates/otto-host/src/tools.rs`, just after the existing `const TOOL_BASH_MARKER: &str = "tool-bash";` line (around line 46), add:
 
 ```rust
 /// Name of the host-built-in tool that reads MCP resources by URI.
@@ -849,7 +849,7 @@ In `ToolRegistry::connect`, just before the final `Ok(Self { … })` (after the 
         });
 ```
 
-Note: `ToolDef.input_schema` is a `serde_json::Value` — verify by running `grep -n "pub struct ToolDef" crates/savvagent-protocol/src/tool.rs` and reading the field. If the type is `Value` (object), the `.into()` chain may not be needed; in that case the literal `serde_json::json!({...})` suffices.
+Note: `ToolDef.input_schema` is a `serde_json::Value` — verify by running `grep -n "pub struct ToolDef" crates/otto-protocol/src/tool.rs` and reading the field. If the type is `Value` (object), the `.into()` chain may not be needed; in that case the literal `serde_json::json!({...})` suffices.
 
 Use this defensive form that works either way:
 
@@ -915,13 +915,13 @@ Still in `tools.rs`, inside `impl ToolRegistry`, append a new method just before
     }
 ```
 
-(`ToolCallOutcome::success` is currently private — check by running `grep -n "fn success" crates/savvagent-host/src/tools.rs`. It's `fn success(payload: String) -> Self {` at module level. If it's not `pub(crate)`, add `pub(crate)` to both `success` and `error`.)
+(`ToolCallOutcome::success` is currently private — check by running `grep -n "fn success" crates/otto-host/src/tools.rs`. It's `fn success(payload: String) -> Self {` at module level. If it's not `pub(crate)`, add `pub(crate)` to both `success` and `error`.)
 
 - [ ] **Step 4: Intercept `read_resource` in Host's tool-call path**
 
-In `crates/savvagent-host/src/session.rs`, find the site where the host calls `tools.call_with_bash_net_override(name, ...)`. Use:
+In `crates/otto-host/src/session.rs`, find the site where the host calls `tools.call_with_bash_net_override(name, ...)`. Use:
 
-Run: `grep -n "call_with_bash_net_override\|ToolRegistry" crates/savvagent-host/src/session.rs 2>&1 | head -10`
+Run: `grep -n "call_with_bash_net_override\|ToolRegistry" crates/otto-host/src/session.rs 2>&1 | head -10`
 
 The call lives inside the tool-use loop around line 1122 (look for `ToolCallStarted`). Locate the dispatch site — it will look approximately like:
 
@@ -977,13 +977,13 @@ Note: the original line stays only inside the `else` branch. Make sure the varia
 
 - [ ] **Step 5: Build and run tests**
 
-Run: `rustup run stable cargo test -p savvagent-host 2>&1 | tail -15`
+Run: `rustup run stable cargo test -p otto-host 2>&1 | tail -15`
 Expected: all green. No new unit test in this task — read_resource is tested end-to-end against the fixture tool in Task 9.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-host/src/tools.rs crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/tools.rs crates/otto-host/src/session.rs
 git commit -m "host: synthetic read_resource tool routes resources/read
 
 ToolRegistry::defs now always advertises read_resource. The Host
@@ -998,11 +998,11 @@ arrives with the fixture tool in a follow-up commit."
 ## Task 7: Iteration-boundary conversation injection
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 - [ ] **Step 1: Drain `dirty` into synthetic user-text messages at iteration start**
 
-In `crates/savvagent-host/src/session.rs`, locate the iteration loop:
+In `crates/otto-host/src/session.rs`, locate the iteration loop:
 
 ```rust
         let mut iterations: u32 = 0;
@@ -1015,7 +1015,7 @@ In `crates/savvagent-host/src/session.rs`, locate the iteration loop:
             iterations += 1;
 ```
 
-(Search with `grep -n "let mut iterations" crates/savvagent-host/src/session.rs`.)
+(Search with `grep -n "let mut iterations" crates/otto-host/src/session.rs`.)
 
 Immediately after `iterations += 1;` and before the `if let Some(tx) = &events {` block that emits `IterationStarted`, insert:
 
@@ -1042,16 +1042,16 @@ Immediately after `iterations += 1;` and before the `if let Some(tx) = &events {
             }
 ```
 
-The `Message`, `Role`, and `ContentBlock` types are already imported at the top of the file — verify with `grep -n "^use.*Message\|^use.*ContentBlock\|^use.*Role" crates/savvagent-host/src/session.rs`. If any are missing, add `use savvagent_protocol::{ContentBlock, Message, Role};` to the existing import block.
+The `Message`, `Role`, and `ContentBlock` types are already imported at the top of the file — verify with `grep -n "^use.*Message\|^use.*ContentBlock\|^use.*Role" crates/otto-host/src/session.rs`. If any are missing, add `use otto_protocol::{ContentBlock, Message, Role};` to the existing import block.
 
 - [ ] **Step 2: Add a unit test that exercises the injection path with a mocked provider**
 
-Add this test at the bottom of `crates/savvagent-host/src/session.rs`'s test module:
+Add this test at the bottom of `crates/otto-host/src/session.rs`'s test module:
 
 ```rust
 #[tokio::test]
 async fn iteration_boundary_injects_resource_updated_block_into_history() {
-    use savvagent_protocol::{ContentBlock, Role};
+    use otto_protocol::{ContentBlock, Role};
 
     // Build a host whose provider records every CompleteRequest it sees.
     // After the turn, we inspect the recorded messages to confirm the
@@ -1086,7 +1086,7 @@ async fn iteration_boundary_injects_resource_updated_block_into_history() {
 }
 ```
 
-This test depends on a `test_helpers::host_with_recording_provider()` helper. There's likely a similar helper already in the file — grep for `fn host_with` or `mod test_helpers` in `crates/savvagent-host/src/session.rs` and either reuse it or add a thin recording wrapper around the existing test provider.
+This test depends on a `test_helpers::host_with_recording_provider()` helper. There's likely a similar helper already in the file — grep for `fn host_with` or `mod test_helpers` in `crates/otto-host/src/session.rs` and either reuse it or add a thin recording wrapper around the existing test provider.
 
 If no helper exists, add it inside the existing test module:
 
@@ -1110,18 +1110,18 @@ mod test_helpers {
     }
 
     #[async_trait::async_trait]
-    impl savvagent_mcp::ProviderClient for RecordingProvider {
+    impl otto_mcp::ProviderClient for RecordingProvider {
         async fn complete(
             &self,
             req: CompleteRequest,
-            _events: Option<mpsc::Sender<savvagent_protocol::StreamEvent>>,
-        ) -> Result<CompleteResponse, savvagent_protocol::ProviderError> {
+            _events: Option<mpsc::Sender<otto_protocol::StreamEvent>>,
+        ) -> Result<CompleteResponse, otto_protocol::ProviderError> {
             self.records.inner.lock().unwrap().push(req.clone());
             Ok(CompleteResponse {
                 id: "rec".into(),
                 model: req.model,
                 content: vec![ContentBlock::Text { text: "ok".into() }],
-                stop_reason: savvagent_protocol::StopReason::EndTurn,
+                stop_reason: otto_protocol::StopReason::EndTurn,
                 stop_sequence: None,
                 usage: Default::default(),
             })
@@ -1144,18 +1144,18 @@ If the existing `HostConfig` builder doesn't have `with_provider_client_for_test
 
 - [ ] **Step 3: Run the new test**
 
-Run: `rustup run stable cargo test -p savvagent-host iteration_boundary_injects_resource_updated_block_into_history 2>&1 | tail -20`
+Run: `rustup run stable cargo test -p otto-host iteration_boundary_injects_resource_updated_block_into_history 2>&1 | tail -20`
 Expected: PASS.
 
 - [ ] **Step 4: Run the rest**
 
-Run: `rustup run stable cargo test -p savvagent-host 2>&1 | tail -10`
+Run: `rustup run stable cargo test -p otto-host 2>&1 | tail -10`
 Expected: all green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/src/session.rs
+git add crates/otto-host/src/session.rs
 git commit -m "host: inject [resource updated: <uri>] blocks at iteration start
 
 At the top of every tool-use-loop iteration, drain the resource
@@ -1171,12 +1171,12 @@ hosts."
 ## Task 8: Resource-tool integration test fixture
 
 **Files:**
-- Create: `crates/savvagent-host/tests/fixtures/resource-tool/Cargo.toml`
-- Create: `crates/savvagent-host/tests/fixtures/resource-tool/src/main.rs`
+- Create: `crates/otto-host/tests/fixtures/resource-tool/Cargo.toml`
+- Create: `crates/otto-host/tests/fixtures/resource-tool/src/main.rs`
 
 - [ ] **Step 1: Add the fixture crate manifest**
 
-Create `crates/savvagent-host/tests/fixtures/resource-tool/Cargo.toml`:
+Create `crates/otto-host/tests/fixtures/resource-tool/Cargo.toml`:
 
 ```toml
 [package]
@@ -1202,7 +1202,7 @@ Verify the rmcp feature set matches what `tool-fs` uses — open `crates/tool-fs
 
 - [ ] **Step 2: Add the fixture binary**
 
-Create `crates/savvagent-host/tests/fixtures/resource-tool/src/main.rs`:
+Create `crates/otto-host/tests/fixtures/resource-tool/src/main.rs`:
 
 ```rust
 //! Test-only MCP stdio tool used by the host's resource integration tests.
@@ -1339,7 +1339,7 @@ If `notify_resource_updated` doesn't exist on `Peer<RoleServer>`, use the generi
 In the workspace root `Cargo.toml`, find the `[workspace] members = [ … ]` list and append:
 
 ```toml
-    "crates/savvagent-host/tests/fixtures/resource-tool",
+    "crates/otto-host/tests/fixtures/resource-tool",
 ```
 
 - [ ] **Step 4: Build the fixture**
@@ -1350,7 +1350,7 @@ Expected: clean build. If the rmcp API mismatches, fix the fixture (see Step 2 n
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-host/tests/fixtures/resource-tool/ Cargo.toml Cargo.lock
+git add crates/otto-host/tests/fixtures/resource-tool/ Cargo.toml Cargo.lock
 git commit -m "host: add resource-tool test fixture
 
 A minimal stdio MCP server that advertises one tool (trigger_update)
@@ -1364,11 +1364,11 @@ resource integration test."
 ## Task 9: End-to-end integration test against the fixture
 
 **Files:**
-- Create: `crates/savvagent-host/tests/resources_integration.rs`
+- Create: `crates/otto-host/tests/resources_integration.rs`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-host/tests/resources_integration.rs`:
+Create `crates/otto-host/tests/resources_integration.rs`:
 
 ```rust
 //! End-to-end resource notification + read_resource integration test.
@@ -1386,8 +1386,8 @@ Create `crates/savvagent-host/tests/resources_integration.rs`:
 
 #![cfg(test)]
 
-use savvagent_host::{Host, HostConfig, TurnEvent};
-use savvagent_protocol::{ContentBlock, Role};
+use otto_host::{Host, HostConfig, TurnEvent};
+use otto_protocol::{ContentBlock, Role};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -1433,7 +1433,7 @@ async fn fixture_publishes_resources_and_host_injects_them() {
 
 Note: this test depends on `HostConfig::for_resource_integration_test` and `CARGO_BIN_EXE_resource-tool` being available. The `CARGO_BIN_EXE_<name>` env var is set by cargo only when the test crate has a dev-dep or workspace-bin reference. Wire it as follows:
 
-In `crates/savvagent-host/Cargo.toml`, add to `[dev-dependencies]`:
+In `crates/otto-host/Cargo.toml`, add to `[dev-dependencies]`:
 
 ```toml
 resource-tool = { path = "tests/fixtures/resource-tool" }
@@ -1441,17 +1441,17 @@ resource-tool = { path = "tests/fixtures/resource-tool" }
 
 This is the supported way to get `CARGO_BIN_EXE_resource-tool` exported for integration tests.
 
-If `HostConfig::for_resource_integration_test` doesn't exist, add it as a `#[cfg(any(test, feature = "test-helpers"))]` constructor at the bottom of `crates/savvagent-host/src/config.rs` that:
+If `HostConfig::for_resource_integration_test` doesn't exist, add it as a `#[cfg(any(test, feature = "test-helpers"))]` constructor at the bottom of `crates/otto-host/src/config.rs` that:
 
 - Sets `project_root` to a fresh `tempfile::tempdir()`.
 - Adds the supplied binary path as a single `ToolEndpoint::Stdio { command, args }`.
-- Wires a canned provider that, on the first complete() call, returns a tool_use(`trigger_update`) ContentBlock, and on the second returns Text("done") + StopReason::EndTurn. Mirror the existing test-provider pattern in `crates/savvagent-host/src/session.rs`'s tests.
+- Wires a canned provider that, on the first complete() call, returns a tool_use(`trigger_update`) ContentBlock, and on the second returns Text("done") + StopReason::EndTurn. Mirror the existing test-provider pattern in `crates/otto-host/src/session.rs`'s tests.
 
 Show the exact code if the existing pattern requires it — don't leave it as "implement this." Open `session.rs`, find any test that constructs a custom provider, and copy that shape into a new `pub fn for_resource_integration_test` on `HostConfig`.
 
 - [ ] **Step 2: Run the test**
 
-Run: `rustup run stable cargo test -p savvagent-host --test resources_integration -- --nocapture 2>&1 | tail -30`
+Run: `rustup run stable cargo test -p otto-host --test resources_integration -- --nocapture 2>&1 | tail -30`
 Expected: PASS.
 
 If it fails because the fixture binary doesn't publish notifications correctly, debug by adding `tracing::info!` to the fixture's `call_tool` and re-running with `RUST_LOG=info`. Do not modify the test's assertion shape — the assertion is the spec.
@@ -1459,7 +1459,7 @@ If it fails because the fixture binary doesn't publish notifications correctly, 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add crates/savvagent-host/Cargo.toml crates/savvagent-host/tests/resources_integration.rs crates/savvagent-host/src/config.rs Cargo.lock
+git add crates/otto-host/Cargo.toml crates/otto-host/tests/resources_integration.rs crates/otto-host/src/config.rs Cargo.lock
 git commit -m "host: end-to-end resource integration test
 
 Drives a real Host against the resource-tool fixture: tool call →
@@ -1516,7 +1516,7 @@ Open `CHANGELOG.md`. Locate the existing `## 0.21.0 - 2026-05-20` heading near t
 
 ### Added
 
-- **MCP resource subscriptions in `savvagent-host`**. Every connected tool server is now constructed with a `ResourceCapturingHandler` (rmcp `ClientHandler`) that forwards `notifications/resources/updated` and `notifications/resources/list_changed` into a host-owned mpsc channel. A new `resource_pump` task drains the channel into `ResourceCache` and emits the new `TurnEvent::ResourceUpdated { uri, owner, summary }` so the TUI can render a banner.
+- **MCP resource subscriptions in `otto-host`**. Every connected tool server is now constructed with a `ResourceCapturingHandler` (rmcp `ClientHandler`) that forwards `notifications/resources/updated` and `notifications/resources/list_changed` into a host-owned mpsc channel. A new `resource_pump` task drains the channel into `ResourceCache` and emits the new `TurnEvent::ResourceUpdated { uri, owner, summary }` so the TUI can render a banner.
 - **Built-in `read_resource` synthetic tool**. Always advertised in `ToolRegistry::defs`, takes `{ uri: string }`, and routes through the cache to call `resources/read` on the URI's owning tool server.
 - **Iteration-boundary conversation injection**. At the start of every tool-use-loop iteration, dirty URIs are drained from `ResourceCache` and appended as `Message{role:User, content:Text}` blocks of the form `[resource updated: <uri>]`. The model decides whether to call `read_resource` on any of them.
 

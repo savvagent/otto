@@ -1,31 +1,31 @@
 # mcp-servers Implementation Plan
 
 **Goal:** Let a user add third-party MCP tool servers — local stdio processes or remote Streamable
-HTTP endpoints — via `~/.savvagent/config.toml` and a new `/mcp` slash command/screen, without
+HTTP endpoints — via `~/.otto/config.toml` and a new `/mcp` slash command/screen, without
 rebuilding the binary. Configured servers register alongside the bundled `ToolBins` set
 (`fs`/`bash`/`grep`/`lsp`/`web`), degrade gracefully on individual failure, and never block
 `Host::start`.
 
-**Architecture:** `ToolEndpoint` (`crates/savvagent-host/src/config.rs`) gains an `Http` variant and
+**Architecture:** `ToolEndpoint` (`crates/otto-host/src/config.rs`) gains an `Http` variant and
 a `name`/`env` field, becoming `#[non_exhaustive]`. `ToolRegistry::connect`
-(`crates/savvagent-host/src/tools.rs`) is reshaped to isolate per-endpoint failures behind a
+(`crates/otto-host/src/tools.rs`) is reshaped to isolate per-endpoint failures behind a
 two-stage `tokio::time::timeout_at` (spawn/serve, then `list_all_tools`), explicitly
 `service.cancel().await`ing any endpoint that fails after `serve()` succeeds, and records a
 `ToolServerStatus` per endpoint (surfaced via `Host::tool_server_statuses()`). `ConfigFile`
-(`crates/savvagent/src/config_file.rs`) gains a tolerantly-decoded `mcp_servers: Vec<McpServerEntry>`
+(`crates/otto/src/config_file.rs`) gains a tolerantly-decoded `mcp_servers: Vec<McpServerEntry>`
 field — a single malformed row never drops `startup`/`migration` or other valid rows.
-`crates/savvagent/src/creds.rs` gains `delete`/`mcp_save`/`mcp_load`/`mcp_delete` under a new
-`mcp:<server>` keyring namespace. `crates/savvagent/src/main.rs`'s `bootstrap_pool_host` resolves
+`crates/otto/src/creds.rs` gains `delete`/`mcp_save`/`mcp_load`/`mcp_delete` under a new
+`mcp:<server>` keyring namespace. `crates/otto/src/main.rs`'s `bootstrap_pool_host` resolves
 configured servers (validating + reading secrets) into `ToolEndpoint`s appended after `ToolBins`.
-A new built-in plugin, `crates/savvagent/src/plugin/builtin/mcp/` (mirroring `connect/`), backs the
+A new built-in plugin, `crates/otto/src/plugin/builtin/mcp/` (mirroring `connect/`), backs the
 `/mcp` slash command and `mcp.manager` screen; its add/remove flows edit `config.toml` through a new
-`toml_edit::DocumentMut`-based writer (`crates/savvagent/src/mcp_config_writer.rs`) that mutates only
+`toml_edit::DocumentMut`-based writer (`crates/otto/src/mcp_config_writer.rs`) that mutates only
 the `mcp_servers` array-of-tables, leaving every other node — including malformed neighboring rows —
 untouched, and push a "restart to apply" note (v1 has no live reconnect).
 
 **Tech Stack:** Rust 2024, `rmcp` 1.6 (`transport-streamable-http-client`/`-reqwest` features already
 enabled; no new rmcp feature), `toml` 0.8 (read-side, unchanged), `toml_edit` 0.25 (new dependency,
-`crates/savvagent`-only, write-side only), `keyring`, `savvagent-plugin`'s `Screen`/`Effect` ABI.
+`crates/otto`-only, write-side only), `keyring`, `otto-plugin`'s `Screen`/`Effect` ABI.
 
 **Spec:** `docs/superpowers/specs/2026-09-05-mcp-servers-design.md` — read it first, including the
 "Premise corrections" section (the issue's own complexity estimate for `ToolRegistry` is inflated —
@@ -42,33 +42,33 @@ recent released heading when the release PR (Task 9's final note) is actually op
 
 **File Map:**
 
-- Modified: `crates/savvagent-host/src/config.rs` — `ToolEndpoint` gains `name`/`env` on `Stdio` and
+- Modified: `crates/otto-host/src/config.rs` — `ToolEndpoint` gains `name`/`env` on `Stdio` and
   a new `Http { name, url, auth }` variant; both `ToolEndpoint` and a new `HttpAuth` enum are marked
   `#[non_exhaustive]`.
-- Modified: `crates/savvagent-host/src/tools.rs` — `ToolRegistry::connect`'s per-endpoint loop is
+- Modified: `crates/otto-host/src/tools.rs` — `ToolRegistry::connect`'s per-endpoint loop is
   reshaped for failure isolation, two-stage timeout + `cancel()`, per-tool (not per-endpoint)
   collision handling, and a new `Http` construction arm; `ToolServerStatus`/`ConnectState`/
   `TransportKind` types added; `ToolRegistry` gains a `statuses` field + `statuses()` accessor;
   `ToolServer.label` now comes from `ToolEndpoint::name`, not `command.display()`.
-- Modified: `crates/savvagent-host/src/session.rs` — `Host` gains `tool_server_statuses()` forwarding
+- Modified: `crates/otto-host/src/session.rs` — `Host` gains `tool_server_statuses()` forwarding
   to `ToolRegistry::statuses()`.
-- Modified: `crates/savvagent/src/config_file.rs` — `ConfigFile` gains `mcp_servers:
+- Modified: `crates/otto/src/config_file.rs` — `ConfigFile` gains `mcp_servers:
   Vec<McpServerEntry>`; new `McpServerEntry`/`McpAuthMode` types; `load_or_default` is rewritten to
   return `LoadedConfig { config, mcp_server_diagnostics }` via tolerant per-entry decode.
-- Created: `crates/savvagent/src/mcp_config_writer.rs` — `toml_edit::DocumentMut`-based
+- Created: `crates/otto/src/mcp_config_writer.rs` — `toml_edit::DocumentMut`-based
   add/remove-by-name for the `mcp_servers` array-of-tables; used only by the `/mcp` plugin.
-- Modified: `crates/savvagent/src/creds.rs` — add `delete`, `mcp_save`, `mcp_load`, `mcp_delete`.
-- Modified: `crates/savvagent/src/main.rs` — `ToolBins::apply`'s caller in `bootstrap_pool_host`
+- Modified: `crates/otto/src/creds.rs` — add `delete`, `mcp_save`, `mcp_load`, `mcp_delete`.
+- Modified: `crates/otto/src/main.rs` — `ToolBins::apply`'s caller in `bootstrap_pool_host`
   gains a step that validates `config_file.mcp_servers`, resolves secrets via `creds::mcp_load`, and
   appends resulting `ToolEndpoint`s; `load_or_default`'s new return shape is threaded through
   `bootstrap_app_and_host`.
-- Created: `crates/savvagent/src/plugin/builtin/mcp/mod.rs`,
-  `crates/savvagent/src/plugin/builtin/mcp/screen.rs` — the `/mcp` slash command + `mcp.manager`
+- Created: `crates/otto/src/plugin/builtin/mcp/mod.rs`,
+  `crates/otto/src/plugin/builtin/mcp/screen.rs` — the `/mcp` slash command + `mcp.manager`
   screen, mirroring `connect/`.
-- Modified: `crates/savvagent/src/plugin/builtin/mod.rs` — add `pub mod mcp;` with a doc comment.
-- Modified: `crates/savvagent/src/plugin/mod.rs` — register `McpPlugin` in `register_builtins`; update
+- Modified: `crates/otto/src/plugin/builtin/mod.rs` — add `pub mod mcp;` with a doc comment.
+- Modified: `crates/otto/src/plugin/mod.rs` — register `McpPlugin` in `register_builtins`; update
   any test asserting the builtin plugin count/id list.
-- Modified: `crates/savvagent/Cargo.toml` — add `toml_edit.workspace = true`.
+- Modified: `crates/otto/Cargo.toml` — add `toml_edit.workspace = true`.
 - Modified: root `Cargo.toml` — add `toml_edit = "0.25"` under `[workspace.dependencies]`.
 - Modified: `README.md` — "Extending" section gains a "New MCP server (user-configured)" recipe;
   document `/mcp`, the `[[mcp_servers]]` config format, and the keyring namespace.
@@ -79,10 +79,10 @@ recent released heading when the release PR (Task 9's final note) is actually op
 - Modified: `CHANGELOG.md` — add entries under `[Unreleased]` for the new `Http` variant/breaking
   change, `/mcp`, and the new `toml_edit` dependency.
 
-## Task 1: `ToolEndpoint::Http` + `name`/`env` on `Stdio` (`crates/savvagent-host/src/config.rs`)
+## Task 1: `ToolEndpoint::Http` + `name`/`env` on `Stdio` (`crates/otto-host/src/config.rs`)
 
 **Files:**
-- Modify: `crates/savvagent-host/src/config.rs`
+- Modify: `crates/otto-host/src/config.rs`
 
 - [x] Baseline: `cargo test --workspace --no-fail-fast` — confirm green before touching anything;
       record the total test count as the pre-change baseline for this plan's final comparison.
@@ -91,19 +91,19 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `pub enum HttpAuth { None, Bearer { token: String } }`. Mark both `ToolEndpoint` and `HttpAuth`
       `#[non_exhaustive]`. Add `use std::collections::HashMap;`.
 - [x] Update every in-workspace `ToolEndpoint::Stdio { command, args }` construction site to the new
-      shape (`crates/savvagent/src/main.rs`'s `ToolBins::apply`, passing `name` as the bundled tool's
+      shape (`crates/otto/src/main.rs`'s `ToolBins::apply`, passing `name` as the bundled tool's
       canonical name — `"fs"`/`"bash"`/`"grep"`/`"lsp"`/`"web"` — and `env: HashMap::new()`; any
-      test-only constructions in `crates/savvagent-host/src/session.rs`/`tools.rs` tests). Do not
+      test-only constructions in `crates/otto-host/src/session.rs`/`tools.rs` tests). Do not
       touch `ToolRegistry::connect`'s body yet (Task 2) beyond what's needed to keep it compiling
       against the new field shape (pattern match arms will need `name`/`env` bound, even if unused
       until Task 2).
 - [x] Add/extend unit tests in `config.rs`: `ToolEndpoint::Http` constructs with each `HttpAuth`
       variant; a `#[non_exhaustive]`-enforcement compile-time check is unnecessary (rustc enforces it
       automatically for out-of-crate code) — instead add a doc-comment-level note only.
-- [x] Run `cargo check -p savvagent-host -p savvagent --all-targets` — fix any compile errors from
+- [x] Run `cargo check -p otto-host -p otto --all-targets` — fix any compile errors from
       the field/variant addition (expected in `tools.rs`'s match arm and `main.rs`'s `ToolBins::apply`
       and any test fixtures).
-- [x] Run `cargo test -p savvagent-host` — confirm green.
+- [x] Run `cargo test -p otto-host` — confirm green.
 - [x] Public-interface check: this is the **breaking `ToolEndpoint` change** identified in the spec.
       Record in the PR body: `ToolEndpoint::Stdio` gained `name`/`env` fields (breaking for any
       external struct-literal construction), a new `Http` variant was added, and `ToolEndpoint`/
@@ -114,8 +114,8 @@ recent released heading when the release PR (Task 9's final note) is actually op
 ## Task 2: `ToolRegistry::connect` rework — failure isolation, status record, two-stage timeout, `Http` arm
 
 **Files:**
-- Modify: `crates/savvagent-host/src/tools.rs`
-- Modify: `crates/savvagent-host/src/session.rs`
+- Modify: `crates/otto-host/src/tools.rs`
+- Modify: `crates/otto-host/src/session.rs`
 
 - [x] Add `pub enum TransportKind { Stdio, Http }`, `pub enum ConnectState { Connected, Failed {
       reason: String } }`, `pub struct ToolServerStatus { pub name: String, pub transport:
@@ -126,7 +126,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       signature (`endpoints: &[ToolEndpoint], project_root: &Path, sandbox: &SandboxConfig,
       bash_net_resolver: BashNetResolverHandle, resource_tx: mpsc::Sender<ResourceEvent>`) has no
       timeout parameter. Add `connect_timeout: std::time::Duration` as a new parameter. Update all
-      three call sites in `crates/savvagent-host/src/session.rs` (`Host::start` ~line 577,
+      three call sites in `crates/otto-host/src/session.rs` (`Host::start` ~line 577,
       `Host::with_components` ~line 682, and the test-only construction ~line 3548) to pass
       `Duration::from_millis(config.connect_timeout_ms)` (the field already exists on `HostConfig`,
       currently used only for provider auto-connect — this reuses it for tool connect too, per spec
@@ -142,7 +142,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `env: HashMap<String, String>` field to `ToolEndpoint::Stdio`, but connect()'s non-bash arm
       never reads it today):** after building `cmd` via `tokio::process::Command::new(command)` and
       `cmd.args(args)`, call `cmd.envs(&env)` — merging over (not replacing) the three
-      `SAVVAGENT_TOOL_*_ROOT` vars and the process's inherited environment, exactly as the spec's §1
+      `OTTO_TOOL_*_ROOT` vars and the process's inherited environment, exactly as the spec's §1
       describes. Add a regression test asserting a configured `env` entry (e.g. a literal
       `MY_VAR=value`) actually reaches a spawned stdio server (a minimal stub server that echoes its
       environment back as a tool result, or reads `std::env::var` and asserts inside the test process
@@ -155,7 +155,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       persists only `command`/`args`/`project_root`/`sandbox_template` — add an `env:
       HashMap<String, String>` field, populate it from the `Stdio` endpoint's `env` at `connect()`
       time (alongside the other `BashSpawnConfig` fields already captured there), and thread it
-      through `build_bash_command`'s signature (`crates/savvagent-host/src/tools.rs:883`) with a
+      through `build_bash_command`'s signature (`crates/otto-host/src/tools.rs:883`) with a
       `cmd.envs(&env)` call matching the non-bash arm's treatment — both the probe spawn and every
       later lazy respawn (`call_with_bash_net_override`'s respawn path) share this one code path, so a
       single change to `build_bash_command` covers both. Add a regression test asserting a configured
@@ -198,17 +198,17 @@ recent released heading when the release PR (Task 9's final note) is actually op
       through `connect()` never causes the literal token value to appear in any `tracing` output
       captured during the call (use a `tracing` test subscriber or `tracing_test`/`tracing-subscriber`
       capture pattern already used elsewhere in this workspace, if any — check first).
-- [x] Run `cargo test -p savvagent-host` — confirm green, including the new tests.
+- [x] Run `cargo test -p otto-host` — confirm green, including the new tests.
 - [x] Public-interface check: `ToolRegistry::connect`'s behavior contract changes ("any endpoint
       failure aborts `Host::start`" → "isolated and recorded"); `Host` gains
       `tool_server_statuses()`. Record both in the PR body per spec's Public-interface-changes
       section.
 - [x] Commit: `feat(host): isolate per-endpoint tool connect failures, add HTTP transport and status tracking`.
 
-## Task 3: Tolerant `mcp_servers` config loading (`crates/savvagent/src/config_file.rs`)
+## Task 3: Tolerant `mcp_servers` config loading (`crates/otto/src/config_file.rs`)
 
 **Files:**
-- Modify: `crates/savvagent/src/config_file.rs`
+- Modify: `crates/otto/src/config_file.rs`
 
 - [x] Add `McpServerEntry` (tagged enum, `#[serde(tag = "transport", rename_all = "lowercase")]`,
       `Stdio { name, command, args, env }` / `Http { name, url, auth }`) and `McpAuthMode` (`None`
@@ -241,13 +241,13 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `.config`).
 - [x] **Update every caller of `ConfigFile::load_or_default` (blocking fix from plan-review round 1
       — the full caller list, not just `main.rs`):**
-      `crates/savvagent/src/main.rs:260` (`bootstrap_app_and_host`) — destructure `LoadedConfig`,
+      `crates/otto/src/main.rs:260` (`bootstrap_app_and_host`) — destructure `LoadedConfig`,
       threading `mcp_server_diagnostics` into the startup-notes path (this is Task 6's job; here just
       make it compile by taking `.config` and stashing diagnostics in a local the Task 6 change will
       consume).
-      `crates/savvagent/src/egui_app/mod.rs:597` — same treatment as `main.rs` (destructure, forward
+      `crates/otto/src/egui_app/mod.rs:597` — same treatment as `main.rs` (destructure, forward
       diagnostics wherever that path surfaces startup notes to the GUI).
-      `crates/savvagent/src/plugin/builtin/migration_picker/mod.rs:53,91,206` — three call sites; this
+      `crates/otto/src/plugin/builtin/migration_picker/mod.rs:53,91,206` — three call sites; this
       plugin both reads and rewrites `config.toml` for provider migration. Decide explicitly: (a) each
       read site takes `.config` and ignores `mcp_server_diagnostics` (acceptable since migration_picker
       only touches `startup`/`migration`, never `mcp_servers`), and (b) any site that calls
@@ -260,23 +260,23 @@ recent released heading when the release PR (Task 9's final note) is actually op
       attempt to route migration_picker's writes through Task 4's writer, since that would entangle two
       unrelated features; simply confirm in a test that migration_picker's save path still preserves
       all typed fields it's actually responsible for.
-      This is compile-error-driven, so run `cargo check -p savvagent --all-targets` after the signature
+      This is compile-error-driven, so run `cargo check -p otto --all-targets` after the signature
       change and confirm no other call sites were missed.
-- [x] Run `cargo test -p savvagent`. Confirm green.
+- [x] Run `cargo test -p otto`. Confirm green.
 - [x] Public-interface check: `ConfigFile::load_or_default`'s return-type change is internal-only per
-      spec (no external callers; `crates/savvagent` is the TUI binary crate) — note this explicitly in
+      spec (no external callers; `crates/otto` is the TUI binary crate) — note this explicitly in
       the PR body so reviewers don't flag it as a Rule-6 violation needing a version bump.
 - [x] Commit: `feat(config): add tolerant mcp_servers loading to ConfigFile`.
 
-## Task 4: `toml_edit`-based write path (`crates/savvagent/src/mcp_config_writer.rs`)
+## Task 4: `toml_edit`-based write path (`crates/otto/src/mcp_config_writer.rs`)
 
 **Files:**
-- Create: `crates/savvagent/src/mcp_config_writer.rs`
-- Modify: `crates/savvagent/Cargo.toml`, root `Cargo.toml`
-- Modify: `crates/savvagent/src/main.rs` (module registration only, `mod mcp_config_writer;`)
+- Create: `crates/otto/src/mcp_config_writer.rs`
+- Modify: `crates/otto/Cargo.toml`, root `Cargo.toml`
+- Modify: `crates/otto/src/main.rs` (module registration only, `mod mcp_config_writer;`)
 
 - [x] Add `toml_edit = "0.25"` to root `Cargo.toml`'s `[workspace.dependencies]`; add
-      `toml_edit.workspace = true` to `crates/savvagent/Cargo.toml`. Run `cargo check -p savvagent` to
+      `toml_edit.workspace = true` to `crates/otto/Cargo.toml`. Run `cargo check -p otto` to
       confirm the dependency resolves.
 - [x] Implement `mcp_config_writer.rs` with two public functions operating on a `config.toml` path:
       `pub fn add_server(path: &Path, entry_toml: toml_edit::Table) -> std::io::Result<()>` and
@@ -299,13 +299,13 @@ recent released heading when the release PR (Task 9's final note) is actually op
       removing the valid row by name and confirming the malformed row + comment survive untouched.
 - [x] Test: `remove_server` on a name that doesn't exist returns `Ok(false)` without modifying the
       file (idempotent no-op, matching `creds::mcp_delete`'s idempotency).
-- [x] Run `cargo test -p savvagent mcp_config_writer`. Confirm green.
+- [x] Run `cargo test -p otto mcp_config_writer`. Confirm green.
 - [x] Commit: `feat(config): add toml_edit-based mcp_servers write path`.
 
-## Task 5: Keyring additions (`crates/savvagent/src/creds.rs`)
+## Task 5: Keyring additions (`crates/otto/src/creds.rs`)
 
 **Files:**
-- Modify: `crates/savvagent/src/creds.rs`
+- Modify: `crates/otto/src/creds.rs`
 
 - [x] Add `const MCP_PREFIX: &str = "mcp:";`, `pub fn delete(account: &str) -> Result<(),
       keyring::Error>` (idempotent: `NoEntry`/`NoStorageAccess` treated as success, mirroring `load`'s
@@ -316,13 +316,13 @@ recent released heading when the release PR (Task 9's final note) is actually op
       no keyring backend, matching however existing `creds.rs`/`save`/`load` tests already handle
       backend-unavailable environments — check for a `#[cfg(...)]` guard or graceful-skip pattern used
       today before writing new tests from scratch).
-- [x] Run `cargo test -p savvagent creds`. Confirm green.
+- [x] Run `cargo test -p otto creds`. Confirm green.
 - [x] Commit: `feat(creds): add delete and mcp_* keyring helpers`.
 
-## Task 6: Bootstrap wiring (`crates/savvagent/src/main.rs`)
+## Task 6: Bootstrap wiring (`crates/otto/src/main.rs`)
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs`
+- Modify: `crates/otto/src/main.rs`
 
 - [x] In `bootstrap_app_and_host`, destructure the new `LoadedConfig` from `ConfigFile::load_or_default`
       and push a startup note for each `mcp_server_diagnostics` entry (via whatever the existing
@@ -348,7 +348,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `bootstrap_pool_host` right after `Host::start(config).await` succeeds (same function, same
       scope — no cross-boundary plumbing needed since `bootstrap_pool_host` already has both
       `config_file` and the started `host` in hand at that point).
-- [x] Run `cargo check -p savvagent --all-targets`, fix any remaining call-site fallout from the
+- [x] Run `cargo check -p otto --all-targets`, fix any remaining call-site fallout from the
       `LoadedConfig`/`HostBoot` shape changes (e.g. `start_host_remote`'s legacy path, if it also
       calls `load_or_default` or receives `config_file` — confirm from the read code whether it needs
       the same treatment; note it currently returns a bare `Arc<Host>`, not a `HostBoot`, so it may
@@ -363,27 +363,27 @@ recent released heading when the release PR (Task 9's final note) is actually op
       If spinning up a real trivial MCP server for this test is impractical without infra not already
       present, scope this down to a unit test of just the validate-and-resolve step (not the full
       `Host::start`), and note in the PR body why the fuller test was scoped down.
-- [x] Run `cargo test -p savvagent`. Confirm green.
+- [x] Run `cargo test -p otto`. Confirm green.
 - [ ] Commit: `feat: wire configured mcp_servers into host bootstrap`.
 
-## Task 7: `/mcp` slash command + screen (`crates/savvagent/src/plugin/builtin/mcp/`)
+## Task 7: `/mcp` slash command + screen (`crates/otto/src/plugin/builtin/mcp/`)
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/mcp/mod.rs`,
-  `crates/savvagent/src/plugin/builtin/mcp/screen.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`, `crates/savvagent/src/plugin/mod.rs`,
-  `crates/savvagent/src/plugin/external.rs` (`register_builtins_with_external`'s parameter list),
-  `crates/savvagent/src/main.rs` (`build_app_with_host`'s call into `register_builtins_with_external`)
+- Create: `crates/otto/src/plugin/builtin/mcp/mod.rs`,
+  `crates/otto/src/plugin/builtin/mcp/screen.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs`, `crates/otto/src/plugin/mod.rs`,
+  `crates/otto/src/plugin/external.rs` (`register_builtins_with_external`'s parameter list),
+  `crates/otto/src/main.rs` (`build_app_with_host`'s call into `register_builtins_with_external`)
 
-- [x] Read `crates/savvagent/src/plugin/builtin/connect/mod.rs` and `screen.rs` in full immediately
+- [x] Read `crates/otto/src/plugin/builtin/connect/mod.rs` and `screen.rs` in full immediately
       before starting this task (already read once during spec drafting — re-read for exact ABI
       shape: `Manifest`/`Contributions`/`SlashSpec`/`ScreenSpec`/`ScreenLayout`/`Effect::OpenScreen`/
       `create_screen`).
 - [x] **Plugin-ABI status bridge (blocking fix from plan-review round 2 — replaces the round-1 draft's
       `HostEvent`-based design, which round 2 correctly flagged as (a) requiring matching changes to
-      `crates/savvagent-plugin-wit/wit/shared.wit`'s `hook-kind` variant, both directions of
-      `crates/savvagent-plugin-wasm/src/convert.rs`'s exhaustive `HookKind` conversions, and both
-      `HostEvent`-projection match arms in `crates/savvagent-plugin-wasm/src/adapter/{interactive,
+      `crates/otto-plugin-wit/wit/shared.wit`'s `hook-kind` variant, both directions of
+      `crates/otto-plugin-wasm/src/convert.rs`'s exhaustive `HookKind` conversions, and both
+      `HostEvent`-projection match arms in `crates/otto-plugin-wasm/src/adapter/{interactive,
       static_}.rs` — a much larger surface than this feature needs — and (b) not actually
       dispatchable from `bootstrap_pool_host`, which runs before `App`/the plugin registry exist and
       before `app.install_plugin_runtime` (`main.rs:391`) — there is no `dispatch_host_event` call
@@ -395,8 +395,8 @@ recent released heading when the release PR (Task 9's final note) is actually op
       already-started `host`), the simplest correct bridge is **constructor-argument seeding**,
       exactly like `UserSlashCommandsPlugin::new(trust_levels)` already does — no new `HostEvent`,
       no `HookKind` variant, no WIT/WASM-adapter changes, and no wire-format/plugin-ABI surface change
-      at all (this bridge is entirely internal to `crates/savvagent`, never crossing into
-      `savvagent-plugin`'s portable ABI):
+      at all (this bridge is entirely internal to `crates/otto`, never crossing into
+      `otto-plugin`'s portable ABI):
       1. Task 6 already adds `McpManagerSeed { configured: Vec<McpServerSummary>, skip_notes:
          Vec<(String, String)> }` to `HostBoot`, populated in `bootstrap_pool_host` right after
          `Host::start` succeeds (same function scope has both `config_file` and the started `host`).
@@ -404,15 +404,15 @@ recent released heading when the release PR (Task 9's final note) is actually op
          b.mcp_manager_seed.clone()).unwrap_or_default()` (mirroring how `header_model`/
          `startup_notes` are already destructured from `initial` at the top of the function) and pass
          it as a new parameter to `register_builtins_with_external` →
-         `register_builtins` (`crates/savvagent/src/plugin/external.rs:70`,
-         `crates/savvagent/src/plugin/mod.rs:86`), which constructs `McpPlugin::new(seed)` instead of
+         `register_builtins` (`crates/otto/src/plugin/external.rs:70`,
+         `crates/otto/src/plugin/mod.rs:86`), which constructs `McpPlugin::new(seed)` instead of
          `McpPlugin::new()`.
       3. Additionally read live connect status once at construction: `McpPlugin::new` (or a
          `with_statuses` builder called right before construction in `build_app_with_host`, using
          `current_host(&host_slot).await` — already available at that point since `host_slot` is
-         built earlier in the same function) takes `Vec<ToolServerStatus>` (the `savvagent-host`-side
-         type from Task 2 — reachable here because `crates/savvagent` **can** depend on
-         `savvagent-host`, unlike `savvagent-plugin`) alongside the `McpManagerSeed`, converts each to
+         built earlier in the same function) takes `Vec<ToolServerStatus>` (the `otto-host`-side
+         type from Task 2 — reachable here because `crates/otto` **can** depend on
+         `otto-host`, unlike `otto-plugin`) alongside the `McpManagerSeed`, converts each to
          a plain in-plugin display record, and stores both in `McpPlugin`'s fields for
          `create_screen` to read — the same "stash what the screen needs at plugin-construction time"
          shape `ConnectPlugin` uses for `candidates`, just seeded once up front instead of
@@ -438,11 +438,11 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `main.rs`), calling `mcp_config_writer::add_server` + `creds::mcp_save` (secret) on confirm.
       `d`/`Delete` removes the selected server: **config-then-credential ordering** — call
       `mcp_config_writer::remove_server` first, then `creds::mcp_delete` only if that succeeds; push a
-      "restart savvagent to apply changes" note either way once the config write succeeds, and report
+      "restart otto to apply changes" note either way once the config write succeeds, and report
       "server removed; stale credential could not be deleted" if the keyring delete step fails after a
       successful config removal. `r` re-reads status only (no live reconnect).
-- [x] Register `McpPlugin` in `crates/savvagent/src/plugin/builtin/mod.rs` (`pub mod mcp;` with a doc
-      comment) and in `crates/savvagent/src/plugin/mod.rs`'s `register_builtins` plugin vec; update
+- [x] Register `McpPlugin` in `crates/otto/src/plugin/builtin/mod.rs` (`pub mod mcp;` with a doc
+      comment) and in `crates/otto/src/plugin/mod.rs`'s `register_builtins` plugin vec; update
       `register_builtins_pr8_complete` (and any other test asserting the builtin id list/count) to
       include `"internal:mcp"` (or whatever id convention this plugin uses — match `connect`'s
       `"internal:connect"` pattern only if `/mcp` is meant to be a Core, non-disableable plugin;
@@ -455,7 +455,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       keyring calls behind whatever seam is idiomatic here — check how other builtins with
       side-effecting slash handlers are tested, e.g. `save`/`route`, for the mocking convention before
       inventing a new one).
-- [x] Run `cargo test -p savvagent plugin::builtin::mcp`. Confirm green.
+- [x] Run `cargo test -p otto plugin::builtin::mcp`. Confirm green.
 - [ ] Commit: `feat: add /mcp slash command and manager screen`.
 
 ## Task 8: Docs (`README.md`, `PRD.md`, `CLAUDE.md`, `CHANGELOG.md`)
@@ -477,7 +477,7 @@ recent released heading when the release PR (Task 9's final note) is actually op
       `toml_edit` dependency) and `### Changed`/`### Breaking` (per this repo's existing changelog
       section conventions — check the most recent `[Unreleased]` or prior release heading for the
       exact section names used) entries under `[Unreleased]`.
-- [x] Validate: run `cargo test --doc -p savvagent-host -p savvagent` (catches broken doc-comment
+- [x] Validate: run `cargo test --doc -p otto-host -p otto` (catches broken doc-comment
       code fences/links touched by this task, since `config.rs`/`session.rs` doc comments referenced
       by README/PRD prose were touched in earlier tasks) and grep the modified docs for any now-stale
       cross-references (e.g. confirm no remaining "`/connect` is the only writer" phrasing survives
@@ -496,9 +496,9 @@ recent released heading when the release PR (Task 9's final note) is actually op
 - [ ] Manual smoke check (per this repo's convention of a quick manual pass beyond automated tests):
       add a `[[mcp_servers]]` stdio entry pointing at a trivial local script/binary that speaks MCP
       (or reuse one of the bundled `tool-*` binaries pointed at via `mcp_servers` instead of
-      `ToolBins`, as a stand-in) to a scratch `~/.savvagent/config.toml`-equivalent test path, run
-      `cargo run -p savvagent`, confirm `/mcp` lists it as Connected, and that its tools are callable.
-- [ ] Open the PR referencing `savvagent/savvagent-cli#36`, following this repo's PR-description
+      `ToolBins`, as a stand-in) to a scratch `~/.otto/config.toml`-equivalent test path, run
+      `cargo run -p otto`, confirm `/mcp` lists it as Connected, and that its tools are callable.
+- [ ] Open the PR referencing `savvagent/otto#36`, following this repo's PR-description
       conventions (summary, spec/plan links, breaking-change callout, test-plan section). Run the
       mandatory review trio (Rust-expert + architecture via `general-purpose`, security via
       `security-review`) and the review-response subagent loop per the skill's Phase 4 rules. Merge

@@ -8,8 +8,8 @@
 #
 # The resulting `.wasm` lands at
 # `target/wasm32-unknown-unknown/release/plugin_hello_static.wasm`. Drop that
-# file plus `plugin.toml` into one of savvagent's discovery paths (e.g.
-# `~/.savvagent/plugins/hello-static/`) and run `/plugins reload`.
+# file plus `plugin.toml` into one of otto's discovery paths (e.g.
+# `~/.otto/plugins/hello-static/`) and run `/plugins reload`.
 [package]
 name = "plugin-hello-static"
 version = "0.1.0"
@@ -28,10 +28,10 @@ wit-bindgen = "0.41"
 wit-bindgen-rt = { version = "0.44", features = ["bitflags"] }
 
 [package.metadata.component]
-package = "savvagent:plugin"
+package = "otto:plugin"
 
 [package.metadata.component.target]
-path = "../../crates/savvagent-plugin-wit/wit"
+path = "../../crates/otto-plugin-wit/wit"
 world = "plugin-static"
 
 [profile.release]

@@ -4,13 +4,13 @@
 
 **Goal:** Render model-emitted HTML inline in the conversation transcript as static images via Blitz + a terminal image protocol, with streaming source-preview, auto-export to disk, and plugin-contributed system prompt segments. No interactivity yet — that lands in Phase 2.
 
-**Architecture:** SPP gains an `Html { source }` content block + `HtmlSourceDelta` stream delta. A new `savvagent-fence` crate parses ``` ```html-canvas ``` ``` sentinels out of streaming model text; provider crates wire it in so they emit `Html` blocks alongside `Text`. A new `savvagent-canvas` crate wraps Blitz behind a WIT-portable `ContentRenderer` trait (added to `savvagent-plugin`). The TUI's existing `Entry` enum (in `app.rs`) gains a `Canvas` variant; `ratatui-image` places rendered frames inline. A new `internal:html-canvas` built-in plugin owns the renderer factory, contributes a `SystemPromptSegment` that tells models to use the canvas, registers a `/save-canvas` slash, and auto-exports each canvas to `~/.savvagent/canvases/`.
+**Architecture:** SPP gains an `Html { source }` content block + `HtmlSourceDelta` stream delta. A new `otto-fence` crate parses ``` ```html-canvas ``` ``` sentinels out of streaming model text; provider crates wire it in so they emit `Html` blocks alongside `Text`. A new `otto-canvas` crate wraps Blitz behind a WIT-portable `ContentRenderer` trait (added to `otto-plugin`). The TUI's existing `Entry` enum (in `app.rs`) gains a `Canvas` variant; `ratatui-image` places rendered frames inline. A new `internal:html-canvas` built-in plugin owns the renderer factory, contributes a `SystemPromptSegment` that tells models to use the canvas, registers a `/save-canvas` slash, and auto-exports each canvas to `~/.otto/canvases/`.
 
 **Tech Stack:** Rust 2024, `blitz` (pinned by Phase 0 spike), `ratatui-image`, `html5ever` (transitive via Blitz), `tokio` (existing async runtime), `serde`+`schemars` (existing for SPP), `serde_json` (existing).
 
 **Spec:** `docs/superpowers/specs/2026-05-21-inline-html-canvas-design.md`. This plan covers **Phase 0 spike + Phase 1 only**. Phase 2 (mouse/keyboard interaction, soft freeze, focus management, Ctrl-O) ships in a separate plan once Phase 1 lands and the spike's findings are absorbed.
 
-**Spec drift note:** The spec uses the placeholder name `LogItem` for the conversation-log item type. The actual codebase uses `Entry` (`crates/savvagent/src/app.rs:212`). This plan uses `Entry` consistently. Treat any spec mention of `LogItem` as referring to `Entry`.
+**Spec drift note:** The spec uses the placeholder name `LogItem` for the conversation-log item type. The actual codebase uses `Entry` (`crates/otto/src/app.rs:212`). This plan uses `Entry` consistently. Treat any spec mention of `LogItem` as referring to `Entry`.
 
 **Release discipline:** Per the project's `feedback_phase_release_rollup` convention, this phase ends with a *scaffolding* `release(0.17.0)` commit — version bumps, CHANGELOG entries, README updates — but **no git tag is pushed**. Phase 2 ends with a `release(0.18.0)` scaffolding commit, and only after Phase 2 lands does the v0.18.0 tag get pushed (cargo-dist owns the actual release artifact build).
 
@@ -19,38 +19,38 @@
 ## File structure (Phase 0 + Phase 1)
 
 **New crates:**
-- `crates/savvagent-fence/` — sentinel-fence parser (`Cargo.toml`, `src/lib.rs`, `src/tests.rs`).
-- `crates/savvagent-canvas/` — Blitz wrapper + `HtmlCanvas` implementing `ContentRenderer` (`Cargo.toml`, `src/lib.rs`, `src/canvas.rs`, `src/subset.rs`).
+- `crates/otto-fence/` — sentinel-fence parser (`Cargo.toml`, `src/lib.rs`, `src/tests.rs`).
+- `crates/otto-canvas/` — Blitz wrapper + `HtmlCanvas` implementing `ContentRenderer` (`Cargo.toml`, `src/lib.rs`, `src/canvas.rs`, `src/subset.rs`).
 
 **New files in existing crates:**
-- `crates/savvagent-plugin/src/content.rs` — `ContentRenderer` trait + supporting types (`Frame`, `PixelFormat`, `PixelSize`, `ContentBlockId`, `InputEvent`, `MouseEventPortable`, `MouseEventKind`, `MouseButton`, `InputOutcome`, `FocusableElement`, `Rect`).
-- `crates/savvagent-plugin/src/prompt.rs` — `SystemPromptSegment` type.
-- `crates/savvagent/src/plugin/builtin/html_canvas/` — the built-in plugin (`mod.rs`, `plugin.rs`, `prompt_text.rs`, `slash.rs`, `auto_export.rs`).
+- `crates/otto-plugin/src/content.rs` — `ContentRenderer` trait + supporting types (`Frame`, `PixelFormat`, `PixelSize`, `ContentBlockId`, `InputEvent`, `MouseEventPortable`, `MouseEventKind`, `MouseButton`, `InputOutcome`, `FocusableElement`, `Rect`).
+- `crates/otto-plugin/src/prompt.rs` — `SystemPromptSegment` type.
+- `crates/otto/src/plugin/builtin/html_canvas/` — the built-in plugin (`mod.rs`, `plugin.rs`, `prompt_text.rs`, `slash.rs`, `auto_export.rs`).
 - `docs/superpowers/notes/2026-05-21-blitz-spike.md` — Phase 0 spike findings (created during Task 1).
 
 **Modified files:**
-- `crates/savvagent-protocol/src/content.rs` — add `ContentBlock::Html { source }`.
-- `crates/savvagent-protocol/src/stream.rs` — add `BlockDelta::HtmlSourceDelta { source }`.
-- `crates/savvagent-protocol/src/lib.rs` — re-exports.
-- `crates/savvagent-protocol/SPEC.md` — document new variants; bump conformance level to **SPP v0.2.0**.
-- `crates/savvagent-plugin/src/lib.rs` — module declarations + re-exports.
-- `crates/savvagent-plugin/src/manifest.rs` — extend `Contributions` (add `content_renderers`, `prompt_segments`); extend `SlashSpec` (add `suppress_prompt_segments`).
-- `crates/savvagent-plugin/src/plugin.rs` — add `Plugin::create_renderer` method with default impl.
-- `crates/savvagent-plugin/src/effect.rs` — add `Effect::OpenUrl { url, target }` + `UrlTarget` enum.
-- `crates/savvagent-plugin/src/error.rs` — add `PluginError::ContentRendererNotFound`.
-- `crates/savvagent-host/src/default_prompt.rs` — accept caller-supplied `&[SystemPromptSegment]` and concatenate them after the conventions section.
-- `crates/savvagent-host/src/session.rs` — gather active-plugin segments + honor per-slash suppression when composing the `system` field.
-- `crates/savvagent/src/app.rs` — add `Entry::Canvas { id, source }` variant + `CanvasRegistry` field on `App`.
-- `crates/savvagent/src/ui.rs` — render `Entry::Canvas` via `ratatui-image`; source-code fallback.
-- `crates/savvagent/src/plugin/mod.rs` — register `HtmlCanvasPlugin` in `register_builtins()` and route `Effect::OpenUrl` (via `effects.rs`).
-- `crates/savvagent/src/plugin/registry.rs` — extend `Indexes` with `content_renderers: HashMap<String, PluginId>`.
-- `crates/savvagent/src/plugin/manifests.rs` — build the new index.
-- `crates/savvagent/src/plugin/effects.rs` — handle `Effect::OpenUrl` (shell to `xdg-open` / `open`).
+- `crates/otto-protocol/src/content.rs` — add `ContentBlock::Html { source }`.
+- `crates/otto-protocol/src/stream.rs` — add `BlockDelta::HtmlSourceDelta { source }`.
+- `crates/otto-protocol/src/lib.rs` — re-exports.
+- `crates/otto-protocol/SPEC.md` — document new variants; bump conformance level to **SPP v0.2.0**.
+- `crates/otto-plugin/src/lib.rs` — module declarations + re-exports.
+- `crates/otto-plugin/src/manifest.rs` — extend `Contributions` (add `content_renderers`, `prompt_segments`); extend `SlashSpec` (add `suppress_prompt_segments`).
+- `crates/otto-plugin/src/plugin.rs` — add `Plugin::create_renderer` method with default impl.
+- `crates/otto-plugin/src/effect.rs` — add `Effect::OpenUrl { url, target }` + `UrlTarget` enum.
+- `crates/otto-plugin/src/error.rs` — add `PluginError::ContentRendererNotFound`.
+- `crates/otto-host/src/default_prompt.rs` — accept caller-supplied `&[SystemPromptSegment]` and concatenate them after the conventions section.
+- `crates/otto-host/src/session.rs` — gather active-plugin segments + honor per-slash suppression when composing the `system` field.
+- `crates/otto/src/app.rs` — add `Entry::Canvas { id, source }` variant + `CanvasRegistry` field on `App`.
+- `crates/otto/src/ui.rs` — render `Entry::Canvas` via `ratatui-image`; source-code fallback.
+- `crates/otto/src/plugin/mod.rs` — register `HtmlCanvasPlugin` in `register_builtins()` and route `Effect::OpenUrl` (via `effects.rs`).
+- `crates/otto/src/plugin/registry.rs` — extend `Indexes` with `content_renderers: HashMap<String, PluginId>`.
+- `crates/otto/src/plugin/manifests.rs` — build the new index.
+- `crates/otto/src/plugin/effects.rs` — handle `Effect::OpenUrl` (shell to `xdg-open` / `open`).
 - `crates/provider-anthropic/src/stream.rs` — inject fence parser into the translator's text emission path.
 - `crates/provider-gemini/src/stream.rs` — same.
 - `crates/provider-openai/src/stream.rs` — same.
 - `crates/provider-local/src/stream.rs` — same.
-- `Cargo.toml` (workspace) — add `savvagent-fence`, `savvagent-canvas`, `blitz`, `ratatui-image` to `[workspace.dependencies]`.
+- `Cargo.toml` (workspace) — add `otto-fence`, `otto-canvas`, `blitz`, `ratatui-image` to `[workspace.dependencies]`.
 - `README.md` — feature blurb, terminal compatibility matrix, tmux passthrough note.
 - `CHANGELOG.md` — Phase 1 entry under `## [0.17.0] - unreleased`.
 
@@ -63,7 +63,7 @@
 - Create: a throwaway crate `crates/_blitz-spike/` (deleted at the end of this task)
 - Modify: `Cargo.toml` (workspace) — add the throwaway crate to `members` temporarily
 
-The spec assumes Blitz exposes headless layout+paint and a way to dispatch synthetic input. Before committing to a pinned version and a `savvagent-canvas` design, verify the assumptions hands-on. Output is a notes doc that pins a version and either confirms the design or amends the spec.
+The spec assumes Blitz exposes headless layout+paint and a way to dispatch synthetic input. Before committing to a pinned version and a `otto-canvas` design, verify the assumptions hands-on. Output is a notes doc that pins a version and either confirms the design or amends the spec.
 
 - [ ] **Step 1: Identify a candidate Blitz version**
 
@@ -239,13 +239,13 @@ git commit -m "docs(spike): blitz embedding spike for inline HTML canvas"
 ## Task 2: SPP — `ContentBlock::Html` variant
 
 **Files:**
-- Modify: `crates/savvagent-protocol/src/content.rs`
+- Modify: `crates/otto-protocol/src/content.rs`
 
 Add a new variant to the existing `ContentBlock` enum mirroring the `Text` variant's shape (one owned `String` field). The variant follows the existing `#[serde(tag = "type", rename_all = "snake_case")]` convention so the wire form is `{ "type": "html", "source": "..." }`.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the existing `#[cfg(test)] mod tests` block in `crates/savvagent-protocol/src/content.rs`:
+Append to the existing `#[cfg(test)] mod tests` block in `crates/otto-protocol/src/content.rs`:
 
 ```rust
     #[test]
@@ -269,14 +269,14 @@ Append to the existing `#[cfg(test)] mod tests` block in `crates/savvagent-proto
 - [ ] **Step 2: Run the test; verify it fails**
 
 ```bash
-cargo test -p savvagent-protocol content::tests::html_round_trip
+cargo test -p otto-protocol content::tests::html_round_trip
 ```
 
 Expected: FAIL with `no variant or associated item named 'Html' found for enum 'ContentBlock'`.
 
 - [ ] **Step 3: Add the variant**
 
-In `crates/savvagent-protocol/src/content.rs`, add the new variant to the existing `ContentBlock` enum (insert after the `Thinking` variant so it appears at the end):
+In `crates/otto-protocol/src/content.rs`, add the new variant to the existing `ContentBlock` enum (insert after the `Thinking` variant so it appears at the end):
 
 ```rust
     /// HTML source the host should render inline in the conversation
@@ -296,7 +296,7 @@ In `crates/savvagent-protocol/src/content.rs`, add the new variant to the existi
 - [ ] **Step 4: Run the test; verify it passes**
 
 ```bash
-cargo test -p savvagent-protocol content::tests::html_round_trip
+cargo test -p otto-protocol content::tests::html_round_trip
 ```
 
 Expected: PASS.
@@ -304,7 +304,7 @@ Expected: PASS.
 - [ ] **Step 5: Run the full crate's tests**
 
 ```bash
-cargo test -p savvagent-protocol
+cargo test -p otto-protocol
 ```
 
 Expected: PASS (the new variant should not regress any existing serde test).
@@ -312,7 +312,7 @@ Expected: PASS (the new variant should not regress any existing serde test).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-protocol/src/content.rs
+git add crates/otto-protocol/src/content.rs
 git commit -m "feat(protocol): add ContentBlock::Html variant"
 ```
 
@@ -321,13 +321,13 @@ git commit -m "feat(protocol): add ContentBlock::Html variant"
 ## Task 3: SPP — `BlockDelta::HtmlSourceDelta` variant
 
 **Files:**
-- Modify: `crates/savvagent-protocol/src/stream.rs`
+- Modify: `crates/otto-protocol/src/stream.rs`
 
 Mirror the existing `TextDelta` shape: one owned `String` carrying a fragment of the HTML source. Concatenated by the host until `ContentBlockStop`.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to a `#[cfg(test)] mod tests` block at the bottom of `crates/savvagent-protocol/src/stream.rs` (create the block if none exists yet):
+Append to a `#[cfg(test)] mod tests` block at the bottom of `crates/otto-protocol/src/stream.rs` (create the block if none exists yet):
 
 ```rust
 #[cfg(test)]
@@ -353,14 +353,14 @@ mod tests {
 - [ ] **Step 2: Run the test; verify it fails**
 
 ```bash
-cargo test -p savvagent-protocol stream::tests::html_source_delta_round_trip
+cargo test -p otto-protocol stream::tests::html_source_delta_round_trip
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Add the variant**
 
-In `crates/savvagent-protocol/src/stream.rs`, add the new variant to the existing `BlockDelta` enum (insert after `SignatureDelta`):
+In `crates/otto-protocol/src/stream.rs`, add the new variant to the existing `BlockDelta` enum (insert after `SignatureDelta`):
 
 ```rust
     /// Append a fragment of HTML source to a `ContentBlock::Html` block
@@ -376,7 +376,7 @@ In `crates/savvagent-protocol/src/stream.rs`, add the new variant to the existin
 - [ ] **Step 4: Run the test; verify it passes**
 
 ```bash
-cargo test -p savvagent-protocol stream::tests::html_source_delta_round_trip
+cargo test -p otto-protocol stream::tests::html_source_delta_round_trip
 ```
 
 Expected: PASS.
@@ -384,7 +384,7 @@ Expected: PASS.
 - [ ] **Step 5: Run the full crate's tests**
 
 ```bash
-cargo test -p savvagent-protocol
+cargo test -p otto-protocol
 ```
 
 Expected: PASS.
@@ -392,7 +392,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-protocol/src/stream.rs
+git add crates/otto-protocol/src/stream.rs
 git commit -m "feat(protocol): add BlockDelta::HtmlSourceDelta variant"
 ```
 
@@ -401,22 +401,22 @@ git commit -m "feat(protocol): add BlockDelta::HtmlSourceDelta variant"
 ## Task 4: SPP — bump SPEC.md to v0.2.0
 
 **Files:**
-- Modify: `crates/savvagent-protocol/SPEC.md`
+- Modify: `crates/otto-protocol/SPEC.md`
 
 Document the two new variants and bump the conformance version. Spec doc only; no code change.
 
 - [ ] **Step 1: Update the version banner**
 
-At the top of `crates/savvagent-protocol/SPEC.md`, change:
+At the top of `crates/otto-protocol/SPEC.md`, change:
 
 ```markdown
-# Savvagent Provider Protocol (SPP) — v0.1.0
+# Otto Provider Protocol (SPP) — v0.1.0
 ```
 
 to:
 
 ```markdown
-# Savvagent Provider Protocol (SPP) — v0.2.0
+# Otto Provider Protocol (SPP) — v0.2.0
 ```
 
 - [ ] **Step 2: Document the `html` content block**
@@ -462,17 +462,17 @@ the source as a code block to avoid silently dropping output.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-protocol/SPEC.md
+git add crates/otto-protocol/SPEC.md
 git commit -m "docs(protocol): bump SPP to v0.2.0 with html block + delta"
 ```
 
 ---
 
-## Task 5: `savvagent-fence` crate
+## Task 5: `otto-fence` crate
 
 **Files:**
-- Create: `crates/savvagent-fence/Cargo.toml`
-- Create: `crates/savvagent-fence/src/lib.rs`
+- Create: `crates/otto-fence/Cargo.toml`
+- Create: `crates/otto-fence/src/lib.rs`
 - Modify: `Cargo.toml` (workspace) — add member + workspace dep entry
 
 A small stream-friendly parser that splits incoming text into `Text(String)` and `Html(String)` chunks by recognizing a ```` ```html-canvas ```` opening fence and its matching ` ``` ` closer. Has to handle: arrival-by-fragments (partial fences across deltas), code fences with other languages (passthrough as text), nested triple-backticks inside HTML (rare but possible — `<pre><code>`).
@@ -480,20 +480,20 @@ A small stream-friendly parser that splits incoming text into `Text(String)` and
 - [ ] **Step 1: Create the crate skeleton**
 
 ```bash
-mkdir -p crates/savvagent-fence/src
+mkdir -p crates/otto-fence/src
 ```
 
-Create `crates/savvagent-fence/Cargo.toml`:
+Create `crates/otto-fence/Cargo.toml`:
 
 ```toml
 [package]
-name = "savvagent-fence"
+name = "otto-fence"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Streaming parser that extracts savvagent-canvas HTML fences from model text"
+description = "Streaming parser that extracts otto-canvas HTML fences from model text"
 
 [dependencies]
 # none — pure std
@@ -507,22 +507,22 @@ Add the crate to workspace `members` and `[workspace.dependencies]` in the root 
 [workspace]
 members = [
     # ... existing ...
-    "crates/savvagent-fence",
+    "crates/otto-fence",
 ]
 
 [workspace.dependencies]
 # ... existing ...
-savvagent-fence = { path = "crates/savvagent-fence", version = "0.17.0" }
+otto-fence = { path = "crates/otto-fence", version = "0.17.0" }
 ```
 
 (The version `0.17.0` matches the post-Phase-1 workspace bump from Task 22. Until Task 22 lands, the existing workspace version is `0.16.1`; substitute that here and update in Task 22 along with the workspace literal.)
 
 - [ ] **Step 2: Write the failing tests**
 
-Create `crates/savvagent-fence/src/lib.rs`:
+Create `crates/otto-fence/src/lib.rs`:
 
 ```rust
-//! Streaming parser that extracts `savvagent-canvas` HTML fences from
+//! Streaming parser that extracts `otto-canvas` HTML fences from
 //! model text output and emits a sequence of [`FenceChunk::Text`] and
 //! [`FenceChunk::Html`] chunks.
 //!
@@ -730,7 +730,7 @@ mod tests {
 - [ ] **Step 3: Build + run the tests**
 
 ```bash
-cargo test -p savvagent-fence
+cargo test -p otto-fence
 ```
 
 Expected: all six tests pass on the first run (the code in Step 2 is the full impl). If anything fails, fix and re-run.
@@ -738,8 +738,8 @@ Expected: all six tests pass on the first run (the code in Step 2 is the full im
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Cargo.toml crates/savvagent-fence/
-git commit -m "feat(fence): savvagent-fence crate for html-canvas extraction"
+git add Cargo.toml crates/otto-fence/
+git commit -m "feat(fence): otto-fence crate for html-canvas extraction"
 ```
 
 ---
@@ -756,14 +756,14 @@ Each provider already maps vendor stream deltas to SPP `StreamEvent`s. The fence
 
 Because the existing translators differ slightly across providers, this task is one task with four sub-steps (one per provider). Each sub-step does the same shape of work; the exact insertion point is provider-specific.
 
-- [ ] **Step 1: Add `savvagent-fence` as a workspace dep for each provider**
+- [ ] **Step 1: Add `otto-fence` as a workspace dep for each provider**
 
 For each of `provider-anthropic`, `provider-gemini`, `provider-openai`, `provider-local`, edit `crates/provider-<x>/Cargo.toml` and add:
 
 ```toml
 [dependencies]
 # ... existing entries ...
-savvagent-fence = { workspace = true }
+otto-fence = { workspace = true }
 ```
 
 - [ ] **Step 2: Write a shared fixture test for each provider**
@@ -774,7 +774,7 @@ For each provider, append to `crates/provider-<x>/src/stream.rs` (or the existin
 #[cfg(test)]
 mod html_fence_tests {
     use super::*;
-    use savvagent_protocol::{BlockDelta, ContentBlock, StreamEvent};
+    use otto_protocol::{BlockDelta, ContentBlock, StreamEvent};
 
     /// Drive the translator with a stream containing one html-canvas
     /// fence and assert that the emitted SPP events have the expected
@@ -804,10 +804,10 @@ The `todo!()` is intentional — Step 3 wires it once the fence integration is i
 
 - [ ] **Step 3: Add a `FenceParser` to the translator's per-stream state**
 
-For each provider, find the existing per-stream translator struct (named e.g. `AnthropicStream`, `GeminiStream`, etc.). Add a `fence_parser: savvagent_fence::FenceParser` field. Initialize via `FenceParser::new()` in the constructor.
+For each provider, find the existing per-stream translator struct (named e.g. `AnthropicStream`, `GeminiStream`, etc.). Add a `fence_parser: otto_fence::FenceParser` field. Initialize via `FenceParser::new()` in the constructor.
 
 ```rust
-use savvagent_fence::{FenceChunk, FenceParser};
+use otto_fence::{FenceChunk, FenceParser};
 
 pub(crate) struct <ProviderName>Stream {
     // ... existing fields ...
@@ -994,9 +994,9 @@ git commit -m "feat(providers): extract html-canvas fences from streaming text"
 ## Task 7: Plugin trait — `ContentRenderer` + supporting types
 
 **Files:**
-- Create: `crates/savvagent-plugin/src/content.rs`
-- Modify: `crates/savvagent-plugin/src/lib.rs`
-- Modify: `crates/savvagent-plugin/src/error.rs`
+- Create: `crates/otto-plugin/src/content.rs`
+- Modify: `crates/otto-plugin/src/lib.rs`
+- Modify: `crates/otto-plugin/src/error.rs`
 
 Add the WIT-portable types Phase 1 needs (`Frame`, `PixelFormat`, `PixelSize`, `ContentBlockId`) plus the *full* `ContentRenderer` trait surface — even the Phase 2 methods (`dispatch`, `freeze`, `thaw`, `focusable_elements`, `set_focus`, `focused_index`). Phase 1 leaves the Phase 2 methods as default no-ops so the canvas renderer can implement the trait against a static-only impl now and add bodies in Phase 2.
 
@@ -1004,7 +1004,7 @@ Adding the full trait now (vs. extending later) avoids trait-signature churn bet
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the existing `#[cfg(test)] mod trait_smoke` in `crates/savvagent-plugin/src/lib.rs`:
+Append to the existing `#[cfg(test)] mod trait_smoke` in `crates/otto-plugin/src/lib.rs`:
 
 ```rust
     #[test]
@@ -1026,14 +1026,14 @@ Append to the existing `#[cfg(test)] mod trait_smoke` in `crates/savvagent-plugi
 - [ ] **Step 2: Run the test; verify it fails**
 
 ```bash
-cargo test -p savvagent-plugin trait_smoke::frame_round_trips_through_pixel_format
+cargo test -p otto-plugin trait_smoke::frame_round_trips_through_pixel_format
 ```
 
 Expected: FAIL with `unresolved module 'content'`.
 
 - [ ] **Step 3: Add `PluginError::ContentRendererNotFound`**
 
-In `crates/savvagent-plugin/src/error.rs`, extend the existing `PluginError` enum with a new variant. Match the surrounding style:
+In `crates/otto-plugin/src/error.rs`, extend the existing `PluginError` enum with a new variant. Match the surrounding style:
 
 ```rust
     /// No registered plugin advertises a `ContentRendererSpec` for the
@@ -1053,7 +1053,7 @@ And update the `Display` impl with a branch:
 
 - [ ] **Step 4: Create `content.rs` with all Phase 1 and Phase 2 types**
 
-Create `crates/savvagent-plugin/src/content.rs`:
+Create `crates/otto-plugin/src/content.rs`:
 
 ```rust
 //! WIT-portable types for plugins that render structured content blocks
@@ -1257,7 +1257,7 @@ pub trait ContentRenderer: Send {
 
 - [ ] **Step 5: Wire the module into `lib.rs`**
 
-In `crates/savvagent-plugin/src/lib.rs`, add the module declaration + re-exports near the existing module declarations:
+In `crates/otto-plugin/src/lib.rs`, add the module declaration + re-exports near the existing module declarations:
 
 ```rust
 /// Content renderer trait surface (HTML canvas etc.).
@@ -1272,7 +1272,7 @@ pub use content::{
 - [ ] **Step 6: Run the test; verify it passes**
 
 ```bash
-cargo test -p savvagent-plugin trait_smoke::frame_round_trips_through_pixel_format
+cargo test -p otto-plugin trait_smoke::frame_round_trips_through_pixel_format
 ```
 
 Expected: PASS.
@@ -1280,7 +1280,7 @@ Expected: PASS.
 - [ ] **Step 7: Confirm WIT-portability CI grep still clean**
 
 ```bash
-grep -E '^(ratatui|crossterm|tokio|anyhow) = ' crates/savvagent-plugin/Cargo.toml
+grep -E '^(ratatui|crossterm|tokio|anyhow) = ' crates/otto-plugin/Cargo.toml
 ```
 
 Expected: no output. (We added no runtime deps; `async_trait` was already there.)
@@ -1288,7 +1288,7 @@ Expected: no output. (We added no runtime deps; `async_trait` was already there.
 - [ ] **Step 8: Run the full crate tests**
 
 ```bash
-cargo test -p savvagent-plugin
+cargo test -p otto-plugin
 ```
 
 Expected: PASS.
@@ -1296,7 +1296,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/savvagent-plugin/
+git add crates/otto-plugin/
 git commit -m "feat(plugin): ContentRenderer trait surface + Frame types"
 ```
 
@@ -1305,15 +1305,15 @@ git commit -m "feat(plugin): ContentRenderer trait surface + Frame types"
 ## Task 8: Plugin trait — `SystemPromptSegment` + `Contributions` extension
 
 **Files:**
-- Create: `crates/savvagent-plugin/src/prompt.rs`
-- Modify: `crates/savvagent-plugin/src/lib.rs`
-- Modify: `crates/savvagent-plugin/src/manifest.rs`
+- Create: `crates/otto-plugin/src/prompt.rs`
+- Modify: `crates/otto-plugin/src/lib.rs`
+- Modify: `crates/otto-plugin/src/manifest.rs`
 
 Add the new contribution kind plus the per-slash suppression list. The new `Contributions` fields are additive; existing built-in plugins keep compiling because `Contributions::default()` returns empty vectors for everything.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the existing `#[cfg(test)] mod tests` in `crates/savvagent-plugin/src/manifest.rs`:
+Append to the existing `#[cfg(test)] mod tests` in `crates/otto-plugin/src/manifest.rs`:
 
 ```rust
     #[test]
@@ -1352,14 +1352,14 @@ Append to the existing `#[cfg(test)] mod tests` in `crates/savvagent-plugin/src/
 - [ ] **Step 2: Run the tests; verify they fail**
 
 ```bash
-cargo test -p savvagent-plugin manifest::tests::manifest_can_carry_prompt_segments manifest::tests::slash_spec_carries_suppress_list
+cargo test -p otto-plugin manifest::tests::manifest_can_carry_prompt_segments manifest::tests::slash_spec_carries_suppress_list
 ```
 
 Expected: FAIL with `no field 'prompt_segments'` and `no field 'suppress_prompt_segments'`.
 
 - [ ] **Step 3: Create `prompt.rs`**
 
-Create `crates/savvagent-plugin/src/prompt.rs`:
+Create `crates/otto-plugin/src/prompt.rs`:
 
 ```rust
 //! System-prompt segment contributions and per-slash suppression.
@@ -1386,7 +1386,7 @@ pub struct SystemPromptSegment {
 
 - [ ] **Step 4: Extend `Contributions` with `prompt_segments`**
 
-In `crates/savvagent-plugin/src/manifest.rs`, modify the `Contributions` struct definition. The struct is `#[non_exhaustive]` so callers must use `..Contributions::default()`; adding a field is safe.
+In `crates/otto-plugin/src/manifest.rs`, modify the `Contributions` struct definition. The struct is `#[non_exhaustive]` so callers must use `..Contributions::default()`; adding a field is safe.
 
 Add the `use` line at the top of the file:
 
@@ -1399,7 +1399,7 @@ And append the field inside the struct (after `tool_summaries`):
 ```rust
     /// System-prompt segments this plugin contributes. Composed into
     /// the model's `system` field after the host's default prompt and
-    /// project context (see `savvagent-host::default_prompt`).
+    /// project context (see `otto-host::default_prompt`).
     pub prompt_segments: Vec<SystemPromptSegment>,
 
     /// Content renderers this plugin provides. Each spec declares the
@@ -1450,7 +1450,7 @@ Update the existing `default_contributions_is_empty` test to include the new fie
 
 - [ ] **Step 5: Extend `SlashSpec` with `suppress_prompt_segments`**
 
-Modify the `SlashSpec` struct in `crates/savvagent-plugin/src/manifest.rs`:
+Modify the `SlashSpec` struct in `crates/otto-plugin/src/manifest.rs`:
 
 ```rust
 pub struct SlashSpec {
@@ -1476,7 +1476,7 @@ Adding a field to a non-`#[non_exhaustive]` struct breaks every existing literal
 grep -rn "SlashSpec {" crates/ --include="*.rs"
 ```
 
-For each match, add the new field. Most will be in `crates/savvagent/src/plugin/builtin/<plugin>/mod.rs`. Example pattern:
+For each match, add the new field. Most will be in `crates/otto/src/plugin/builtin/<plugin>/mod.rs`. Example pattern:
 
 ```rust
 SlashSpec {
@@ -1492,7 +1492,7 @@ Also add the field to any test fixtures that construct `SlashSpec` literally.
 
 - [ ] **Step 7: Wire `prompt.rs` into `lib.rs` + re-export the new spec**
 
-In `crates/savvagent-plugin/src/lib.rs`:
+In `crates/otto-plugin/src/lib.rs`:
 
 ```rust
 /// System-prompt segment contributions.
@@ -1513,7 +1513,7 @@ pub use manifest::{
 - [ ] **Step 8: Run the tests; verify they pass**
 
 ```bash
-cargo test -p savvagent-plugin
+cargo test -p otto-plugin
 ```
 
 Expected: all tests pass. If any `SlashSpec` literal was missed in Step 6, the build will fail with a `missing field 'suppress_prompt_segments'` error — go back and add it.
@@ -1527,7 +1527,7 @@ Expected: PASS (no missed literals).
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/savvagent-plugin/ crates/savvagent/
+git add crates/otto-plugin/ crates/otto/
 git commit -m "feat(plugin): SystemPromptSegment + ContentRendererSpec + slash suppression"
 ```
 
@@ -1536,15 +1536,15 @@ git commit -m "feat(plugin): SystemPromptSegment + ContentRendererSpec + slash s
 ## Task 9: Plugin trait — `create_renderer` method + `Effect::OpenUrl`
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/plugin.rs`
-- Modify: `crates/savvagent-plugin/src/effect.rs`
-- Modify: `crates/savvagent-plugin/src/lib.rs`
+- Modify: `crates/otto-plugin/src/plugin.rs`
+- Modify: `crates/otto-plugin/src/effect.rs`
+- Modify: `crates/otto-plugin/src/lib.rs`
 
 Add the trait method (with a default that returns `ContentRendererNotFound`) and the new `Effect` variant.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the existing `#[cfg(test)] mod trait_smoke` in `crates/savvagent-plugin/src/lib.rs`:
+Append to the existing `#[cfg(test)] mod trait_smoke` in `crates/otto-plugin/src/lib.rs`:
 
 ```rust
     #[tokio::test]
@@ -1579,14 +1579,14 @@ Append to the existing `#[cfg(test)] mod trait_smoke` in `crates/savvagent-plugi
 - [ ] **Step 2: Run the tests; verify they fail**
 
 ```bash
-cargo test -p savvagent-plugin trait_smoke::dummy_plugin_create_renderer_default_returns_not_found trait_smoke::effect_open_url_variants
+cargo test -p otto-plugin trait_smoke::dummy_plugin_create_renderer_default_returns_not_found trait_smoke::effect_open_url_variants
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Add the trait method**
 
-In `crates/savvagent-plugin/src/plugin.rs`, add a new method to the `Plugin` trait (after `summarize_tool_result`):
+In `crates/otto-plugin/src/plugin.rs`, add a new method to the `Plugin` trait (after `summarize_tool_result`):
 
 ```rust
     /// Construct a fresh `ContentRenderer` for an inline content block.
@@ -1609,7 +1609,7 @@ In `crates/savvagent-plugin/src/plugin.rs`, add a new method to the `Plugin` tra
 
 - [ ] **Step 4: Add `Effect::OpenUrl` and `UrlTarget`**
 
-In `crates/savvagent-plugin/src/effect.rs`, add to the existing `Effect` enum (preserve the non-exhaustive marker if it's there):
+In `crates/otto-plugin/src/effect.rs`, add to the existing `Effect` enum (preserve the non-exhaustive marker if it's there):
 
 ```rust
     /// Open a URL. The host shells to `xdg-open` (Linux), `open` (macOS),
@@ -1643,7 +1643,7 @@ pub enum UrlTarget {
 
 - [ ] **Step 5: Re-export `UrlTarget`**
 
-In `crates/savvagent-plugin/src/lib.rs`, update the `effect` re-export:
+In `crates/otto-plugin/src/lib.rs`, update the `effect` re-export:
 
 ```rust
 pub use effect::{BoundAction, Effect, UrlTarget};
@@ -1652,7 +1652,7 @@ pub use effect::{BoundAction, Effect, UrlTarget};
 - [ ] **Step 6: Run the tests; verify they pass**
 
 ```bash
-cargo test -p savvagent-plugin
+cargo test -p otto-plugin
 ```
 
 Expected: PASS.
@@ -1663,12 +1663,12 @@ Expected: PASS.
 cargo test --workspace
 ```
 
-Expected: PASS. The new trait method has a default impl so existing plugin implementations still compile. The new `Effect` variant requires anyone match-ing on `Effect` non-exhaustively to add a branch — `crates/savvagent/src/plugin/effects.rs` is the consumer; Task 12 handles its update. For now, the build may emit a "non-exhaustive match" warning in `effects.rs` — that's expected and gets resolved in Task 12.
+Expected: PASS. The new trait method has a default impl so existing plugin implementations still compile. The new `Effect` variant requires anyone match-ing on `Effect` non-exhaustively to add a branch — `crates/otto/src/plugin/effects.rs` is the consumer; Task 12 handles its update. For now, the build may emit a "non-exhaustive match" warning in `effects.rs` — that's expected and gets resolved in Task 12.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent-plugin/
+git add crates/otto-plugin/
 git commit -m "feat(plugin): Plugin::create_renderer + Effect::OpenUrl"
 ```
 
@@ -1677,32 +1677,32 @@ git commit -m "feat(plugin): Plugin::create_renderer + Effect::OpenUrl"
 ## Task 10: Host — compose prompt segments from active plugins
 
 **Files:**
-- Modify: `crates/savvagent-host/src/default_prompt.rs`
-- Modify: `crates/savvagent-host/src/session.rs`
-- Modify: `crates/savvagent-host/Cargo.toml`
+- Modify: `crates/otto-host/src/default_prompt.rs`
+- Modify: `crates/otto-host/src/session.rs`
+- Modify: `crates/otto-host/Cargo.toml`
 
 The host already builds a default system prompt in `default_prompt.rs`. Add a small append-step: take a slice of `SystemPromptSegment`s plus an optional set of suppressed ids, filter, concatenate the survivors, and append after the existing conventions section.
 
 The session (which owns the `Host` per turn) gathers the active-plugin segments + the per-slash suppression list and calls the new function.
 
-- [ ] **Step 1: Add `savvagent-plugin` as a workspace dep for `savvagent-host`**
+- [ ] **Step 1: Add `otto-plugin` as a workspace dep for `otto-host`**
 
-In `crates/savvagent-host/Cargo.toml`:
+In `crates/otto-host/Cargo.toml`:
 
 ```toml
 [dependencies]
 # ... existing entries ...
-savvagent-plugin = { workspace = true }
+otto-plugin = { workspace = true }
 ```
 
 - [ ] **Step 2: Write the failing test**
 
-Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/default_prompt.rs`:
+Append to the `#[cfg(test)] mod tests` block in `crates/otto-host/src/default_prompt.rs`:
 
 ```rust
     #[test]
     fn append_prompt_segments_concatenates_in_order() {
-        use savvagent_plugin::SystemPromptSegment;
+        use otto_plugin::SystemPromptSegment;
 
         let base = "Default prompt body.\n";
         let segments = vec![
@@ -1729,7 +1729,7 @@ Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/defau
 
     #[test]
     fn append_prompt_segments_honors_suppression() {
-        use savvagent_plugin::SystemPromptSegment;
+        use otto_plugin::SystemPromptSegment;
 
         let base = "Default.\n";
         let segments = vec![
@@ -1752,17 +1752,17 @@ Append to the `#[cfg(test)] mod tests` block in `crates/savvagent-host/src/defau
 - [ ] **Step 3: Run the tests; verify they fail**
 
 ```bash
-cargo test -p savvagent-host default_prompt::tests::append_prompt_segments
+cargo test -p otto-host default_prompt::tests::append_prompt_segments
 ```
 
 Expected: FAIL with `cannot find function 'append_prompt_segments'`.
 
 - [ ] **Step 4: Implement `append_prompt_segments`**
 
-In `crates/savvagent-host/src/default_prompt.rs`, add the function near the existing prompt-rendering helpers (and a re-export at module root if the file structure prefers that):
+In `crates/otto-host/src/default_prompt.rs`, add the function near the existing prompt-rendering helpers (and a re-export at module root if the file structure prefers that):
 
 ```rust
-use savvagent_plugin::SystemPromptSegment;
+use otto_plugin::SystemPromptSegment;
 
 /// Append `segments` to a base prompt, dropping any segment whose `id`
 /// appears in `suppressed_ids`. Survivors are concatenated in input
@@ -1770,7 +1770,7 @@ use savvagent_plugin::SystemPromptSegment;
 /// by blank lines.
 ///
 /// The host uses this after composing the default prompt + project
-/// context (`SAVVAGENT.md`) and before sending the `system` field on a
+/// context (`OTTO.md`) and before sending the `system` field on a
 /// `CompleteRequest`. Per-slash suppression lists come from the
 /// invoked `SlashSpec::suppress_prompt_segments`.
 pub fn append_prompt_segments(
@@ -1803,14 +1803,14 @@ pub fn append_prompt_segments(
 - [ ] **Step 5: Run the tests; verify they pass**
 
 ```bash
-cargo test -p savvagent-host default_prompt::tests::append_prompt_segments
+cargo test -p otto-host default_prompt::tests::append_prompt_segments
 ```
 
 Expected: both tests pass.
 
 - [ ] **Step 6: Wire into `session.rs`**
 
-In `crates/savvagent-host/src/session.rs`, locate the place that constructs the `CompleteRequest`'s `system` field for each turn. (Search for `default_prompt::` or `system:` to find it.)
+In `crates/otto-host/src/session.rs`, locate the place that constructs the `CompleteRequest`'s `system` field for each turn. (Search for `default_prompt::` or `system:` to find it.)
 
 The current code probably looks roughly like:
 
@@ -1888,21 +1888,21 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/savvagent-host/
+git add crates/otto-host/
 git commit -m "feat(host): compose plugin prompt segments + per-slash suppression"
 ```
 
 ---
 
-## Task 11: `savvagent-canvas` crate — skeleton + Blitz integration
+## Task 11: `otto-canvas` crate — skeleton + Blitz integration
 
 **Files:**
-- Create: `crates/savvagent-canvas/Cargo.toml`
-- Create: `crates/savvagent-canvas/src/lib.rs`
-- Create: `crates/savvagent-canvas/src/canvas.rs`
+- Create: `crates/otto-canvas/Cargo.toml`
+- Create: `crates/otto-canvas/src/lib.rs`
+- Create: `crates/otto-canvas/src/canvas.rs`
 - Modify: `Cargo.toml` (workspace) — add member + workspace deps
 
-Implement `HtmlCanvas` against the Blitz API documented in the Phase 0 spike. The crate exposes the `HtmlCanvas` struct (impls `ContentRenderer`) and nothing else (the plugin shim lives in `savvagent` per Task 13).
+Implement `HtmlCanvas` against the Blitz API documented in the Phase 0 spike. The crate exposes the `HtmlCanvas` struct (impls `ContentRenderer`) and nothing else (the plugin shim lives in `otto` per Task 13).
 
 - [ ] **Step 1: Add the crate to the workspace**
 
@@ -1912,12 +1912,12 @@ In the root `Cargo.toml`:
 [workspace]
 members = [
     # ... existing ...
-    "crates/savvagent-canvas",
+    "crates/otto-canvas",
 ]
 
 [workspace.dependencies]
 # ... existing ...
-savvagent-canvas = { path = "crates/savvagent-canvas", version = "0.17.0" }
+otto-canvas = { path = "crates/otto-canvas", version = "0.17.0" }
 blitz = "<pinned-from-Phase-0-spike>"
 ```
 
@@ -1926,23 +1926,23 @@ blitz = "<pinned-from-Phase-0-spike>"
 - [ ] **Step 2: Create the crate skeleton**
 
 ```bash
-mkdir -p crates/savvagent-canvas/src
+mkdir -p crates/otto-canvas/src
 ```
 
-Create `crates/savvagent-canvas/Cargo.toml`:
+Create `crates/otto-canvas/Cargo.toml`:
 
 ```toml
 [package]
-name = "savvagent-canvas"
+name = "otto-canvas"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "HTML canvas renderer for savvagent inline conversation rendering"
+description = "HTML canvas renderer for otto inline conversation rendering"
 
 [dependencies]
-savvagent-plugin = { workspace = true }
+otto-plugin = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
 blitz = { workspace = true }
@@ -1951,13 +1951,13 @@ blitz = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
 ```
 
-Create `crates/savvagent-canvas/src/lib.rs`:
+Create `crates/otto-canvas/src/lib.rs`:
 
 ```rust
-//! Inline HTML canvas renderer for savvagent.
+//! Inline HTML canvas renderer for otto.
 //!
 //! Wraps Blitz to expose a [`HtmlCanvas`] implementing
-//! [`savvagent_plugin::ContentRenderer`]. Phase 1 implements only
+//! [`otto_plugin::ContentRenderer`]. Phase 1 implements only
 //! `render`; the eventing surface lands in Phase 2.
 //!
 //! See `docs/superpowers/specs/2026-05-21-inline-html-canvas-design.md`.
@@ -1975,14 +1975,14 @@ pub use canvas::HtmlCanvas;
 
 - [ ] **Step 3: Write the failing test**
 
-Create `crates/savvagent-canvas/src/canvas.rs` with a `#[cfg(test)]` test that exercises construction + render:
+Create `crates/otto-canvas/src/canvas.rs` with a `#[cfg(test)]` test that exercises construction + render:
 
 ```rust
 //! `HtmlCanvas` — the static-rendering implementation of
 //! `ContentRenderer` for SPP `ContentBlock::Html`.
 
 use async_trait::async_trait;
-use savvagent_plugin::{
+use otto_plugin::{
     ContentBlockId, ContentRenderer, Frame, PixelFormat, PixelSize,
 };
 
@@ -2003,7 +2003,7 @@ pub struct HtmlCanvas {
 impl HtmlCanvas {
     /// Construct a canvas from HTML source.
     pub fn new(id: ContentBlockId, source: &str) -> Self {
-        // Validate the source against the savvagent-canvas subset and
+        // Validate the source against the otto-canvas subset and
         // log warnings for out-of-subset elements. Then build the
         // Blitz document.
         crate::subset::validate(source);
@@ -2089,7 +2089,7 @@ If the Blitz API ergonomically yields BGRA, convert before returning (or swap to
 - [ ] **Step 5: Run the tests; verify they pass**
 
 ```bash
-cargo test -p savvagent-canvas
+cargo test -p otto-canvas
 ```
 
 Expected: both tests pass.
@@ -2097,26 +2097,26 @@ Expected: both tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Cargo.toml crates/savvagent-canvas/
+git add Cargo.toml crates/otto-canvas/
 git commit -m "feat(canvas): HtmlCanvas Blitz-backed ContentRenderer (static render)"
 ```
 
 ---
 
-## Task 12: `savvagent-canvas` — subset validator
+## Task 12: `otto-canvas` — subset validator
 
 **Files:**
-- Create: `crates/savvagent-canvas/src/subset.rs`
+- Create: `crates/otto-canvas/src/subset.rs`
 
 A lightweight DOM walker that emits `tracing::warn!` for elements / attributes / properties outside the spec's HTML+CSS subset. Not a render error — the canvas still draws. The validator's value is debugging model output during development.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-canvas/src/subset.rs`:
+Create `crates/otto-canvas/src/subset.rs`:
 
 ```rust
 //! Subset validator: walks parsed HTML and emits tracing warnings for
-//! elements or attributes outside the savvagent-canvas supported set.
+//! elements or attributes outside the otto-canvas supported set.
 //!
 //! Not a render error — Blitz renders what it can; the validator's
 //! purpose is to surface "you used <iframe>; that's not in the
@@ -2136,7 +2136,7 @@ pub fn validate(source: &str) -> usize {
             warnings += 1;
             tracing::warn!(
                 tag,
-                "savvagent-canvas: <{}> is outside the subset; will not render \
+                "otto-canvas: <{}> is outside the subset; will not render \
                  as intended",
                 tag,
             );
@@ -2145,7 +2145,7 @@ pub fn validate(source: &str) -> usize {
     if source.contains("rel=\"stylesheet\"") || source.contains("rel='stylesheet'") {
         warnings += 1;
         tracing::warn!(
-            "savvagent-canvas: external stylesheets are not loaded; \
+            "otto-canvas: external stylesheets are not loaded; \
              use a <style> block instead"
         );
     }
@@ -2159,7 +2159,7 @@ const EXCLUDED_TAGS: &[&str] = &[
     "embed",
     "video",
     "audio",
-    "canvas",  // HTML <canvas>, NOT the savvagent canvas concept
+    "canvas",  // HTML <canvas>, NOT the otto canvas concept
 ];
 
 #[cfg(test)]
@@ -2200,7 +2200,7 @@ mod tests {
 - [ ] **Step 2: Run the tests**
 
 ```bash
-cargo test -p savvagent-canvas subset
+cargo test -p otto-canvas subset
 ```
 
 Expected: all four tests pass (this is a one-shot implementation; no separate fail-then-pass cycle).
@@ -2210,7 +2210,7 @@ Expected: all four tests pass (this is a one-shot implementation; no separate fa
 The body of `HtmlCanvas::new` from Task 11 already includes `crate::subset::validate(source);`. Confirm with:
 
 ```bash
-grep -n "subset::validate" crates/savvagent-canvas/src/canvas.rs
+grep -n "subset::validate" crates/otto-canvas/src/canvas.rs
 ```
 
 Expected: one match in `HtmlCanvas::new`.
@@ -2218,7 +2218,7 @@ Expected: one match in `HtmlCanvas::new`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/subset.rs
+git add crates/otto-canvas/src/subset.rs
 git commit -m "feat(canvas): subset validator with tracing warnings"
 ```
 
@@ -2227,12 +2227,12 @@ git commit -m "feat(canvas): subset validator with tracing warnings"
 ## Task 13: `internal:html-canvas` built-in plugin
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`
-- Create: `crates/savvagent/src/plugin/builtin/html_canvas/plugin.rs`
-- Create: `crates/savvagent/src/plugin/builtin/html_canvas/prompt_text.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/mod.rs`
-- Modify: `crates/savvagent/src/plugin/mod.rs` — register in `register_builtins()`
-- Modify: `crates/savvagent/Cargo.toml` — add `savvagent-canvas` dep
+- Create: `crates/otto/src/plugin/builtin/html_canvas/mod.rs`
+- Create: `crates/otto/src/plugin/builtin/html_canvas/plugin.rs`
+- Create: `crates/otto/src/plugin/builtin/html_canvas/prompt_text.rs`
+- Modify: `crates/otto/src/plugin/builtin/mod.rs`
+- Modify: `crates/otto/src/plugin/mod.rs` — register in `register_builtins()`
+- Modify: `crates/otto/Cargo.toml` — add `otto-canvas` dep
 
 The plugin owns:
 - The `internal:html-canvas:default` `SystemPromptSegment`.
@@ -2241,23 +2241,23 @@ The plugin owns:
 
 `/save-canvas` and auto-export land in later tasks (15 and 16); this task only wires the renderer factory + prompt segment.
 
-- [ ] **Step 1: Add `savvagent-canvas` to the TUI crate's deps**
+- [ ] **Step 1: Add `otto-canvas` to the TUI crate's deps**
 
-In `crates/savvagent/Cargo.toml`:
+In `crates/otto/Cargo.toml`:
 
 ```toml
 [dependencies]
 # ... existing ...
-savvagent-canvas = { workspace = true }
+otto-canvas = { workspace = true }
 ```
 
 - [ ] **Step 2: Create the plugin module**
 
 ```bash
-mkdir -p crates/savvagent/src/plugin/builtin/html_canvas
+mkdir -p crates/otto/src/plugin/builtin/html_canvas
 ```
 
-Create `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`:
+Create `crates/otto/src/plugin/builtin/html_canvas/mod.rs`:
 
 ```rust
 //! `internal:html-canvas` built-in plugin.
@@ -2268,7 +2268,7 @@ Create `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`:
 //! - A ContentRendererSpec claiming the SPP "html" block type as
 //!   canonical.
 //! - The Plugin::create_renderer factory returning a fresh
-//!   savvagent_canvas::HtmlCanvas per inline block.
+//!   otto_canvas::HtmlCanvas per inline block.
 //!
 //! Phase 2 will add the OnFocusedCanvas keybinding for Ctrl-O
 //! (open-in-browser); Phase 1 doesn't ship interactive bindings.
@@ -2279,7 +2279,7 @@ mod prompt_text;
 pub use plugin::HtmlCanvasPlugin;
 ```
 
-Create `crates/savvagent/src/plugin/builtin/html_canvas/prompt_text.rs`:
+Create `crates/otto/src/plugin/builtin/html_canvas/prompt_text.rs`:
 
 ```rust
 //! Default system prompt segment text for internal:html-canvas.
@@ -2316,12 +2316,12 @@ pub const DEFAULT_PROMPT_ID: &str = "internal:html-canvas:default";
 
 - [ ] **Step 3: Create the `Plugin` impl**
 
-Create `crates/savvagent/src/plugin/builtin/html_canvas/plugin.rs`:
+Create `crates/otto/src/plugin/builtin/html_canvas/plugin.rs`:
 
 ```rust
 use async_trait::async_trait;
-use savvagent_canvas::HtmlCanvas;
-use savvagent_plugin::{
+use otto_canvas::HtmlCanvas;
+use otto_plugin::{
     Contributions, ContentBlockId, ContentRenderer, ContentRendererSpec,
     Manifest, Plugin, PluginError, PluginId, PluginKind, SystemPromptSegment,
 };
@@ -2410,7 +2410,7 @@ mod tests {
 
 - [ ] **Step 4: Add to `builtin/mod.rs`**
 
-In `crates/savvagent/src/plugin/builtin/mod.rs`, add:
+In `crates/otto/src/plugin/builtin/mod.rs`, add:
 
 ```rust
 pub mod html_canvas;
@@ -2418,7 +2418,7 @@ pub mod html_canvas;
 
 - [ ] **Step 5: Register in `register_builtins()`**
 
-In `crates/savvagent/src/plugin/mod.rs`, find the `register_builtins()` function. Add an entry to its returned `BuiltinSet`:
+In `crates/otto/src/plugin/mod.rs`, find the `register_builtins()` function. Add an entry to its returned `BuiltinSet`:
 
 ```rust
 use crate::plugin::builtin::html_canvas::HtmlCanvasPlugin;
@@ -2445,7 +2445,7 @@ Update any pattern that iterates `BuiltinSet` (e.g., `into_iter` in `registry.rs
 - [ ] **Step 6: Run the plugin's tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::html_canvas
+cargo test -p otto plugin::builtin::html_canvas
 ```
 
 Expected: PASS.
@@ -2461,7 +2461,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/
+git add crates/otto/
 git commit -m "feat(plugin/html-canvas): internal:html-canvas built-in plugin"
 ```
 
@@ -2470,15 +2470,15 @@ git commit -m "feat(plugin/html-canvas): internal:html-canvas built-in plugin"
 ## Task 14: Plugin registry — `content_renderers` index + prompt-segment gathering
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/registry.rs`
-- Modify: `crates/savvagent/src/plugin/manifests.rs`
-- Modify: `crates/savvagent/src/plugin/effects.rs`
+- Modify: `crates/otto/src/plugin/registry.rs`
+- Modify: `crates/otto/src/plugin/manifests.rs`
+- Modify: `crates/otto/src/plugin/effects.rs`
 
 Add the lookup index `block_type → PluginId` for content renderers, plus a helper that gathers all enabled plugins' `SystemPromptSegment`s in registration order. Also handle the new `Effect::OpenUrl` variant in the effects applier.
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/savvagent/src/plugin/registry.rs`, append a test (or extend the existing tests module):
+In `crates/otto/src/plugin/registry.rs`, append a test (or extend the existing tests module):
 
 ```rust
     #[test]
@@ -2520,14 +2520,14 @@ In `crates/savvagent/src/plugin/registry.rs`, append a test (or extend the exist
 - [ ] **Step 2: Run the tests; verify they fail**
 
 ```bash
-cargo test -p savvagent plugin::registry::tests::content_renderers_index_routes_block_type_to_plugin
+cargo test -p otto plugin::registry::tests::content_renderers_index_routes_block_type_to_plugin
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Extend `Indexes`**
 
-In `crates/savvagent/src/plugin/manifests.rs`, find the `Indexes` struct (or its equivalent for `PluginRegistry`). Add the new index:
+In `crates/otto/src/plugin/manifests.rs`, find the `Indexes` struct (or its equivalent for `PluginRegistry`). Add the new index:
 
 ```rust
 pub struct Indexes {
@@ -2566,7 +2566,7 @@ Add the new error variant to whatever error enum `manifests.rs` uses for index-b
 
 - [ ] **Step 4: Add `PluginRegistry::content_renderer_for` and `active_prompt_segments`**
 
-In `crates/savvagent/src/plugin/registry.rs`:
+In `crates/otto/src/plugin/registry.rs`:
 
 ```rust
 impl PluginRegistry {
@@ -2596,7 +2596,7 @@ impl PluginRegistry {
 
 - [ ] **Step 5: Handle `Effect::OpenUrl` in the effects applier**
 
-In `crates/savvagent/src/plugin/effects.rs`, find the match expression that dispatches `Effect` variants. Add a branch:
+In `crates/otto/src/plugin/effects.rs`, find the match expression that dispatches `Effect` variants. Add a branch:
 
 ```rust
         Effect::OpenUrl { url, target } => {
@@ -2644,7 +2644,7 @@ Replace the `todo!()` in the test helper from Step 1 with a real helper that con
 - [ ] **Step 7: Run the tests; verify they pass**
 
 ```bash
-cargo test -p savvagent plugin::registry
+cargo test -p otto plugin::registry
 ```
 
 Expected: PASS.
@@ -2658,7 +2658,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/
+git add crates/otto/src/plugin/
 git commit -m "feat(plugin): content_renderers index + prompt-segment gathering + OpenUrl"
 ```
 
@@ -2667,8 +2667,8 @@ git commit -m "feat(plugin): content_renderers index + prompt-segment gathering 
 ## Task 15: TUI — `Entry::Canvas` variant + `CanvasRegistry`
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
-- Modify: `crates/savvagent/Cargo.toml` — add `ratatui-image` dep + workspace dep entry
+- Modify: `crates/otto/src/app.rs`
+- Modify: `crates/otto/Cargo.toml` — add `ratatui-image` dep + workspace dep entry
 - Modify: `Cargo.toml` (workspace)
 
 Extend the existing `Entry` enum with a `Canvas` variant carrying a `ContentBlockId` plus the source (so transcripts can persist the source and re-render on resume). Add a `CanvasRegistry` field to `App` that holds the live renderer instances keyed by `ContentBlockId`.
@@ -2685,7 +2685,7 @@ ratatui-image = "<latest-stable-version>"
 
 Choose the latest published version compatible with the ratatui version the workspace already uses (check `Cargo.lock` or `Cargo.toml` for the current `ratatui` pin). Document the version in the PR description.
 
-In `crates/savvagent/Cargo.toml`:
+In `crates/otto/Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -2695,19 +2695,19 @@ ratatui-image = { workspace = true }
 
 - [ ] **Step 2: Write the failing test**
 
-In `crates/savvagent/src/app.rs`, append to the existing test module:
+In `crates/otto/src/app.rs`, append to the existing test module:
 
 ```rust
     #[test]
     fn entry_carries_canvas_variant() {
         let e = Entry::Canvas {
-            id: savvagent_plugin::ContentBlockId(7),
+            id: otto_plugin::ContentBlockId(7),
             source: "<p>hi</p>".into(),
             source_preview: None,
         };
         match e {
             Entry::Canvas { id, source, source_preview } => {
-                assert_eq!(id, savvagent_plugin::ContentBlockId(7));
+                assert_eq!(id, otto_plugin::ContentBlockId(7));
                 assert_eq!(source, "<p>hi</p>");
                 assert!(source_preview.is_none());
             }
@@ -2719,14 +2719,14 @@ In `crates/savvagent/src/app.rs`, append to the existing test module:
 - [ ] **Step 3: Run the test; verify it fails**
 
 ```bash
-cargo test -p savvagent app::tests::entry_carries_canvas_variant
+cargo test -p otto app::tests::entry_carries_canvas_variant
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 4: Add the variant**
 
-Find the existing `Entry` enum in `crates/savvagent/src/app.rs` (line ~212). Add a new variant:
+Find the existing `Entry` enum in `crates/otto/src/app.rs` (line ~212). Add a new variant:
 
 ```rust
     /// A model-emitted HTML block to be rendered inline as a canvas.
@@ -2738,7 +2738,7 @@ Find the existing `Entry` enum in `crates/savvagent/src/app.rs` (line ~212). Add
     Canvas {
         /// Host-assigned id, matching the renderer key in the
         /// canvas registry.
-        id: savvagent_plugin::ContentBlockId,
+        id: otto_plugin::ContentBlockId,
         /// Final HTML source (after streaming completes).
         source: String,
         /// In-flight source buffer during streaming, swapped to
@@ -2753,7 +2753,7 @@ Above the `App` struct definition in `app.rs`, add:
 
 ```rust
 use std::collections::HashMap;
-use savvagent_plugin::{ContentBlockId, ContentRenderer};
+use otto_plugin::{ContentBlockId, ContentRenderer};
 
 /// Lives inside `App`. Owns one renderer per live canvas block.
 pub(crate) struct CanvasRegistry {
@@ -2862,12 +2862,12 @@ If `Entry` already derives `Serialize`/`Deserialize` with a `#[serde(tag = "type
     }
 ```
 
-If `Entry` doesn't already use derive_serde, the existing serialization path probably matches manually — adapt the new variant to that path. If `ContentBlockId` doesn't impl `Serialize`/`Deserialize`, derive them in `crates/savvagent-plugin/src/content.rs` (additive, WIT-portable as `u32`).
+If `Entry` doesn't already use derive_serde, the existing serialization path probably matches manually — adapt the new variant to that path. If `ContentBlockId` doesn't impl `Serialize`/`Deserialize`, derive them in `crates/otto-plugin/src/content.rs` (additive, WIT-portable as `u32`).
 
 - [ ] **Step 7: Run the tests; verify they pass**
 
 ```bash
-cargo test -p savvagent app
+cargo test -p otto app
 ```
 
 Expected: PASS.
@@ -2875,7 +2875,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add Cargo.toml crates/savvagent/
+git add Cargo.toml crates/otto/
 git commit -m "feat(tui): Entry::Canvas + CanvasRegistry holding renderers"
 ```
 
@@ -2884,16 +2884,16 @@ git commit -m "feat(tui): Entry::Canvas + CanvasRegistry holding renderers"
 ## Task 16: TUI — render `Entry::Canvas` via `ratatui-image`
 
 **Files:**
-- Modify: `crates/savvagent/src/ui.rs`
+- Modify: `crates/otto/src/ui.rs`
 
 Walk the transcript items; for `Entry::Canvas`, ask the registry's renderer to produce a `Frame`, hand the pixels to `ratatui-image::protocol::StatefulProtocol`, and draw it at the computed cell rect. For terminals without an image protocol, render the source as a syntax-highlighted code block with a one-line banner.
 
 - [ ] **Step 1: Add the canvas-rendering helper**
 
-In `crates/savvagent/src/ui.rs`, find the function that walks `entries` and renders each. Add a new branch for `Entry::Canvas`:
+In `crates/otto/src/ui.rs`, find the function that walks `entries` and renders each. Add a new branch for `Entry::Canvas`:
 
 ```rust
-use savvagent_plugin::PixelSize;
+use otto_plugin::PixelSize;
 
 // In the entry-render loop:
 Entry::Canvas { id, source, source_preview } => {
@@ -2982,7 +2982,7 @@ fn render_source_preview(
 }
 
 fn ratatui_image_image_from_frame(
-    frame: &savvagent_plugin::Frame,
+    frame: &otto_plugin::Frame,
 ) -> image::RgbaImage {
     image::RgbaImage::from_raw(frame.width, frame.height, frame.bytes.clone())
         .expect("Frame::bytes length must match Rgba8 width*height*4")
@@ -3022,7 +3022,7 @@ fn render_code_block(
 
 - [ ] **Step 2: Add the `image` crate dep if needed**
 
-`ratatui-image` typically pulls `image` transitively; confirm with `cargo tree`. If you need it directly for `RgbaImage::from_raw`, add to `crates/savvagent/Cargo.toml`:
+`ratatui-image` typically pulls `image` transitively; confirm with `cargo tree`. If you need it directly for `RgbaImage::from_raw`, add to `crates/otto/Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -3034,13 +3034,13 @@ image = "0.25"
 There's no good unit-test path for visual ratatui rendering. Instead, add a `cargo run` smoke step you can drive manually:
 
 ```bash
-cargo run -p savvagent
+cargo run -p otto
 ```
 
 Then in a kitty / WezTerm / Ghostty terminal:
 
 ```
-> Please respond with `<savvagent-test-canvas>` block.
+> Please respond with `<otto-test-canvas>` block.
 ```
 
 (Or any prompt that exercises the canvas — the system prompt segment from Task 13 tells the model to use html-canvas blocks for structured docs.) Verify a rendered image appears inline. Switch to alacritty / xterm and verify the source-code fallback appears with the banner.
@@ -3058,7 +3058,7 @@ Expected: PASS (the rendering changes don't break test paths).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/
+git add crates/otto/
 git commit -m "feat(tui): render Entry::Canvas inline via ratatui-image"
 ```
 
@@ -3067,14 +3067,14 @@ git commit -m "feat(tui): render Entry::Canvas inline via ratatui-image"
 ## Task 17: TUI — streaming source preview + swap on `ContentBlockStop`
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
-- Modify: `crates/savvagent/src/tui.rs` (or wherever stream events are consumed)
+- Modify: `crates/otto/src/app.rs`
+- Modify: `crates/otto/src/tui.rs` (or wherever stream events are consumed)
 
 Hook the stream-event consumer to handle `Html` content blocks: on `ContentBlockStart { block: ContentBlock::Html }` push an `Entry::Canvas { source_preview: Some(String::new()), ... }`; on `ContentBlockDelta { delta: HtmlSourceDelta }` append; on `ContentBlockStop` move the preview into `source`, allocate a `ContentBlockId`, create a renderer, and store in the registry.
 
 - [ ] **Step 1: Write the failing test**
 
-In `crates/savvagent/src/app.rs`, append:
+In `crates/otto/src/app.rs`, append:
 
 ```rust
     #[test]
@@ -3115,14 +3115,14 @@ In `crates/savvagent/src/app.rs`, append:
 - [ ] **Step 2: Run the test; verify it fails**
 
 ```bash
-cargo test -p savvagent app::tests::streaming_html_block_transitions_to_canvas_on_stop
+cargo test -p otto app::tests::streaming_html_block_transitions_to_canvas_on_stop
 ```
 
 Expected: FAIL.
 
 - [ ] **Step 3: Implement the three handlers**
 
-In `crates/savvagent/src/app.rs`:
+In `crates/otto/src/app.rs`:
 
 ```rust
 impl App {
@@ -3213,7 +3213,7 @@ impl App {
 
 - [ ] **Step 4: Wire the handlers into the stream consumer**
 
-Find the stream-event consumer (likely in `crates/savvagent/src/tui.rs` — it spawns the streaming worker per `feedback_drive_pr_series_to_completion` and `project_tui_design`). Locate the existing `match stream_event` block. Add branches:
+Find the stream-event consumer (likely in `crates/otto/src/tui.rs` — it spawns the streaming worker per `feedback_drive_pr_series_to_completion` and `project_tui_design`). Locate the existing `match stream_event` block. Add branches:
 
 ```rust
 StreamEvent::ContentBlockStart { index, block: ContentBlock::Html { .. } } => {
@@ -3242,7 +3242,7 @@ Add `html_block_index_to_id: HashMap<u32, ContentBlockId>` to `App` and initiali
 - [ ] **Step 5: Run the test; verify it passes**
 
 ```bash
-cargo test -p savvagent app::tests::streaming_html_block_transitions_to_canvas_on_stop
+cargo test -p otto app::tests::streaming_html_block_transitions_to_canvas_on_stop
 ```
 
 Expected: PASS.
@@ -3258,34 +3258,34 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent/
+git add crates/otto/
 git commit -m "feat(tui): streaming HTML source preview + swap on block stop"
 ```
 
 ---
 
-## Task 18: Auto-export to `~/.savvagent/canvases/`
+## Task 18: Auto-export to `~/.otto/canvases/`
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/html_canvas/auto_export.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/html_canvas/plugin.rs`
+- Create: `crates/otto/src/plugin/builtin/html_canvas/auto_export.rs`
+- Modify: `crates/otto/src/plugin/builtin/html_canvas/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/html_canvas/plugin.rs`
 
-Each finalized HTML block is written to `~/.savvagent/canvases/<unix>-<turn>-<block>.html`. Mode: 0o600; directory: 0o700 (matches the existing `~/.savvagent/credentials` pattern). Default on; disable via a `plugins.toml` flag.
+Each finalized HTML block is written to `~/.otto/canvases/<unix>-<turn>-<block>.html`. Mode: 0o600; directory: 0o700 (matches the existing `~/.otto/credentials` pattern). Default on; disable via a `plugins.toml` flag.
 
 The auto-export is triggered from `App::handle_html_block_stop` (Task 17) by emitting an effect-like signal the plugin acts on, OR by directly calling a function exposed by this task. Since the existing plugin architecture routes effects via `apply_effects`, and we don't want to introduce a new `Effect::AutoExportCanvas` variant just for this (it's an internal concern), we use a direct call from the App layer to a helper this task ships.
 
 - [ ] **Step 1: Write the failing test**
 
-In a new file `crates/savvagent/src/plugin/builtin/html_canvas/auto_export.rs`:
+In a new file `crates/otto/src/plugin/builtin/html_canvas/auto_export.rs`:
 
 ```rust
 //! Auto-export each finalized HTML canvas to
-//! `~/.savvagent/canvases/<unix>-<turn>-<block>.html`.
+//! `~/.otto/canvases/<unix>-<turn>-<block>.html`.
 
 use std::path::{Path, PathBuf};
 
-use savvagent_plugin::ContentBlockId;
+use otto_plugin::ContentBlockId;
 
 /// Result of an auto-export attempt.
 #[derive(Debug)]
@@ -3375,19 +3375,19 @@ mod tests {
 }
 ```
 
-(`tempfile` is a common dev-dep across this workspace; verify it's already in `crates/savvagent/Cargo.toml` `[dev-dependencies]` and add if not.)
+(`tempfile` is a common dev-dep across this workspace; verify it's already in `crates/otto/Cargo.toml` `[dev-dependencies]` and add if not.)
 
 - [ ] **Step 2: Run the tests; verify they pass**
 
 ```bash
-cargo test -p savvagent plugin::builtin::html_canvas::auto_export
+cargo test -p otto plugin::builtin::html_canvas::auto_export
 ```
 
 Expected: PASS (this is a self-contained module).
 
 - [ ] **Step 3: Wire `mod.rs`**
 
-Append to `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`:
+Append to `crates/otto/src/plugin/builtin/html_canvas/mod.rs`:
 
 ```rust
 pub mod auto_export;
@@ -3395,16 +3395,16 @@ pub mod auto_export;
 
 - [ ] **Step 4: Drive auto-export from `handle_html_block_stop`**
 
-In `crates/savvagent/src/app.rs`, extend `handle_html_block_stop` (from Task 17) to trigger auto-export after the renderer is created. Add at the end:
+In `crates/otto/src/app.rs`, extend `handle_html_block_stop` (from Task 17) to trigger auto-export after the renderer is created. Add at the end:
 
 ```rust
-        // Auto-export: write the canvas to ~/.savvagent/canvases/
+        // Auto-export: write the canvas to ~/.otto/canvases/
         if self.html_canvas_auto_export_enabled() {
             use crate::plugin::builtin::html_canvas::auto_export::{
                 auto_export_path, write_canvas,
             };
             let base = match home_dir() {
-                Some(home) => home.join(".savvagent").join("canvases"),
+                Some(home) => home.join(".otto").join("canvases"),
                 None => return,
             };
             let unix_ts = std::time::SystemTime::now()
@@ -3464,7 +3464,7 @@ And increment it where each new turn starts (likely in `submit_prompt` or in the
 
 - [ ] **Step 6: Add an integration test**
 
-Append to `crates/savvagent/src/app.rs` tests:
+Append to `crates/otto/src/app.rs` tests:
 
 ```rust
     #[test]
@@ -3482,7 +3482,7 @@ Append to `crates/savvagent/src/app.rs` tests:
         app.handle_html_block_delta(id, "<p>hi</p>");
         app.handle_html_block_stop(id);
 
-        let canvases_dir = tmp.path().join(".savvagent").join("canvases");
+        let canvases_dir = tmp.path().join(".otto").join("canvases");
         let entries: Vec<_> = std::fs::read_dir(&canvases_dir)
             .expect("canvases dir exists")
             .filter_map(|e| e.ok())
@@ -3506,8 +3506,8 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/
-git commit -m "feat(canvas): auto-export each html block to ~/.savvagent/canvases"
+git add crates/otto/
+git commit -m "feat(canvas): auto-export each html block to ~/.otto/canvases"
 ```
 
 ---
@@ -3515,9 +3515,9 @@ git commit -m "feat(canvas): auto-export each html block to ~/.savvagent/canvase
 ## Task 19: `/save-canvas` slash command
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/html_canvas/slash.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/html_canvas/plugin.rs`
+- Create: `crates/otto/src/plugin/builtin/html_canvas/slash.rs`
+- Modify: `crates/otto/src/plugin/builtin/html_canvas/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/html_canvas/plugin.rs`
 
 Adds the `SlashSpec` and `Plugin::handle_slash` branch for `/save-canvas`. Args:
 
@@ -3531,22 +3531,22 @@ The plugin needs read access to the App's canvases (or, equivalently, the slash 
 1. Plumb the canvas source list through `handle_slash` (changes the trait signature, undesirable).
 2. The TUI's slash dispatcher intercepts `/save-canvas`, builds a context object, and calls a helper on the plugin.
 
-Option 2 keeps the trait stable. The slash dispatch in `crates/savvagent/src/plugin/slash.rs` already does some per-slash work; add a special-case for `internal:html-canvas:save-canvas` that bypasses the trait and calls into a non-trait helper.
+Option 2 keeps the trait stable. The slash dispatch in `crates/otto/src/plugin/slash.rs` already does some per-slash work; add a special-case for `internal:html-canvas:save-canvas` that bypasses the trait and calls into a non-trait helper.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent/src/plugin/builtin/html_canvas/slash.rs`:
+Create `crates/otto/src/plugin/builtin/html_canvas/slash.rs`:
 
 ```rust
 //! Logic for the /save-canvas slash command.
 //!
-//! The slash dispatcher in `crates/savvagent/src/plugin/slash.rs` calls
+//! The slash dispatcher in `crates/otto/src/plugin/slash.rs` calls
 //! [`dispatch`] directly (bypassing the Plugin trait) because the
 //! command needs access to App-owned canvas state.
 
 use std::path::{Path, PathBuf};
 
-use savvagent_plugin::{ContentBlockId, Effect, UrlTarget};
+use otto_plugin::{ContentBlockId, Effect, UrlTarget};
 
 use crate::plugin::builtin::html_canvas::auto_export::write_canvas;
 
@@ -3619,7 +3619,7 @@ pub fn dispatch(
     };
 
     let path = args.path.unwrap_or_else(|| {
-        cwd.join(format!("savvagent-canvas-{}.html", id.0))
+        cwd.join(format!("otto-canvas-{}.html", id.0))
     });
     write_canvas(&path, &source).map_err(|e| format!("write failed: {e}"))?;
 
@@ -3709,14 +3709,14 @@ mod tests {
 - [ ] **Step 2: Run the tests**
 
 ```bash
-cargo test -p savvagent plugin::builtin::html_canvas::slash
+cargo test -p otto plugin::builtin::html_canvas::slash
 ```
 
 Expected: PASS.
 
 - [ ] **Step 3: Add the SlashSpec to the plugin manifest**
 
-In `crates/savvagent/src/plugin/builtin/html_canvas/plugin.rs`, extend the `Contributions` in the manifest:
+In `crates/otto/src/plugin/builtin/html_canvas/plugin.rs`, extend the `Contributions` in the manifest:
 
 ```rust
             contributions: Contributions {
@@ -3735,7 +3735,7 @@ In `crates/savvagent/src/plugin/builtin/html_canvas/plugin.rs`, extend the `Cont
 
 - [ ] **Step 4: Intercept `/save-canvas` in the slash dispatcher**
 
-In `crates/savvagent/src/plugin/slash.rs`, find the `dispatch` function. Before the standard `plugin.handle_slash(...)` path, add a special-case:
+In `crates/otto/src/plugin/slash.rs`, find the `dispatch` function. Before the standard `plugin.handle_slash(...)` path, add a special-case:
 
 ```rust
 if name == "save-canvas" {
@@ -3769,7 +3769,7 @@ if name == "save-canvas" {
 
 - [ ] **Step 5: Add `App::canvas_sources_in_order`**
 
-In `crates/savvagent/src/app.rs`:
+In `crates/otto/src/app.rs`:
 
 ```rust
 impl App {
@@ -3802,7 +3802,7 @@ Expected: PASS.
 - [ ] **Step 7: Manual smoke**
 
 ```bash
-cargo run -p savvagent
+cargo run -p otto
 # In the TUI, after the model produces a canvas:
 /save-canvas
 /save-canvas ./my-spec.html
@@ -3814,7 +3814,7 @@ Verify the files appear and `--open` shells to the system browser.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/
+git add crates/otto/
 git commit -m "feat(canvas): /save-canvas slash command"
 ```
 
@@ -3823,13 +3823,13 @@ git commit -m "feat(canvas): /save-canvas slash command"
 ## Task 20: Wire `Host::set_prompt_segments` from the TUI startup
 
 **Files:**
-- Modify: `crates/savvagent/src/main.rs` (or wherever the TUI builds the host)
+- Modify: `crates/otto/src/main.rs` (or wherever the TUI builds the host)
 
 The host has `set_prompt_segments` (Task 10). The plugin registry has `active_prompt_segments` (Task 14). The TUI just needs to call them — at startup and any time the enabled-plugin set changes.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `crates/savvagent/src/app.rs` tests:
+Append to `crates/otto/src/app.rs` tests:
 
 ```rust
     #[tokio::test]
@@ -3848,7 +3848,7 @@ Append to `crates/savvagent/src/app.rs` tests:
 - [ ] **Step 2: Run the test; verify it fails**
 
 ```bash
-cargo test -p savvagent app::tests::startup_pushes_html_canvas_segment_to_host
+cargo test -p otto app::tests::startup_pushes_html_canvas_segment_to_host
 ```
 
 Expected: FAIL.
@@ -3879,7 +3879,7 @@ If you added the helper to `Host::active_prompt_segments` in Task 10 as `pub(cra
 
 - [ ] **Step 4: Wire suppression list when a slash is dispatched**
 
-In `crates/savvagent/src/plugin/slash.rs::dispatch`, before invoking `host.run_turn_streaming` for the slash, fetch the `SlashSpec.suppress_prompt_segments` and call `host.set_turn_suppression`:
+In `crates/otto/src/plugin/slash.rs::dispatch`, before invoking `host.run_turn_streaming` for the slash, fetch the `SlashSpec.suppress_prompt_segments` and call `host.set_turn_suppression`:
 
 ```rust
 let suppress = registry
@@ -3895,7 +3895,7 @@ host.set_turn_suppression(suppress);
 - [ ] **Step 5: Run the test; verify it passes**
 
 ```bash
-cargo test -p savvagent app::tests::startup_pushes_html_canvas_segment_to_host
+cargo test -p otto app::tests::startup_pushes_html_canvas_segment_to_host
 ```
 
 Expected: PASS.
@@ -3903,7 +3903,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/
+git add crates/otto/
 git commit -m "feat(tui): push plugin prompt segments to host at startup"
 ```
 
@@ -3924,20 +3924,20 @@ In `README.md`, after the existing feature list or in a logical place, add:
 ```markdown
 ### Inline HTML rendering
 
-Savvagent renders model-emitted HTML inline in the chat transcript when
+Otto renders model-emitted HTML inline in the chat transcript when
 your terminal supports an image protocol (Kitty / iTerm2 / WezTerm /
 Ghostty / sixel). Models are prompted to wrap structured documents
 (plans, specs, status updates, reviews) in ```html-canvas fenced
-blocks; savvagent renders them as static images for now and Phase 2
+blocks; otto renders them as static images for now and Phase 2
 will add mouse + keyboard interaction.
 
 Every rendered canvas is also auto-exported to
-`~/.savvagent/canvases/<unix>-<turn>-<block>.html` for opening in a
+`~/.otto/canvases/<unix>-<turn>-<block>.html` for opening in a
 real browser or for sharing. Use `/save-canvas [path] [--open]` to
 write to an explicit location.
 
 Disable inline rendering by toggling the `internal:html-canvas` plugin
-off in `~/.savvagent/plugins.toml`:
+off in `~/.otto/plugins.toml`:
 
 \`\`\`toml
 [plugins."internal:html-canvas"]
@@ -4051,7 +4051,7 @@ Update any matches to `0.17.0`.
 Also update workspace dependency literals to `0.17.0` for the in-repo crates:
 
 ```bash
-grep -n 'savvagent-.*version = "0\.15\.0"' Cargo.toml
+grep -n 'otto-.*version = "0\.15\.0"' Cargo.toml
 ```
 
 For each matching workspace dependency entry, change the version to `0.17.0`.
@@ -4074,11 +4074,11 @@ In `CHANGELOG.md`, add a new section at the top (above the most recent existing 
 - SPP v0.2.0: new `ContentBlock::Html { source }` content block and
   `BlockDelta::HtmlSourceDelta { source }` stream delta (additive;
   v0.1.0 conformance is preserved).
-- `savvagent-fence` crate: streaming parser that extracts
+- `otto-fence` crate: streaming parser that extracts
   ` ```html-canvas ` fenced blocks from model text output. Wired into
   all four providers (`provider-anthropic`, `provider-gemini`,
   `provider-openai`, `provider-local`).
-- `savvagent-canvas` crate: Blitz-backed `HtmlCanvas` implementing
+- `otto-canvas` crate: Blitz-backed `HtmlCanvas` implementing
   `ContentRenderer` (static rendering only; eventing in Phase 2).
 - Plugin trait surface: `ContentRenderer` trait + supporting types
   (`Frame`, `PixelSize`, `PixelFormat`, `ContentBlockId`, …);
@@ -4093,7 +4093,7 @@ In `CHANGELOG.md`, add a new section at the top (above the most recent existing 
   the canonical renderer; contributes a default system prompt segment;
   ships the `/save-canvas` slash command.
 - Auto-export: every finalized HTML canvas is written to
-  `~/.savvagent/canvases/<unix>-<turn>-<block>.html` (mode 0o600,
+  `~/.otto/canvases/<unix>-<turn>-<block>.html` (mode 0o600,
   directory 0o700). Disable via
   `[plugins."internal:html-canvas"] auto_export = false`.
 - TUI: streaming HTML blocks show a typewriter-style source preview
@@ -4157,7 +4157,7 @@ These map 1:1 to the spec's acceptance criteria (§ Acceptance criteria, items 1
 - [ ] `cargo fmt --all -- --check` is green.
 - [ ] SPP `Html { source }` block and `HtmlSourceDelta` round-trip JSON (Tasks 2, 3).
 - [ ] All four providers emit `Html` blocks when their model output contains a `html-canvas` fence (Task 6 tests).
-- [ ] `savvagent-canvas::HtmlCanvas::render` produces an Rgba8 frame of the requested width whose bytes match `w*h*4` (Task 11 test).
+- [ ] `otto-canvas::HtmlCanvas::render` produces an Rgba8 frame of the requested width whose bytes match `w*h*4` (Task 11 test).
 - [ ] Subset validator emits expected warnings (Task 12 tests).
 - [ ] `HtmlCanvasPlugin` manifest declares one canonical content renderer for `"html"` and one prompt segment (Task 13 tests).
 - [ ] Plugin registry routes `"html"` block type to `internal:html-canvas` (Task 14 tests).
@@ -4169,7 +4169,7 @@ These map 1:1 to the spec's acceptance criteria (§ Acceptance criteria, items 1
 - [ ] Manual cross-terminal smoke: render a canvas in kitty (success), in alacritty (source fallback with banner).
 - [ ] `CHANGELOG.md` has a `[0.17.0] - unreleased` section.
 - [ ] `Cargo.toml` workspace version is `0.17.0`.
-- [ ] `Cargo.lock` updated and committed (run `cargo update -p savvagent` if any in-repo version literal moved).
+- [ ] `Cargo.lock` updated and committed (run `cargo update -p otto` if any in-repo version literal moved).
 - [ ] No commits push to remote unless explicitly authorized.
 
 ---

@@ -6,12 +6,12 @@
 
 ## 1. Problem
 
-Savvagent ships with **no default system prompt**. `project::system_prompt`
-(`crates/savvagent-host/src/project.rs:99`) returns `Some` only when the
+Otto ships with **no default system prompt**. `project::system_prompt`
+(`crates/otto-host/src/project.rs:99`) returns `Some` only when the
 embedder supplies a `HostConfig::system_prompt` override or the project
-contains a `SAVVAGENT.md` body. The TUI never sets the override
-(grep `crates/savvagent/src/` for `system_prompt`: zero hits), so a
-default-installed Savvagent run sends the model an empty `system` field.
+contains a `OTTO.md` body. The TUI never sets the override
+(grep `crates/otto/src/` for `system_prompt`: zero hits), so a
+default-installed Otto run sends the model an empty `system` field.
 
 With no system message, the underlying model falls back to its base-model
 self-assumptions. A real user-reported exchange:
@@ -36,12 +36,12 @@ framing to translate "shell" into "GitHub access is available."
 
 ### Goals
 
-- A default-installed Savvagent gives the model accurate, useful framing
+- A default-installed Otto gives the model accurate, useful framing
   about its identity, environment, and tool affordances on every turn.
 - The prompt is **truthful**: it reflects the actually-connected tool set
   (so disabling `tool-bash` removes shell-access claims) and the real
   environment (OS, project root, git presence).
-- Embedders and `SAVVAGENT.md` authors can extend (and, when needed, opt
+- Embedders and `OTTO.md` authors can extend (and, when needed, opt
   out of) the default without losing project context.
 - Zero added latency on the hot path — prompt build runs once per host
   startup, not per turn.
@@ -63,7 +63,7 @@ framing to translate "shell" into "GitHub access is available."
 **Approach A from brainstorming: default-on, override layers on top.**
 
 The host builds a default prompt at `Host::start` and layers it with any
-`HostConfig::system_prompt` override and the parsed `SAVVAGENT.md` body
+`HostConfig::system_prompt` override and the parsed `OTTO.md` body
 to form the final `system` field sent on every `CompleteRequest`. A new
 opt-out (`HostConfig::with_default_prompt_disabled()`) exists for
 embedders that genuinely want a from-scratch prompt.
@@ -72,7 +72,7 @@ embedders that genuinely want a from-scratch prompt.
 final_system_prompt = layered(
     default_prompt::build(env, tool_defs),   // unless opted out
     config.system_prompt,                    // CLI / embedder override
-    savvagent_md_body,                       // project context
+    otto_md_body,                       // project context
 )
 ```
 
@@ -81,13 +81,13 @@ string; missing layers are silently skipped.
 
 ## 4. Architecture
 
-### 4.1 New module: `crates/savvagent-host/src/default_prompt.rs`
+### 4.1 New module: `crates/otto-host/src/default_prompt.rs`
 
 ```rust
 //! Build the default system prompt from real session data.
 
 use std::path::Path;
-use savvagent_protocol::ToolDef;
+use otto_protocol::ToolDef;
 
 /// Snapshot of the host environment used to render the default prompt.
 /// All fields are cheap to gather at `Host::start`; the builder is pure
@@ -105,7 +105,7 @@ pub struct PromptEnv<'a> {
     /// App version label and source. The TUI passes its own
     /// `CARGO_PKG_VERSION`; library embedders may pass their binary's
     /// version, or leave `None` and let the host fall back to the
-    /// `savvagent-host` crate version (rendered with an explicit
+    /// `otto-host` crate version (rendered with an explicit
     /// "host crate" label to flag the distinction).
     pub app_version: AppVersion<'a>,
 }
@@ -113,10 +113,10 @@ pub struct PromptEnv<'a> {
 #[derive(Debug, Clone)]
 pub enum AppVersion<'a> {
     /// Embedder-supplied label, e.g. the TUI binary's CARGO_PKG_VERSION.
-    /// Rendered as "Savvagent version: <version>".
+    /// Rendered as "Otto version: <version>".
     App(&'a str),
-    /// No embedder version provided. Fall back to the savvagent-host
-    /// crate version. Rendered as "Savvagent host crate version: <ver>"
+    /// No embedder version provided. Fall back to the otto-host
+    /// crate version. Rendered as "Otto host crate version: <ver>"
     /// to make the distinction explicit for library callers.
     HostCrateFallback(&'static str),
 }
@@ -143,7 +143,7 @@ pub fn build(env: &PromptEnv<'_>, tools: &[ToolDef]) -> String { /* … */ }
 The `ToolRegistry` exposes a small accessor for `bash_available`:
 
 ```rust
-// In crates/savvagent-host/src/tools.rs
+// In crates/otto-host/src/tools.rs
 impl ToolRegistry {
     pub(crate) fn bash_available(&self) -> bool {
         self.lazy_bash.is_some()
@@ -158,7 +158,7 @@ configured by the embedder; no tool-server-provided text can flip it.
 
 ### 4.2 Refactor: `project::system_prompt` → `layered_prompt`
 
-The existing function in `crates/savvagent-host/src/project.rs:99` is
+The existing function in `crates/otto-host/src/project.rs:99` is
 replaced by a more general layered version (kept under the same
 module path for callers):
 
@@ -176,14 +176,14 @@ pub fn layered_prompt(
 
 Section headings:
 
-- `# Savvagent default prompt`
+- `# Otto default prompt`
 - `# Host override`  (only when `override_prompt.is_some()`)
-- `# Project context (from SAVVAGENT.md)`  (existing wording — kept for
+- `# Project context (from OTTO.md)`  (existing wording — kept for
   backward compatibility with anyone who greps prompts in logs)
 
 ### 4.3 Wiring in `Host::start` and `Host::with_components`
 
-Both constructors in `crates/savvagent-host/src/session.rs:262,299`
+Both constructors in `crates/otto-host/src/session.rs:262,299`
 currently call:
 
 ```rust
@@ -210,7 +210,7 @@ let default = if config.default_prompt_enabled {
 } else {
     None
 };
-let body = project::parse_savvagent_md(&config.project_root).body;
+let body = project::parse_otto_md(&config.project_root).body;
 let system_prompt = project::layered_prompt(
     default.as_deref(),
     config.system_prompt.as_deref(),
@@ -231,19 +231,19 @@ pub struct HostConfig {
     // … existing fields …
 
     /// When true (the default), `Host::start` builds and prepends a
-    /// default system prompt that introduces Savvagent's identity,
+    /// default system prompt that introduces Otto's identity,
     /// environment, and tool affordances. Disabling this suppresses
     /// **only the built-in default layer** — the `system_prompt`
-    /// override and the parsed `SAVVAGENT.md` body still compose
+    /// override and the parsed `OTTO.md` body still compose
     /// per [`project::layered_prompt`]. Embedders that need to control
     /// the entire system message must also (a) leave `system_prompt`
-    /// unset and (b) ensure `project_root` contains no `SAVVAGENT.md`.
+    /// unset and (b) ensure `project_root` contains no `OTTO.md`.
     /// See `Self::with_default_prompt_disabled`.
     pub default_prompt_enabled: bool,
 
     /// Embedder-supplied app version, surfaced in the default prompt's
     /// Environment section. When `None`, the prompt falls back to the
-    /// `savvagent-host` crate version with an explicit "host crate"
+    /// `otto-host` crate version with an explicit "host crate"
     /// label. The TUI passes its own `CARGO_PKG_VERSION` here so users
     /// see the version they installed. Stored as an owned `String` so
     /// embedders that compute the version at runtime (config file,
@@ -253,7 +253,7 @@ pub struct HostConfig {
 
 impl HostConfig {
     /// Disable the built-in default-prompt layer. Does NOT disable
-    /// the `system_prompt` override or `SAVVAGENT.md` body — those
+    /// the `system_prompt` override or `OTTO.md` body — those
     /// still compose if present. See struct-level docs for a strict
     /// "fully empty system message" recipe.
     pub fn with_default_prompt_disabled(mut self) -> Self {
@@ -276,7 +276,7 @@ impl HostConfig {
 `HostConfig::new` initializes `default_prompt_enabled: true` and
 `app_version: None`. The TUI's host-construction site adds
 `.with_app_version(env!("CARGO_PKG_VERSION"))`. This is a **behavioral**
-breaking change for embedders who previously relied on "no SAVVAGENT.md
+breaking change for embedders who previously relied on "no OTTO.md
 + no override = empty system field"; it's the change we want, but it
 ships under a SemVer minor bump and a CHANGELOG callout (see §9).
 
@@ -290,7 +290,7 @@ then concrete affordances, environment, conventions.
 ### 5.1 Identity (static)
 
 ```
-You are Savvagent — an open-source terminal coding agent. You run
+You are Otto — an open-source terminal coding agent. You run
 locally as a Rust binary and talk to the user through a TUI in their
 terminal. You orchestrate tool calls and provider completions over MCP.
 ```
@@ -393,14 +393,14 @@ only when the host actually wired a `tool-bash`-marker endpoint.
 
 The `<version-line>` depends on `env.app_version`:
 
-- `AppVersion::App(v)` → `Savvagent version: <v>`
-- `AppVersion::HostCrateFallback(v)` → `Savvagent host crate version: <v>`
+- `AppVersion::App(v)` → `Otto version: <v>`
+- `AppVersion::HostCrateFallback(v)` → `Otto host crate version: <v>`
 
 The "host crate" wording is deliberate — when a library embedder calls
 `HostConfig::new` without `.with_app_version(...)`, the version they
-see is the `savvagent-host` crate version, which can lag the binary
+see is the `otto-host` crate version, which can lag the binary
 the user actually runs. Making the label explicit avoids the
-misleading "Savvagent version: X" when X is really the host-crate
+misleading "Otto version: X" when X is really the host-crate
 version. The TUI binary always wires `.with_app_version(env!("…"))`
 so end users see the right number.
 
@@ -414,13 +414,13 @@ so end users see the right number.
 ```
 
 These conventions mirror what we want the agent to do anyway; making
-them part of the default prompt lets `SAVVAGENT.md` authors *override*
-them per project (the SAVVAGENT.md body is the last layer, so its
+them part of the default prompt lets `OTTO.md` authors *override*
+them per project (the OTTO.md body is the last layer, so its
 guidance wins).
 
 ## 6. Composition / layering semantics
 
-The three layers (default, override, SAVVAGENT.md body) compose with
+The three layers (default, override, OTTO.md body) compose with
 these rules:
 
 1. Each layer is independent. Any layer can be absent; the others are
@@ -432,8 +432,8 @@ these rules:
    Some("   \n\t  "), None) == None`. **Non-empty layers are rendered
    verbatim** — leading/trailing whitespace is preserved so intentional
    markdown structure (code fences, indented lists) in
-   `SAVVAGENT.md` survives.
-3. Order in the final string is fixed: default → override → SAVVAGENT.md.
+   `OTTO.md` survives.
+3. Order in the final string is fixed: default → override → OTTO.md.
    The last layer wins for ambiguous guidance because LLMs weight
    later instructions more heavily.
 4. Sections are separated by `\n\n` and each begins with a Markdown H1.
@@ -453,7 +453,7 @@ is an embedder API; the TUI always uses the default. Reasons:
 
 - The reported bug bites TUI users specifically. Surfacing the opt-out
   in the TUI makes it discoverable for the wrong audience.
-- `SAVVAGENT.md` already lets per-project text override the default's
+- `OTTO.md` already lets per-project text override the default's
   guidance, which covers the "I want to customize" case for end users.
 - Embedders calling `HostConfig::new` programmatically are the ones
   who need the opt-out; they already work in Rust code.
@@ -487,7 +487,7 @@ both of which are `String`.
   `with_default_prompt_disabled`.
 - **README:** add a "Default behavior" subsection under "Configuration"
   explaining what's in the prompt and how to extend it via
-  `SAVVAGENT.md`.
+  `OTTO.md`.
 - **PRD:** no change — this implements existing v0.1 vision goals
   (a useful default OOB experience).
 
@@ -511,9 +511,9 @@ both of which are `String`.
 - `build_environment_line_includes_os_arch_root` — verify each
   `PromptEnv` field surfaces in output.
 - `build_version_line_uses_app_label_for_app_variant` — assert output
-  contains `"Savvagent version: 1.2.3"`.
+  contains `"Otto version: 1.2.3"`.
 - `build_version_line_uses_host_crate_label_for_fallback_variant` —
-  assert output contains `"Savvagent host crate version: …"`.
+  assert output contains `"Otto host crate version: …"`.
 - `probe_marks_git_present_when_dot_git_exists` — `tempdir` with `.git`
   subdir.
 - `probe_marks_git_absent_when_dot_git_missing` — bare `tempdir`.
@@ -541,12 +541,12 @@ Replace / extend the existing `project::system_prompt` tests:
 - `host_start_default_prompt_enabled_attaches_system_message` — start a
   host with `default_prompt_enabled = true`, run one turn against a
   mock provider, assert the captured `CompleteRequest.system` contains
-  `"Savvagent"`.
+  `"Otto"`.
 - `host_start_default_prompt_disabled_omits_default` — same but with
   `with_default_prompt_disabled()`. Assert `system` is `None` when
-  no override and no `SAVVAGENT.md`.
-- `host_start_default_plus_savvagent_md_composes_in_order` — write a
-  `SAVVAGENT.md` body, assert default heading appears before the
+  no override and no `OTTO.md`.
+- `host_start_default_plus_otto_md_composes_in_order` — write a
+  `OTTO.md` body, assert default heading appears before the
   project-context heading.
 
 ### 10.4 Locale guard
@@ -570,7 +570,7 @@ helpers — out of scope.)
   `with_strict_system_prompt`) for embedders that want a truly
   empty default. Documented workaround for now: leave `system_prompt`
   unset, call `with_default_prompt_disabled`, and point `project_root`
-  at a directory with no `SAVVAGENT.md`. Promote to a real flag if
+  at a directory with no `OTTO.md`. Promote to a real flag if
   embedder demand emerges.
 - Translating the default prompt into non-English locales (couples
   with the `/locale` work tracked elsewhere; the current prompt is
@@ -585,7 +585,7 @@ helpers — out of scope.)
   supported by design (PRD §1; `HostConfig::tools` accepts arbitrary
   `ToolEndpoint::Stdio`). Therefore tool-server-provided text is
   treated as untrusted by this spec — see §5.3.
-- **Should embedders have a formal way to suppress SAVVAGENT project
+- **Should embedders have a formal way to suppress OTTO project
   context as well?** Not in this spec — see the follow-up entry above
   for the documented workaround and the trigger for promotion.
 
@@ -593,21 +593,21 @@ helpers — out of scope.)
 
 New:
 
-- `crates/savvagent-host/src/default_prompt.rs`
+- `crates/otto-host/src/default_prompt.rs`
 
 Modified:
 
-- `crates/savvagent-host/src/lib.rs` (module declaration + re-export)
-- `crates/savvagent-host/src/config.rs` (new `default_prompt_enabled`
+- `crates/otto-host/src/lib.rs` (module declaration + re-export)
+- `crates/otto-host/src/config.rs` (new `default_prompt_enabled`
   and `app_version` fields + `with_default_prompt_disabled` and
   `with_app_version` methods)
-- `crates/savvagent-host/src/project.rs` (replace `system_prompt`
+- `crates/otto-host/src/project.rs` (replace `system_prompt`
   with `layered_prompt`; update tests)
-- `crates/savvagent-host/src/session.rs` (rewire `Host::start` and
+- `crates/otto-host/src/session.rs` (rewire `Host::start` and
   `Host::with_components`; add integration tests)
-- `crates/savvagent-host/src/tools.rs` (add `ToolRegistry::bash_available`
+- `crates/otto-host/src/tools.rs` (add `ToolRegistry::bash_available`
   accessor returning `self.lazy_bash.is_some()`)
-- `crates/savvagent/src/main.rs` (or wherever the TUI builds its
+- `crates/otto/src/main.rs` (or wherever the TUI builds its
   `HostConfig`) — add `.with_app_version(env!("CARGO_PKG_VERSION"))`
 - `Cargo.toml` (workspace version bump to 0.14.0)
 - `CHANGELOG.md` (new "0.14.0" entry)

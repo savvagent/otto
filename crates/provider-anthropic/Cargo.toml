@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Anthropic Messages API as a Savvagent SPP provider"
+description = "Anthropic Messages API as a Otto SPP provider"
 
-# Library only. The `savvagent-anthropic` binary lives in the `savvagent`
+# Library only. The `otto-anthropic` binary lives in the `otto`
 # crate (a thin shim around `provider_anthropic::run`) so the release archive
 # can ship all four binaries under a single installer.
 [lib]
@@ -15,9 +15,9 @@ name = "provider_anthropic"
 path = "src/lib.rs"
 
 [dependencies]
-savvagent-protocol.workspace = true
-savvagent-mcp.workspace = true
-savvagent-fence.workspace = true
+otto-protocol.workspace = true
+otto-mcp.workspace = true
+otto-fence.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 axum.workspace = true

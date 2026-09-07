@@ -22,7 +22,7 @@ Sub-projects A/B/C ship together as `v0.17.0` immediately before this work
 begins; sub-project D ships as `v0.18.0`.
 
 A established the four-path discovery convention
-(`<project>/.savvagent/`, `<project>/.claude/`, `~/.savvagent/`,
+(`<project>/.otto/`, `<project>/.claude/`, `~/.otto/`,
 `~/.claude/`) and the trust-file pattern. B added the hook stdin contract
 and the `PreToolUseGate`. C lit up `SubagentStop` and extended hook
 payloads with an optional `subagent` field. v0.9.0 designed the
@@ -35,8 +35,8 @@ Sub-project D is that day.
 
 The v0.9.0 plugin system has 17 built-in plugins and zero third-party
 extension story. Adding a fourth provider, a custom theme pack, or a
-project-specific footer badge means forking savvagent. The whole point of
-designing `savvagent-plugin`'s trait surface under WIT-portability rules
+project-specific footer badge means forking otto. The whole point of
+designing `otto-plugin`'s trait surface under WIT-portability rules
 (closed `Effect` enum, owned types, no callbacks, no `serde_json::Value`
 in sigs) was to make external loading mechanical — but v0.9.0 explicitly
 shipped no `.wit` file and no loader.
@@ -58,10 +58,10 @@ Sub-project D closes that gap by adding a WASM plugin runtime that:
 
 Two new crates plus one new built-in plugin:
 
-- **`savvagent-plugin-wit`** — leaf crate holding `.wit` files and
+- **`otto-plugin-wit`** — leaf crate holding `.wit` files and
   `wit-bindgen`-generated host bindings. Zero dependencies beyond
   `wit-bindgen`.
-- **`savvagent-plugin-wasm`** — wasmtime-backed runtime: manifest
+- **`otto-plugin-wasm`** — wasmtime-backed runtime: manifest
   parser, four-path discovery, trust-file management, three adapters
   (one per WIT world) that produce `Box<dyn Plugin>` instances.
 - **`internal:plugins`** — new built-in plugin owning the `/plugins`
@@ -90,11 +90,11 @@ wasm plugins as ordinary plugins.
 ### Discovery paths
 
 Mirror sub-projects A/B/C. First-wins by plugin id, project beats user,
-savvagent beats claude:
+otto beats claude:
 
-1. `<project>/.savvagent/plugins/<id>/plugin.toml`
+1. `<project>/.otto/plugins/<id>/plugin.toml`
 2. `<project>/.claude/plugins/<id>/plugin.toml`
-3. `~/.savvagent/plugins/<id>/plugin.toml`
+3. `~/.otto/plugins/<id>/plugin.toml`
 4. `~/.claude/plugins/<id>/plugin.toml`
 
 Each plugin lives in its own directory named after `<id>`. The directory
@@ -115,7 +115,7 @@ description = "..."
 homepage = "https://..."
 license = "MIT OR Apache-2.0"
 authors = ["..."]
-savvagent = "^0.18"             # required: WIT contract version range
+otto = "^0.18"             # required: WIT contract version range
 wasm = "https://github.com/acme/zenburn/releases/download/v0.2.0/plugin.wasm"
                                 # required only when fetched via /plugins install <toml-url>;
                                 # ignored on already-installed plugins
@@ -153,7 +153,7 @@ The argument is a URL pointing at a **plugin.toml** file. Steps:
    `plugin.wasm`, any `assets/` files). Order: filenames sorted UTF-8.
 5. Open trust-prompt modal showing manifest fields, source URL, and hash.
 6. On confirm: write trust record, atomic-move staging into
-   `~/.savvagent/plugins/<id>/`, emit `Effect::PushNote("plugin <id> installed")`.
+   `~/.otto/plugins/<id>/`, emit `Effect::PushNote("plugin <id> installed")`.
 7. On reject: delete staging directory.
 
 Plugins with `assets/` distribution: the manifest references a directory
@@ -163,7 +163,7 @@ ships single-file-only; multi-file distribution is post-v0.18.0.
 
 ### Trust file
 
-`~/.savvagent/plugin-trust.toml` — separate from sub-project A's
+`~/.otto/plugin-trust.toml` — separate from sub-project A's
 slash-command trust file (plugins are executable; semantics differ).
 User scope only.
 
@@ -204,15 +204,15 @@ WASM plugin — must work even when no wasm plugin is trusted.
 
 ```
 crates/
-├── savvagent-plugin-wit/         ← .wit files + wit-bindgen host bindings
+├── otto-plugin-wit/         ← .wit files + wit-bindgen host bindings
 │   ├── Cargo.toml                ← deps: wit-bindgen only
 │   └── wit/
 │       ├── shared.wit            ← Effect, HookKind, KeyEvent, Region, ThemeColor, PluginError
-│       ├── spp.wit               ← SPP types mirrored from savvagent-protocol
+│       ├── spp.wit               ← SPP types mirrored from otto-protocol
 │       ├── plugin-static.wit     ← world plugin-static
 │       ├── plugin-interactive.wit ← world plugin-interactive
 │       └── plugin-provider.wit   ← world plugin-provider
-└── savvagent-plugin-wasm/        ← runtime + adapters
+└── otto-plugin-wasm/        ← runtime + adapters
     ├── Cargo.toml                ← deps: wasmtime ~24.0, reqwest, keyring, sha2, toml, walkdir
     └── src/
         ├── lib.rs
@@ -239,7 +239,7 @@ crates/
 ### `register_all()` change in the TUI
 
 ```rust
-// crates/savvagent/src/plugin/registry.rs
+// crates/otto/src/plugin/registry.rs
 pub fn register_all(cfg: &PluginConfig) -> Result<PluginRegistry, RegistryError> {
     let mut reg = PluginRegistry::new();
     register_builtins(&mut reg);                 // unchanged from v0.9.0
@@ -286,12 +286,12 @@ import an unavailable host function fail at instantiation.
 
 ### `shared.wit`
 
-Mechanically translated from `savvagent-plugin` v0.9.0 §9. All types are
+Mechanically translated from `otto-plugin` v0.9.0 §9. All types are
 owned, all errors are concrete enums, no callbacks, no
 `serde_json::Value`, explicit-width numerics. Sample:
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 interface types {
     record key-event-portable { code: key-code, modifiers: key-modifiers }
@@ -335,7 +335,7 @@ interface types {
 ### `plugin-static.wit`
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-static {
     use types.{effect, plugin-error, hook-kind, theme-color, region,
@@ -363,7 +363,7 @@ hook field.
 ### `plugin-interactive.wit`
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-interactive {
     use types.{key-event-portable, region, effect, theme-color,
@@ -408,7 +408,7 @@ the host import implementations write into the buffer.
 ### `plugin-provider.wit`
 
 ```wit
-package savvagent:plugin@0.1.0;
+package otto:plugin@0.1.0;
 
 world plugin-provider {
     use types.{plugin-error, plugin-manifest, log-level};
@@ -460,7 +460,7 @@ interface http-capability {
 
 interface keyring-capability {
     variant keyring-error { not-found, denied(string), backend(string) }
-    // service is always "savvagent" — fixed; only account is parameter.
+    // service is always "otto" — fixed; only account is parameter.
     // account must be in manifest's keyring-accounts list.
     get: func(account: string) -> result<string, keyring-error>;
 }
@@ -481,19 +481,19 @@ providers untouched.
 
 ### SPP-in-WIT mechanical translation
 
-`spp.wit` mirrors `savvagent-protocol/src/lib.rs` field-for-field
+`spp.wit` mirrors `otto-protocol/src/lib.rs` field-for-field
 (estimated ~250 lines). Every SPP type has `From<Rust> for Wit` and
-`From<Wit> for Rust` impls in `savvagent-plugin-wasm/src/spp_convert.rs`.
+`From<Wit> for Rust` impls in `otto-plugin-wasm/src/spp_convert.rs`.
 
 **Round-trip pin:** every fixture under
-`savvagent-protocol/tests/fixtures/` round-trips through WIT and back,
+`otto-protocol/tests/fixtures/` round-trips through WIT and back,
 byte-equal. One unit test per variant. Property tests on
 `CompleteRequest` and `StreamEvent` (the high-fanout types).
 
 ### `WasmProviderClient` shim
 
 ```rust
-// crates/savvagent-plugin-wasm/src/adapter/provider.rs
+// crates/otto-plugin-wasm/src/adapter/provider.rs
 pub struct WasmProviderClient {
     engine: Engine,
     manifest: Arc<PluginManifest>,
@@ -534,7 +534,7 @@ via the `WasmProviderClient`'s internal queue.
 
 ### Registration into `PROVIDERS`
 
-`crates/savvagent/src/providers.rs::PROVIDERS` is a static slice today.
+`crates/otto/src/providers.rs::PROVIDERS` is a static slice today.
 Wasm providers don't live there. The plugin runtime scans, instantiates
 each `plugin-provider`-world plugin's `init` function to read the
 `ProviderManifest`, and exposes a runtime-extended `effective_providers()`
@@ -572,7 +572,7 @@ fn keyring_get(state: &mut ProviderHostState, account: String)
     if !state.manifest.keyring_accounts.contains(&account) {
         return Err(KeyringError::Denied(account));
     }
-    keyring::Entry::new("savvagent", &account)
+    keyring::Entry::new("otto", &account)
         .map_err(|e| KeyringError::Backend(e.to_string()))?
         .get_password()
         .map_err(|e| match e {
@@ -582,7 +582,7 @@ fn keyring_get(state: &mut ProviderHostState, account: String)
 }
 ```
 
-Service name is hard-coded `"savvagent"`; account must be in
+Service name is hard-coded `"otto"`; account must be in
 manifest's `keyring-accounts`. Mitigates a malicious provider reading
 arbitrary OS keyring entries.
 
@@ -685,7 +685,7 @@ view call, but the unsafe-adjacent shape warrants explicit documentation.
   (JSON layer is backward-compatible). Old plugins ignore unknown keys.
 
 - **Sub-project C (agents).** `RegisterInProcessTool` stays
-  savvagent-internal — wasm plugins cannot register subagents. Stated as
+  otto-internal — wasm plugins cannot register subagents. Stated as
   explicit non-goal. Wasm plugins *can* react to `SubagentStop` hooks
   emitted by agent runs.
 
@@ -710,12 +710,12 @@ load. User re-enables via `/plugins enable <id>`.
 Every record/variant in `shared.wit` and `spp.wit` gets `From<Rust> for
 Wit` and `From<Wit> for Rust` impls with one unit test per direction per
 variant. Property tests on `CompleteRequest` and `StreamEvent`. The full
-SPP fixture set from `savvagent-protocol/tests/fixtures/` round-trips
+SPP fixture set from `otto-protocol/tests/fixtures/` round-trips
 byte-equal.
 
 **Layer 2 · Adapter integration tests (wasmtime + committed fixtures).**
 Hand-crafted wasm fixtures committed to
-`crates/savvagent-plugin-wasm/tests/fixtures/<world>/` (~50 KB each,
+`crates/otto-plugin-wasm/tests/fixtures/<world>/` (~50 KB each,
 ≈ 400 KB total binary growth accepted). Reproducible build via
 `Justfile`-driven `cargo component build`, but the `.wasm` artifacts
 are committed so main CI doesn't require `cargo-component`.
@@ -739,15 +739,15 @@ One real example plugin per world under
 `examples/plugin-hello-{static,interactive,provider}/`. Built via
 `cargo component build` in a **separate CI job** that doesn't gate main
 merge (cargo-component has historically had rough edges). Smoke test
-spawns savvagent with `SAVVAGENT_HOME=$tmp`, drops example into discovery
-path, hits via `cargo run -p savvagent-host --example headless`.
+spawns otto with `OTTO_HOME=$tmp`, drops example into discovery
+path, hits via `cargo run -p otto-host --example headless`.
 
 ### Error matrix
 
 | Layer | Failure | User sees |
 |---|---|---|
 | Discovery | Invalid manifest | `[plugins] skipped: <path>: <reason>` log |
-| Discovery | Manifest `savvagent` range mismatch | Same, with version reason |
+| Discovery | Manifest `otto` range mismatch | Same, with version reason |
 | Trust | Tree-hash mismatch | Trust auto-revoked; warning in `/plugins list`; re-prompt next start |
 | Trust | Untrusted on first load | Appears `untrusted` in `/plugins list`; user must `/plugins trust <id>` |
 | Instantiation | Missing/wrong WIT exports | `[plugins] skipped: <id>: missing export <name>` |
@@ -771,9 +771,9 @@ Reviewability comes from commit ordering. Each commit is
 `cargo check && cargo test` green on its own:
 
 ```
- 1. Add savvagent-plugin-wit crate scaffold + shared.wit + spp.wit + CI dep-guard
+ 1. Add otto-plugin-wit crate scaffold + shared.wit + spp.wit + CI dep-guard
  2. Add WIT bindings + SPP <-> WIT From/Into + round-trip tests
- 3. Add savvagent-plugin-wasm crate scaffold (wasmtime ~24.0, empty modules)
+ 3. Add otto-plugin-wasm crate scaffold (wasmtime ~24.0, empty modules)
  4. Manifest + four-path discovery + plugin-trust.toml + tree-hash + unit tests
  5. Static-world adapter + log/current-theme imports + static fixture + tests
  6. Interactive-world adapter + draw imports + interactive fixture + tests
@@ -826,7 +826,7 @@ Reviewability comes from commit ordering. Each commit is
 - **GUI installer.** `/plugins install` is the only path.
 - **Multi-file plugin distribution.** Single-file `plugin.toml` + single
   `wasm` URL in v1; `assets/` and directory-URL distribution post-v0.18.0.
-- **`SAVVAGENT.md` exposure to plugins.** Host-private; plugins receive
+- **`OTTO.md` exposure to plugins.** Host-private; plugins receive
   only `TurnCtx`/`ScreenOpenCtx`/`HookPayload`.
 
 ### Reserved-but-not-implemented
@@ -839,9 +839,9 @@ These appear in the WIT surface or manifest schema but never fire:
 
 ### Versioning
 
-- WIT package version: `savvagent:plugin@0.1.0` — bumped on any
+- WIT package version: `otto:plugin@0.1.0` — bumped on any
   backward-incompatible WIT change. v0.18.0 ships `0.1.0`.
-- Plugin manifest `savvagent = "^0.18"` — covers the v0.18.x line.
+- Plugin manifest `otto = "^0.18"` — covers the v0.18.x line.
 - wasmtime version pinned to `24.0` (minor). Security-advisory bumps
   reviewed manually.
 - Workspace version bumps to `0.18.0` in commit 15.
@@ -866,11 +866,11 @@ These appear in the WIT surface or manifest schema but never fire:
 
 | Crate / file | Change |
 |---|---|
-| `crates/savvagent-plugin-wit/` | New: WIT files + bindgen output |
-| `crates/savvagent-plugin-wasm/` | New: runtime + adapters + host imports |
-| `crates/savvagent/src/plugin/registry.rs` | `register_all` now calls `register_external` |
-| `crates/savvagent/src/plugin/builtin/plugins.rs` | New: `internal:plugins` built-in |
-| `crates/savvagent/src/main.rs` | Wires plugin-config from env / CLI |
+| `crates/otto-plugin-wit/` | New: WIT files + bindgen output |
+| `crates/otto-plugin-wasm/` | New: runtime + adapters + host imports |
+| `crates/otto/src/plugin/registry.rs` | `register_all` now calls `register_external` |
+| `crates/otto/src/plugin/builtin/plugins.rs` | New: `internal:plugins` built-in |
+| `crates/otto/src/main.rs` | Wires plugin-config from env / CLI |
 | `Cargo.toml` (workspace) | Adds two new crates; pins `wasmtime = "24.0"` |
 | `README.md` | New "Authoring plugins" section |
 | `CHANGELOG.md` | v0.18.0 entry |

@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use savvagent_protocol::{self as spp};
+use otto_protocol::{self as spp};
 
 use crate::api;
 

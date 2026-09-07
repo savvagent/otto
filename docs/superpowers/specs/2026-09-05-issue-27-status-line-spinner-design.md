@@ -2,23 +2,23 @@
 
 Date: 2026-09-05
 Status: pending review
-Related: `savvagent/savvagent-cli#27`
+Related: `savvagent/otto#27`
 
 ## Problem
 
 The TUI footer currently renders the turn-state segment as static text from
-`crates/savvagent/src/plugin/builtin/home_footer/mod.rs:100-115`: it shows the
+`crates/otto/src/plugin/builtin/home_footer/mod.rs:100-115`: it shows the
 localized `footer.idle` string while no turn is active and swaps to the
 localized `footer.turn-working` string while a turn is active. That status is
 then flattened into the footer's single ratatui line by
-`crates/savvagent/src/ui.rs:301-321`.
+`crates/otto/src/ui.rs:301-321`.
 
 Issue #27 asks for the working state in that status line to become an animated,
 circular spinner sourced from `tui-spinner`, while preserving existing idle
 behavior.
 
-This is not a fast-path change under `savvagent-development`: it adds a new
-crate dependency edge (`crates/savvagent` → `tui-spinner`), changes runtime TUI
+This is not a fast-path change under `otto-development`: it adds a new
+crate dependency edge (`crates/otto` → `tui-spinner`), changes runtime TUI
 behavior on an exercised code path, and touches more than two logical files.
 
 ## Approach
@@ -33,19 +33,19 @@ Implement the change at the TUI render layer, not in the plugin ABI:
 1. Keep `internal:home-footer` as the source of footer text semantics. Its
    center slot should continue to emit the existing idle/working text, so the
    GUI frontend and plugin-slot model stay stable.
-2. Teach the ratatui footer renderer in `crates/savvagent/src/ui.rs` to replace
+2. Teach the ratatui footer renderer in `crates/otto/src/ui.rs` to replace
    the working-state text presentation with a spinner-backed variant only while
    a model turn is active. The busy gate should come from the TUI loop
-   (`current_turn_id.is_some()` in `crates/savvagent/src/main.rs`), matching
+   (`current_turn_id.is_some()` in `crates/otto/src/main.rs`), matching
    the `TurnStart`/`TurnEnd` semantics that `internal:home-footer` already uses
    for its text. This preserves the existing slot architecture (`StyledLine`
    plugin output → ratatui conversion), keeps `/bash`-only activity on the idle
    footer path, and avoids pushing ratatui widget types into
-   `savvagent-plugin`.
+   `otto-plugin`.
 3. Drive the spinner with a monotonic render tick passed from
-   `crates/savvagent/src/main.rs`. The TUI already redraws once per loop before
+   `crates/otto/src/main.rs`. The TUI already redraws once per loop before
    `event::poll(Duration::from_millis(50))`
-   (`crates/savvagent/src/main.rs:2882-2884`, `3064-3066`), so the spinner can
+   (`crates/otto/src/main.rs:2882-2884`, `3064-3066`), so the spinner can
    animate without introducing blocking work, new async state, or lock changes.
 4. Use a radius-1 `tui_spinner::CircleSpinner`, which renders as a one-row,
    two-column braille ring that fits the existing single-line footer. Style the
@@ -57,14 +57,14 @@ Implement the change at the TUI render layer, not in the plugin ABI:
 ## Scope
 
 **In:**
-- TUI footer/status-line rendering in `crates/savvagent/src/ui.rs`
-- TUI draw-loop tick plumbing in `crates/savvagent/src/main.rs`
+- TUI footer/status-line rendering in `crates/otto/src/ui.rs`
+- TUI draw-loop tick plumbing in `crates/otto/src/main.rs`
 - Workspace and crate manifest updates needed to add `tui-spinner`
 - Tests covering the busy/idle footer rendering behavior
 - Changelog/spec/plan/PR/release records for the shipped visual fix
 
 **Out:**
-- Any change to the host turn loop in `savvagent-host`
+- Any change to the host turn loop in `otto-host`
 - Any change to the provider transport split or host-swap locking rules
 - Any change to plugin ABI, slash-command surface, tool schemas, env vars, or
   on-disk transcript/keyring formats
@@ -82,7 +82,7 @@ None. This is a visual TUI behavior change only.
 - **Plugin ABI:** unchanged
 - **Slash commands / env vars / on-disk formats:** unchanged
 
-The new dependency is internal to the `savvagent` crate and does not create a
+The new dependency is internal to the `otto` crate and does not create a
 new user-facing or agent-facing interface.
 
 ## Premise corrections
@@ -123,7 +123,7 @@ Replace the TUI footer's busy-state text-only presentation with a themed,
 animated circular spinner from `tui-spinner`, while leaving the idle footer
 unchanged and preserving existing architecture boundaries.
 
-- [ ] `crates/savvagent` depends on `tui-spinner`, with ratatui-version
+- [ ] `crates/otto` depends on `tui-spinner`, with ratatui-version
       compatibility documented by the spec/plan.
 - [ ] While a model turn is active, the ratatui footer renders a circular
       spinner in the center status segment using the current theme's accent and
@@ -159,7 +159,7 @@ unchanged and preserving existing architecture boundaries.
   spinner/text composition.
 - Runtime verification matters more than usual for this change because the core
   value is visible animation rather than pure data transformation; Phase 5
-  should include a manual `cargo run -p savvagent` check if the environment can
+  should include a manual `cargo run -p otto` check if the environment can
   launch the TUI.
 - Because the footer data model is shared with egui, the implementation must
   keep the spinner injection TUI-local; otherwise it would leak ratatui-specific

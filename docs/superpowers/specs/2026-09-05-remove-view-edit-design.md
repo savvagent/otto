@@ -2,12 +2,12 @@
 
 Date: 2026-09-05
 Status: IMPLEMENTED
-Related: `savvagent/savvagent-cli#22`
+Related: `savvagent/otto#22`
 
 ## Problem
 
 `/view` and `/edit` open a syntax-highlighted popup file viewer/editor (TUI: `ratatui-code-editor`
-via `App::editor`; GUI: `egui_code_editor` via `SavvagentApp::editor_buffer`) that duplicates a
+via `App::editor`; GUI: `egui_code_editor` via `OttoApp::editor_buffer`) that duplicates a
 narrowly-scoped, non-core surface inconsistent with the project's "blazing-fast, narrowly focused
 TUI" goal (`PRD.md`). It also drags a non-trivial amount of code and a whole dependency
 (`ratatui-code-editor`) into the default TUI binary for a feature that isn't this project's job —
@@ -25,15 +25,15 @@ repository — this section is authoritative over the issue text where they disa
 
 1. **`App::open_file_picker`/`is_file_picker_active`/`file_picker_select`/`close_file_picker` are
    NOT used only by `/view`/`/edit`.** They back the `@` inline file-reference picker (typing `@` in
-   the prompt, `crates/savvagent/src/main.rs:3503`), a separate, unrelated feature (confirmed: no
+   the prompt, `crates/otto/src/main.rs:3503`), a separate, unrelated feature (confirmed: no
    caller of `App::open_file_picker` exists anywhere except that `@` key handler). **These stay.**
-   The GUI's `Ctrl+O` file picker (`crates/savvagent/src/egui_app/widgets/file_picker.rs`) is the
+   The GUI's `Ctrl+O` file picker (`crates/otto/src/egui_app/widgets/file_picker.rs`) is the
    same `@`-reference feature for the GUI frontend and also stays.
 2. **`App::open_file`/`App::input_mode = InputMode::ViewingFile/EditingFile` is already 100% dead
    code.** Grep confirms zero callers of `App::open_file` anywhere in the workspace outside its own
    definition; nothing ever sets `input_mode` to `ViewingFile`/`EditingFile` except `open_file`
    itself. The actually-reachable `/view`/`/edit` implementation is a **different, newer path**: two
-   built-in Screen plugins (`crates/savvagent/src/plugin/builtin/view_file/`,
+   built-in Screen plugins (`crates/otto/src/plugin/builtin/view_file/`,
    `.../edit_file/`) that push marker screens with id `"view-file"`/`"edit-file"` onto
    `App::screen_stack`; `App::load_file_into_editor`/`App::clear_active_editor` (not
    `open_file`/nothing) populate/clear `App::editor` for that path, and dedicated code in
@@ -43,7 +43,7 @@ repository — this section is authoritative over the issue text where they disa
    dead code the AC explicitly calls out, the live one because it's the actual `/view`/`/edit`
    feature.
 3. **The GUI (egui) frontend has its own, separate implementation of the same feature** —
-   `crates/savvagent/src/egui_app/widgets/editor.rs` (an `egui_code_editor`-backed buffer),
+   `crates/otto/src/egui_app/widgets/editor.rs` (an `egui_code_editor`-backed buffer),
    `editor_theme.rs`, wiring in `egui_app/mod.rs` (`editor_buffer` field, `save_editor_buffer`,
    `ensure_buffer_for_active_screen`) and `egui_app/view.rs` (renders when the top screen id is
    `"view-file"`/`"edit-file"`). The issue text doesn't mention the GUI frontend (it predates the
@@ -51,7 +51,7 @@ repository — this section is authoritative over the issue text where they disa
    clean) this must be removed too — it becomes unreachable dead code the moment the two screen
    plugins that create `"view-file"`/`"edit-file"` screens are removed, in both frontends.
 4. **`/editor-keybindings` becomes meaningless dead functionality once `/view`/`/edit` are removed.**
-   `crates/savvagent/src/plugin/builtin/editor_keybindings/` exists solely to document keybindings
+   `crates/otto/src/plugin/builtin/editor_keybindings/` exists solely to document keybindings
    "active inside the `view-file`/`edit-file` screens" (its own module doc). The issue doesn't name
    it explicitly, but leaving a slash command whose entire content describes a now-nonexistent
    screen violates the "no dead code" AC and would be confusing/misleading to users. **In scope for
@@ -63,30 +63,30 @@ repository — this section is authoritative over the issue text where they disa
 Remove, in dependency order (innermost/leaf code first so intermediate `cargo build` runs stay
 informative rather than cascading):
 
-1. **`savvagent-plugin` (plugin ABI):** remove `ScreenArgs::ViewFile { path }` and
+1. **`otto-plugin` (plugin ABI):** remove `ScreenArgs::ViewFile { path }` and
    `ScreenArgs::EditFile { path }` variants and their `screen_id()` arms
-   (`crates/savvagent-plugin/src/types.rs`), and the `Effect::SaveActiveFile` variant (its `Debug`
-   arm and any tests) in `crates/savvagent-plugin/src/effect.rs` — `SaveActiveFile` exists solely to
+   (`crates/otto-plugin/src/types.rs`), and the `Effect::SaveActiveFile` variant (its `Debug`
+   arm and any tests) in `crates/otto-plugin/src/effect.rs` — `SaveActiveFile` exists solely to
    let the `edit-file` screen request a save-on-Ctrl-S and has no purpose once that screen is gone.
    Remove the associated tests for all three. This is the breaking plugin-ABI change here — see
    "Public-interface changes" below.
-2. **`savvagent-plugin-wasm`:** remove the two `ScreenArgs::ViewFile`/`EditFile` match arms in the
-   host→WASM JSON projection (`crates/savvagent-plugin-wasm/src/adapter/interactive.rs`, used when
+2. **`otto-plugin-wasm`:** remove the two `ScreenArgs::ViewFile`/`EditFile` match arms in the
+   host→WASM JSON projection (`crates/otto-plugin-wasm/src/adapter/interactive.rs`, used when
    the host hands a `ScreenArgs` to a WASM-implemented screen at creation time — **not** a
    guest-to-host request path; see the corrected "Public-interface changes" note below) and their
    test fixtures.
-3. **Built-in plugins:** delete `crates/savvagent/src/plugin/builtin/view_file/`,
+3. **Built-in plugins:** delete `crates/otto/src/plugin/builtin/view_file/`,
    `.../edit_file/`, and `.../editor_keybindings/` wholesale (each is a self-contained
    `mod.rs`/`screen.rs` pair; `editor_keybindings` is `mod.rs` only). Remove their `pub mod`
-   declarations in `crates/savvagent/src/plugin/builtin/mod.rs`, and — this is the file that
+   declarations in `crates/otto/src/plugin/builtin/mod.rs`, and — this is the file that
    actually constructs and registers them, not `builtin/mod.rs` — remove the
    `Box::new(builtin::edit_file::EditFilePlugin::new())`,
    `Box::new(builtin::editor_keybindings::EditorKeybindingsPlugin::new())`, and
    `Box::new(builtin::view_file::ViewFilePlugin::new())` entries from the plugin vec built in
-   `crates/savvagent/src/plugin/mod.rs::register_builtins`, and update that function's tests (at
+   `crates/otto/src/plugin/mod.rs::register_builtins`, and update that function's tests (at
    least `register_builtins_pr8_complete` and any other test asserting the exact builtin-plugin
    count or ID list) to drop the three removed IDs and decrement the expected count.
-4. **`App` (TUI) state, `crates/savvagent/src/app.rs`:**
+4. **`App` (TUI) state, `crates/otto/src/app.rs`:**
    - Remove the `/view`/`/edit` `Command` entries in `refresh_commands`.
    - Remove `InputMode::ViewingFile`/`InputMode::EditingFile` variants and their `#[allow(dead_code)]`
      doc comments, and their match arm in the `Debug`-ish mode-name helper (~line 2812).
@@ -96,7 +96,7 @@ informative rather than cascading):
      file-editor code paths being removed), `editor_theme_for_active`, `borrow_editor_theme`,
      `language_for_path`, and the `use ratatui_code_editor::editor::Editor;` import.
    - Update the one test asserting `CommandSelection::Prefill("/view".into())`
-     (`crates/savvagent/src/app.rs:2666`) to exercise a command that still exists (e.g. `/edit` was
+     (`crates/otto/src/app.rs:2666`) to exercise a command that still exists (e.g. `/edit` was
      the pairing target before — pick `/save` or another argless/needs-arg command already in the
      list; a needs-arg command like `/bash` preserves the same "prefill" code path coverage).
    - `App::open_file_picker`/`is_file_picker_active`/`file_picker_select`/`close_file_picker` and
@@ -112,7 +112,7 @@ informative rather than cascading):
 6. **`ui.rs` rendering:** remove `paint_file_screen` and its call site (the `is_file_screen`
    branch in the screen-stack paint block), and the `InputMode::ViewingFile | InputMode::EditingFile`
    render block (popup + cursor-position blocks, ~lines 1167–1235 per the current file).
-7. **GUI (egui) frontend:** delete `crates/savvagent/src/egui_app/widgets/editor.rs` and
+7. **GUI (egui) frontend:** delete `crates/otto/src/egui_app/widgets/editor.rs` and
    `editor_theme.rs` (verify `editor_theme.rs` has no other caller — the TUI's own
    `editor_theme_for_active`/`build_editor_theme` helper in `plugin/builtin/themes/editor_theme.rs`
    is a **different, similarly-named file**; do not confuse the two), remove the `pub mod editor;`
@@ -121,12 +121,12 @@ informative rather than cascading):
    the `id == "edit-file"` Ctrl-S special-case in `egui_app/mod.rs`, and the
    `id == "view-file" || id == "edit-file"` render branch in `egui_app/view.rs`.
 8. **`Cargo.toml` dependency:** remove `ratatui-code-editor.workspace = true` from
-   `crates/savvagent/Cargo.toml` and the corresponding `[workspace.dependencies]` entry in the root
+   `crates/otto/Cargo.toml` and the corresponding `[workspace.dependencies]` entry in the root
    `Cargo.toml`, **only after** confirming (grep) zero remaining references anywhere in the
    workspace. Check whether `egui_code_editor` (the GUI equivalent) is also now unused and remove it
    too under the same condition.
 9. **Locales:** remove the now-orphaned translation keys from all four locale files
-   (`crates/savvagent/locales/{en,es,hi,pt}.toml`) — `slash.view-summary`/`slash.edit-summary` (or
+   (`crates/otto/locales/{en,es,hi,pt}.toml`) — `slash.view-summary`/`slash.edit-summary` (or
    however named; confirm exact keys during implementation), `notes.file-not-found`,
    `notes.file-editor-error`, `notes.file-read-error`, `notes.file-write-error`, `notes.file-saved`,
    `picker.view-file.*`, `picker.edit-file.*`, `picker.editor-keybindings.*`, and the
@@ -154,7 +154,7 @@ informative rather than cascading):
 - Removing the dead legacy `InputMode::ViewingFile`/`EditingFile` path (already unreachable before
   this change).
 - Removing `ScreenArgs::ViewFile`/`EditFile` and `Effect::SaveActiveFile` from the plugin ABI
-  (`savvagent-plugin`) and their wasm-adapter JSON bridge arms.
+  (`otto-plugin`) and their wasm-adapter JSON bridge arms.
 - Removing the `ratatui-code-editor` dependency (and `egui_code_editor` if confirmed orphaned) once
   no code references it.
 - Updating README, `PRD.md`, and locale files to match.
@@ -172,15 +172,15 @@ informative rather than cascading):
 ## Public-interface changes
 
 **Breaking.** `ScreenArgs::ViewFile { path: String }`, `ScreenArgs::EditFile { path: String }`, and
-`Effect::SaveActiveFile` are part of the plugin ABI (`savvagent-plugin`). The JSON projection in
-`savvagent-plugin-wasm`'s `interactive.rs` adapter serializes a `ScreenArgs` **from host to a
+`Effect::SaveActiveFile` are part of the plugin ABI (`otto-plugin`). The JSON projection in
+`otto-plugin-wasm`'s `interactive.rs` adapter serializes a `ScreenArgs` **from host to a
 WASM-implemented screen at screen-creation time** (`{"kind": "view-file", "path": ...}` /
 `{"kind": "edit-file", ...}`) — it is not a guest-to-host request channel; a WASM plugin cannot ask
 the runtime to open a screen by sending this JSON shape (guest-issued `OpenScreen` effects are
 converted with `ScreenArgs::None` regardless, per `convert.rs`). Removing these three ABI items is a
 breaking change under Non-Negotiable Rule 6 with two distinct real-world impacts:
 - A **native Rust plugin** that references `ScreenArgs::ViewFile`/`EditFile`/`Effect::SaveActiveFile`
-  in its own source fails to **compile** against the new `savvagent-plugin` version.
+  in its own source fails to **compile** against the new `otto-plugin` version.
 - An **external WASM plugin** that previously implemented a screen expecting to receive the
   `"view-file"`/`"edit-file"` JSON `kind` at creation time will simply never receive it again — those
   runtime screen ids no longer exist, so nothing ever asks the plugin to create a screen for them.
@@ -238,7 +238,7 @@ picker and `/prompt-keybindings` screen fully intact.
       warnings from this removal.
 - [ ] `cargo test --workspace` passes.
 - [ ] `ratatui-code-editor` no longer appears in any `Cargo.toml`/`Cargo.lock` dependency graph
-      reachable from `crates/savvagent`; `egui_code_editor` likewise if confirmed orphaned.
+      reachable from `crates/otto`; `egui_code_editor` likewise if confirmed orphaned.
 - [ ] README's slash-command table and GUI-status paragraph no longer mention `/view`, `/edit`, or
       `/editor-keybindings`.
 - [ ] `CHANGELOG.md` documents the removal under `### Removed` with the plugin-ABI breaking-change
@@ -247,7 +247,7 @@ picker and `/prompt-keybindings` screen fully intact.
 ## Error Handling & Edge Cases
 
 - A native plugin still referencing the removed `ScreenArgs::ViewFile`/`EditFile`/
-  `Effect::SaveActiveFile` items fails to compile against the new `savvagent-plugin` — the intended,
+  `Effect::SaveActiveFile` items fails to compile against the new `otto-plugin` — the intended,
   documented breaking-change behavior.
 - An external WASM plugin that implements a screen keyed on the `"view-file"`/`"edit-file"` JSON
   `kind` simply stops being invoked (the runtime never creates those screens again) — a silent

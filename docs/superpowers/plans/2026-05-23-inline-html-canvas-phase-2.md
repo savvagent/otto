@@ -14,35 +14,35 @@
 
 **Release discipline:** Per `feedback_phase_release_rollup`, Phase 2 is the **final phase** of the inline-canvas initiative. After all tasks land, the `release(0.17.0)` rollup commit goes on master and the `v0.17.0` git tag IS pushed (Phase 1's commit already bumped versions; this phase just consolidates CHANGELOG + README + spec cross-refs and pushes the tag). cargo-dist's Release workflow takes over from there.
 
-**Spec drift carryover:** Entry lives at `crates/savvagent/src/app.rs` (not in `savvagent-protocol` as the spec implies). All `Entry` references in this plan target the savvagent crate.
+**Spec drift carryover:** Entry lives at `crates/otto/src/app.rs` (not in `otto-protocol` as the spec implies). All `Entry` references in this plan target the otto crate.
 
 ---
 
 ## File structure
 
 **New files:**
-- `crates/savvagent-canvas/src/coords.rs` — pixel ↔ terminal-cell coordinate helpers.
-- `crates/savvagent-canvas/src/focus.rs` — focusable-element traversal of Blitz DOM.
-- `crates/savvagent-canvas/src/events.rs` — synthetic event dispatch wrapping Blitz's `BaseDocument::handle_*_event`.
-- `crates/savvagent-canvas/src/interceptor.rs` — default-action interceptor (links, `<details>`, forms).
-- `crates/savvagent-canvas/src/state.rs` — `CanvasState` struct + serde wire format for snapshot/restore.
-- `crates/savvagent/src/plugin/builtin/html_canvas/open_in_browser.rs` — Ctrl-O temp-file + shell-out implementation.
+- `crates/otto-canvas/src/coords.rs` — pixel ↔ terminal-cell coordinate helpers.
+- `crates/otto-canvas/src/focus.rs` — focusable-element traversal of Blitz DOM.
+- `crates/otto-canvas/src/events.rs` — synthetic event dispatch wrapping Blitz's `BaseDocument::handle_*_event`.
+- `crates/otto-canvas/src/interceptor.rs` — default-action interceptor (links, `<details>`, forms).
+- `crates/otto-canvas/src/state.rs` — `CanvasState` struct + serde wire format for snapshot/restore.
+- `crates/otto/src/plugin/builtin/html_canvas/open_in_browser.rs` — Ctrl-O temp-file + shell-out implementation.
 - `docs/superpowers/notes/2026-05-23-blitz-nodeid-stability.md` — mini-spike findings for NodeId stability (Task 1 output).
 
 **Modified files:**
-- `crates/savvagent-plugin/src/error.rs` — add `PluginError::StateRestoreFailed(String)`.
-- `crates/savvagent-plugin/src/content.rs` — add `ContentRenderer::snapshot_state` + `restore_state` methods with defaults.
-- `crates/savvagent-plugin/src/manifest.rs` — add `KeyScope::OnFocusedCanvas` variant.
-- `crates/savvagent-plugin/src/lib.rs` — re-export changes if any.
-- `crates/savvagent-canvas/Cargo.toml` — add deps (`base64` for state, any new transitive Blitz crates).
-- `crates/savvagent-canvas/src/lib.rs` — wire new modules.
-- `crates/savvagent-canvas/src/canvas.rs` — promote all Phase-2 stub methods to real impls; thread CanvasState; integrate interceptor.
-- `crates/savvagent-host/src/session.rs` — extend `ToolRegistry::call` (or its callsite) to translate `html` content items; add snapshot triggers; thread restored-state into renderer instantiation.
-- `crates/savvagent/src/app.rs` — `Entry::Canvas` gains `state: Option<Vec<u8>>`; add `Entry::Unknown` via `#[serde(other)]`; `AppFocus::Canvas { id, element_idx }`; `App.canvas_focus` state.
-- `crates/savvagent/src/ui.rs` — focus chrome rendering; mouse hit-testing produces canvas-relative pixel coords.
-- `crates/savvagent/src/tui.rs` — mouse + keyboard routing for canvas focus; KeyScope::OnFocusedCanvas precedence.
-- `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs` — pass restored state to new renderer instances on `/resume`.
-- `crates/savvagent/src/plugin/builtin/html_canvas/slash.rs` — `/save-canvas` already exists; no changes here.
+- `crates/otto-plugin/src/error.rs` — add `PluginError::StateRestoreFailed(String)`.
+- `crates/otto-plugin/src/content.rs` — add `ContentRenderer::snapshot_state` + `restore_state` methods with defaults.
+- `crates/otto-plugin/src/manifest.rs` — add `KeyScope::OnFocusedCanvas` variant.
+- `crates/otto-plugin/src/lib.rs` — re-export changes if any.
+- `crates/otto-canvas/Cargo.toml` — add deps (`base64` for state, any new transitive Blitz crates).
+- `crates/otto-canvas/src/lib.rs` — wire new modules.
+- `crates/otto-canvas/src/canvas.rs` — promote all Phase-2 stub methods to real impls; thread CanvasState; integrate interceptor.
+- `crates/otto-host/src/session.rs` — extend `ToolRegistry::call` (or its callsite) to translate `html` content items; add snapshot triggers; thread restored-state into renderer instantiation.
+- `crates/otto/src/app.rs` — `Entry::Canvas` gains `state: Option<Vec<u8>>`; add `Entry::Unknown` via `#[serde(other)]`; `AppFocus::Canvas { id, element_idx }`; `App.canvas_focus` state.
+- `crates/otto/src/ui.rs` — focus chrome rendering; mouse hit-testing produces canvas-relative pixel coords.
+- `crates/otto/src/tui.rs` — mouse + keyboard routing for canvas focus; KeyScope::OnFocusedCanvas precedence.
+- `crates/otto/src/plugin/builtin/html_canvas/mod.rs` — pass restored state to new renderer instances on `/resume`.
+- `crates/otto/src/plugin/builtin/html_canvas/slash.rs` — `/save-canvas` already exists; no changes here.
 - `CHANGELOG.md` — Phase 2 entry under `## [0.17.0] - unreleased`.
 - `README.md` — interaction blurb (Ctrl-J/Ctrl-K/Tab/Ctrl-O).
 - `.github/workflows/ci.yml` — no change (Phase 1's exclusion carries forward; CHANGELOG notes it).
@@ -250,13 +250,13 @@ git commit -m "docs(spike): blitz nodeid stability for state persistence"
 ## Task 2: `PluginError::StateRestoreFailed` variant
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/error.rs`
+- Modify: `crates/otto-plugin/src/error.rs`
 
 Add the variant the Phase 2 spec defined for `restore_state` soft-failure signaling.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the `#[cfg(test)] mod tests` in `crates/savvagent-plugin/src/error.rs`:
+Append to the `#[cfg(test)] mod tests` in `crates/otto-plugin/src/error.rs`:
 
 ```rust
     #[test]
@@ -272,14 +272,14 @@ Append to the `#[cfg(test)] mod tests` in `crates/savvagent-plugin/src/error.rs`
 - [ ] **Step 2: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent-plugin error::tests::state_restore_failed_display
+cargo test -p otto-plugin error::tests::state_restore_failed_display
 ```
 
 Expected: FAIL with `no variant or associated item named 'StateRestoreFailed' found`.
 
 - [ ] **Step 3: Add the variant**
 
-In `crates/savvagent-plugin/src/error.rs`, extend the enum (insert after the last existing variant):
+In `crates/otto-plugin/src/error.rs`, extend the enum (insert after the last existing variant):
 
 ```rust
     /// `ContentRenderer::restore_state` could not interpret the
@@ -299,7 +299,7 @@ And add a Display branch:
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent-plugin
+cargo test -p otto-plugin
 ```
 
 Expected: PASS.
@@ -307,7 +307,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/error.rs
+git add crates/otto-plugin/src/error.rs
 git commit -m "feat(plugin): PluginError::StateRestoreFailed variant"
 ```
 
@@ -316,13 +316,13 @@ git commit -m "feat(plugin): PluginError::StateRestoreFailed variant"
 ## Task 3: `ContentRenderer::snapshot_state` + `restore_state`
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/content.rs`
+- Modify: `crates/otto-plugin/src/content.rs`
 
 Add the two methods with no-op defaults so the Phase 1 `HtmlCanvas` impl continues to compile until Task 14 wires real bodies.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the `#[cfg(test)] mod trait_smoke` in `crates/savvagent-plugin/src/lib.rs` (the existing module from Phase 1):
+Append to the `#[cfg(test)] mod trait_smoke` in `crates/otto-plugin/src/lib.rs` (the existing module from Phase 1):
 
 ```rust
     #[tokio::test]
@@ -350,14 +350,14 @@ Append to the `#[cfg(test)] mod trait_smoke` in `crates/savvagent-plugin/src/lib
 - [ ] **Step 2: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent-plugin trait_smoke::default_snapshot_returns_none_and_restore_is_ok
+cargo test -p otto-plugin trait_smoke::default_snapshot_returns_none_and_restore_is_ok
 ```
 
 Expected: FAIL with `no method named 'snapshot_state' found`.
 
 - [ ] **Step 3: Add the trait methods**
 
-In `crates/savvagent-plugin/src/content.rs`, add to the `ContentRenderer` trait (after `set_focus`):
+In `crates/otto-plugin/src/content.rs`, add to the `ContentRenderer` trait (after `set_focus`):
 
 ```rust
     /// Serialize the renderer's interactive state to an opaque byte
@@ -387,7 +387,7 @@ In `crates/savvagent-plugin/src/content.rs`, add to the `ContentRenderer` trait 
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent-plugin
+cargo test -p otto-plugin
 ```
 
 Expected: PASS. Phase 1 `HtmlCanvas` should still compile because both new methods have defaults.
@@ -403,7 +403,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/content.rs crates/savvagent-plugin/src/lib.rs
+git add crates/otto-plugin/src/content.rs crates/otto-plugin/src/lib.rs
 git commit -m "feat(plugin): ContentRenderer::snapshot_state + restore_state"
 ```
 
@@ -412,13 +412,13 @@ git commit -m "feat(plugin): ContentRenderer::snapshot_state + restore_state"
 ## Task 4: `KeyScope::OnFocusedCanvas` variant
 
 **Files:**
-- Modify: `crates/savvagent-plugin/src/manifest.rs`
+- Modify: `crates/otto-plugin/src/manifest.rs`
 
 The Phase 1 spec promised this scope; Phase 2 ships it. Plugins can register key bindings that fire only when `AppFocus == Canvas(id)`. Built-in canvas keys take precedence (Task 21 enforces).
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the existing `#[cfg(test)] mod tests` in `crates/savvagent-plugin/src/manifest.rs`:
+Append to the existing `#[cfg(test)] mod tests` in `crates/otto-plugin/src/manifest.rs`:
 
 ```rust
     #[test]
@@ -436,14 +436,14 @@ Append to the existing `#[cfg(test)] mod tests` in `crates/savvagent-plugin/src/
 - [ ] **Step 2: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent-plugin manifest::tests::key_scope_on_focused_canvas
+cargo test -p otto-plugin manifest::tests::key_scope_on_focused_canvas
 ```
 
 Expected: FAIL with `no variant or associated item named 'OnFocusedCanvas'`.
 
 - [ ] **Step 3: Add the variant**
 
-In `crates/savvagent-plugin/src/manifest.rs`, extend the `KeyScope` enum (insert after the last existing variant):
+In `crates/otto-plugin/src/manifest.rs`, extend the `KeyScope` enum (insert after the last existing variant):
 
 ```rust
     /// Active iff `AppFocus == Canvas(_)`. Built-in canvas keys
@@ -457,7 +457,7 @@ In `crates/savvagent-plugin/src/manifest.rs`, extend the `KeyScope` enum (insert
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent-plugin
+cargo test -p otto-plugin
 ```
 
 Expected: PASS.
@@ -473,23 +473,23 @@ If any matches surface, follow up: extend each `match` to handle `OnFocusedCanva
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-plugin/src/manifest.rs
+git add crates/otto-plugin/src/manifest.rs
 git commit -m "feat(plugin): KeyScope::OnFocusedCanvas variant"
 ```
 
 ---
 
-## Task 5: `savvagent-canvas::coords` — pixel ↔ cell helpers
+## Task 5: `otto-canvas::coords` — pixel ↔ cell helpers
 
 **Files:**
-- Create: `crates/savvagent-canvas/src/coords.rs`
-- Modify: `crates/savvagent-canvas/src/lib.rs`
+- Create: `crates/otto-canvas/src/coords.rs`
+- Modify: `crates/otto-canvas/src/lib.rs`
 
 The TUI receives mouse events in terminal cell coordinates; the renderer needs frame-relative pixel coordinates. The renderer also owns the "I rendered at width W cells" knowledge (from the most recent `render` call). Put the translation in a small WIT-safe helper.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-canvas/src/coords.rs`:
+Create `crates/otto-canvas/src/coords.rs`:
 
 ```rust
 //! Cell ↔ pixel coordinate translation for canvas mouse events.
@@ -607,7 +607,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the module**
 
-In `crates/savvagent-canvas/src/lib.rs`, add:
+In `crates/otto-canvas/src/lib.rs`, add:
 
 ```rust
 /// Cell ↔ pixel coordinate translation helpers.
@@ -618,7 +618,7 @@ pub use coords::{cell_to_pixel, contains_cell, CellPixelSize, CellRect};
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent-canvas coords::
+cargo test -p otto-canvas coords::
 ```
 
 Expected: all four tests pass.
@@ -626,23 +626,23 @@ Expected: all four tests pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/coords.rs crates/savvagent-canvas/src/lib.rs
+git add crates/otto-canvas/src/coords.rs crates/otto-canvas/src/lib.rs
 git commit -m "feat(canvas): coords helpers for cell↔pixel translation"
 ```
 
 ---
 
-## Task 6: `savvagent-canvas::focus` — focusable element traversal
+## Task 6: `otto-canvas::focus` — focusable element traversal
 
 **Files:**
-- Create: `crates/savvagent-canvas/src/focus.rs`
-- Modify: `crates/savvagent-canvas/src/lib.rs`
+- Create: `crates/otto-canvas/src/focus.rs`
+- Modify: `crates/otto-canvas/src/lib.rs`
 
 Walk the Blitz DOM in document order and return every focusable element with its bounding box. Focusable = `<a href>`, `<button>`, `<input>`, `<select>`, `<textarea>`, `<details><summary>`, anything with `tabindex` ≥ 0.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-canvas/src/focus.rs`:
+Create `crates/otto-canvas/src/focus.rs`:
 
 ```rust
 //! DOM traversal that produces the ordered list of focusable elements
@@ -651,7 +651,7 @@ Create `crates/savvagent-canvas/src/focus.rs`:
 #![warn(missing_docs)]
 
 use blitz_dom::BaseDocument;
-use savvagent_plugin::{FocusableElement, Rect};
+use otto_plugin::{FocusableElement, Rect};
 
 /// Walk `base` in document order, returning every focusable element's
 /// `(node_id, FocusableElement)` pair. Caller stores the `node_id` for
@@ -774,7 +774,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the module**
 
-In `crates/savvagent-canvas/src/lib.rs`, add:
+In `crates/otto-canvas/src/lib.rs`, add:
 
 ```rust
 mod focus;
@@ -785,7 +785,7 @@ mod focus;
 - [ ] **Step 3: Run the tests**
 
 ```bash
-cargo test -p savvagent-canvas focus::
+cargo test -p otto-canvas focus::
 ```
 
 Expected: `focusable_elements_in_document_order` passes. If the test fails because Blitz's actual API differs from the assumed `attr`, `final_layout`, etc., adjust to match the real API — the test is the contract; the impl should match.
@@ -793,7 +793,7 @@ Expected: `focusable_elements_in_document_order` passes. If the test fails becau
 - [ ] **Step 4: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/focus.rs crates/savvagent-canvas/src/lib.rs
+git add crates/otto-canvas/src/focus.rs crates/otto-canvas/src/lib.rs
 git commit -m "feat(canvas): focus.rs traversal for focusable elements"
 ```
 
@@ -802,13 +802,13 @@ git commit -m "feat(canvas): focus.rs traversal for focusable elements"
 ## Task 7: Implement `HtmlCanvas::{focusable_elements, focused_index, set_focus}`
 
 **Files:**
-- Modify: `crates/savvagent-canvas/src/canvas.rs`
+- Modify: `crates/otto-canvas/src/canvas.rs`
 
 Wire the focus.rs traversal output into the `ContentRenderer` trait methods on `HtmlCanvas`. Store the focused node id on the canvas; expose the index into `focusable_elements()` as `focused_index()`.
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the `#[cfg(test)] mod tests` in `crates/savvagent-canvas/src/canvas.rs`:
+Append to the `#[cfg(test)] mod tests` in `crates/otto-canvas/src/canvas.rs`:
 
 ```rust
     #[test]
@@ -843,14 +843,14 @@ Append to the `#[cfg(test)] mod tests` in `crates/savvagent-canvas/src/canvas.rs
 - [ ] **Step 2: Run; verify they fail**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests
+cargo test -p otto-canvas canvas::tests
 ```
 
 Expected: FAIL (today's `focused_index` default returns `None` always; `set_focus` does nothing).
 
 - [ ] **Step 3: Add state fields**
 
-In `crates/savvagent-canvas/src/canvas.rs`, extend `HtmlCanvas`:
+In `crates/otto-canvas/src/canvas.rs`, extend `HtmlCanvas`:
 
 ```rust
 pub struct HtmlCanvas {
@@ -887,7 +887,7 @@ pub fn new(id: ContentBlockId, source: &str) -> Self {
 }
 ```
 
-(Make sure to add the `use` for `FocusableElement` at the top: `use savvagent_plugin::{..., FocusableElement, ...};`.)
+(Make sure to add the `use` for `FocusableElement` at the top: `use otto_plugin::{..., FocusableElement, ...};`.)
 
 - [ ] **Step 4: Implement the methods**
 
@@ -934,7 +934,7 @@ This requires `render` to own the document (Step 3 added the `document` field). 
 - [ ] **Step 6: Run; verify the tests pass**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests
+cargo test -p otto-canvas canvas::tests
 ```
 
 Expected: both `focusable_elements_returns_walk_results` and `set_focus_updates_focused_index` pass.
@@ -942,7 +942,7 @@ Expected: both `focusable_elements_returns_walk_results` and `set_focus_updates_
 - [ ] **Step 7: Run the existing canvas tests too — they must still pass**
 
 ```bash
-cargo test -p savvagent-canvas
+cargo test -p otto-canvas
 ```
 
 Expected: `canvas_renders_at_requested_width` and `canvas_id_round_trips` still pass.
@@ -950,7 +950,7 @@ Expected: `canvas_renders_at_requested_width` and `canvas_id_round_trips` still 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/canvas.rs
+git add crates/otto-canvas/src/canvas.rs
 git commit -m "feat(canvas): wire focusable_elements + focused_index + set_focus"
 ```
 
@@ -959,7 +959,7 @@ git commit -m "feat(canvas): wire focusable_elements + focused_index + set_focus
 ## Task 8: Implement `HtmlCanvas::{freeze, thaw}`
 
 **Files:**
-- Modify: `crates/savvagent-canvas/src/canvas.rs`
+- Modify: `crates/otto-canvas/src/canvas.rs`
 
 Frozen canvases drop input events but otherwise behave normally. Thaw re-enables dispatch. No re-layout, no re-paint — soft freeze.
 
@@ -998,7 +998,7 @@ impl HtmlCanvas {
 - [ ] **Step 2: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests::freeze_and_thaw_flip_internal_flag
+cargo test -p otto-canvas canvas::tests::freeze_and_thaw_flip_internal_flag
 ```
 
 Expected: FAIL (the existing default impls do nothing).
@@ -1020,7 +1020,7 @@ fn thaw(&mut self) {
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent-canvas
+cargo test -p otto-canvas
 ```
 
 Expected: PASS.
@@ -1028,24 +1028,24 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/canvas.rs
+git add crates/otto-canvas/src/canvas.rs
 git commit -m "feat(canvas): freeze/thaw soft-freeze flag"
 ```
 
 ---
 
-## Task 9: `savvagent-canvas::events` — synthetic event dispatch core
+## Task 9: `otto-canvas::events` — synthetic event dispatch core
 
 **Files:**
-- Create: `crates/savvagent-canvas/src/events.rs`
-- Modify: `crates/savvagent-canvas/src/canvas.rs`
-- Modify: `crates/savvagent-canvas/src/lib.rs`
+- Create: `crates/otto-canvas/src/events.rs`
+- Modify: `crates/otto-canvas/src/canvas.rs`
+- Modify: `crates/otto-canvas/src/lib.rs`
 
-Phase 0 spike confirmed Blitz alpha.4 accepts synthetic events via `BaseDocument::handle_dom_event` / `Document::handle_ui_event`. This task wraps them. The wrapper takes an `InputEvent` from `savvagent-plugin`, converts to the Blitz event shape, dispatches, and returns whether the DOM is dirty (event landed on a node that changed state). Default-action interception lands in Tasks 10-12.
+Phase 0 spike confirmed Blitz alpha.4 accepts synthetic events via `BaseDocument::handle_dom_event` / `Document::handle_ui_event`. This task wraps them. The wrapper takes an `InputEvent` from `otto-plugin`, converts to the Blitz event shape, dispatches, and returns whether the DOM is dirty (event landed on a node that changed state). Default-action interception lands in Tasks 10-12.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-canvas/src/events.rs`:
+Create `crates/otto-canvas/src/events.rs`:
 
 ```rust
 //! Synthetic event dispatch into Blitz. Translates portable
@@ -1060,7 +1060,7 @@ Create `crates/savvagent-canvas/src/events.rs`:
 #![warn(missing_docs)]
 
 use blitz_dom::BaseDocument;
-use savvagent_plugin::{InputEvent, MouseEventKind, MouseEventPortable};
+use otto_plugin::{InputEvent, MouseEventKind, MouseEventPortable};
 
 /// Outcome of raw dispatch: which node the event landed on (if any) and
 /// whether the DOM was marked dirty by Blitz.
@@ -1118,7 +1118,7 @@ mod tests {
     use blitz_dom::{DocumentConfig, StyleThreading};
     use blitz_html::HtmlDocument;
     use blitz_traits::shell::{ColorScheme, Viewport};
-    use savvagent_plugin::{KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
+    use otto_plugin::{KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
 
     fn doc() -> HtmlDocument {
         HtmlDocument::from_html(
@@ -1162,7 +1162,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the module + verify the test compiles**
 
-In `crates/savvagent-canvas/src/lib.rs`, add:
+In `crates/otto-canvas/src/lib.rs`, add:
 
 ```rust
 mod events;
@@ -1171,7 +1171,7 @@ mod events;
 Then:
 
 ```bash
-cargo build -p savvagent-canvas
+cargo build -p otto-canvas
 ```
 
 Expected: builds. (Tests don't run yet because of the `todo!`.)
@@ -1182,14 +1182,14 @@ Open the Phase 0 spike notes (`docs/superpowers/notes/2026-05-21-blitz-spike.md`
 
 1. Carry the pixel coordinates from `MouseEventPortable`.
 2. Carry the button mapping (Left → primary, Right → secondary, Middle → auxiliary).
-3. Carry modifier keys (`KeyMods` from `savvagent_plugin::types`).
+3. Carry modifier keys (`KeyMods` from `otto_plugin::types`).
 
 After dispatching, check Blitz's "DOM dirty" signal (alpha.4 may expose this on the returned event handle or via a `base.is_dirty()` getter — check the spike notes / source). Set `dirty: bool` accordingly.
 
 - [ ] **Step 4: Run the test**
 
 ```bash
-cargo test -p savvagent-canvas events::tests::mouse_press_on_link_targets_link_node
+cargo test -p otto-canvas events::tests::mouse_press_on_link_targets_link_node
 ```
 
 Expected: PASS. If the hit-test returns `None`, the click coordinates probably miss the link's actual bounding box — adjust the coordinates in the test (or use `base.try_node_by_id(...)` to look up the link first and use its `final_layout.location` as the click point).
@@ -1197,7 +1197,7 @@ Expected: PASS. If the hit-test returns `None`, the click coordinates probably m
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/events.rs crates/savvagent-canvas/src/lib.rs
+git add crates/otto-canvas/src/events.rs crates/otto-canvas/src/lib.rs
 git commit -m "feat(canvas): synthetic event dispatch into Blitz"
 ```
 
@@ -1206,14 +1206,14 @@ git commit -m "feat(canvas): synthetic event dispatch into Blitz"
 ## Task 10: `interceptor.rs` — default-action interceptor for links
 
 **Files:**
-- Create: `crates/savvagent-canvas/src/interceptor.rs`
-- Modify: `crates/savvagent-canvas/src/lib.rs`
+- Create: `crates/otto-canvas/src/interceptor.rs`
+- Modify: `crates/otto-canvas/src/lib.rs`
 
 The Phase 0 spike documented that Blitz alpha.4 does NOT run browser default actions for synthetic events. Phase 2 ships a renderer-side interceptor inside `dispatch` that maps clicks on `<a href>` to `Effect::OpenUrl` with the URL classified per the spec's URL-scheme table. `<details>` toggle and form submit land in Tasks 11 + 12.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/savvagent-canvas/src/interceptor.rs`:
+Create `crates/otto-canvas/src/interceptor.rs`:
 
 ```rust
 //! Renderer-side default-action interceptor. Runs AFTER raw event
@@ -1228,7 +1228,7 @@ Create `crates/savvagent-canvas/src/interceptor.rs`:
 #![warn(missing_docs)]
 
 use blitz_dom::BaseDocument;
-use savvagent_plugin::{Effect, UrlTarget};
+use otto_plugin::{Effect, UrlTarget};
 
 /// Examine the node at `target_node`; if it triggers a default
 /// action, return the `Effect` to apply. Returns `None` for
@@ -1333,7 +1333,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the module**
 
-In `crates/savvagent-canvas/src/lib.rs`, add:
+In `crates/otto-canvas/src/lib.rs`, add:
 
 ```rust
 mod interceptor;
@@ -1342,7 +1342,7 @@ mod interceptor;
 - [ ] **Step 3: Run the unit tests**
 
 ```bash
-cargo test -p savvagent-canvas interceptor::
+cargo test -p otto-canvas interceptor::
 ```
 
 Expected: all 8 classification tests pass.
@@ -1376,9 +1376,9 @@ Append to `events.rs`'s test module (the file already has Blitz fixture setup):
         let lnk_id = find_node_by_tag(base, "a").expect("a element present");
         let effect = crate::interceptor::intercept(base, Some(lnk_id));
         match effect {
-            Some(savvagent_plugin::Effect::OpenUrl { url, target }) => {
+            Some(otto_plugin::Effect::OpenUrl { url, target }) => {
                 assert_eq!(url, "https://example.com");
-                assert_eq!(target, savvagent_plugin::UrlTarget::SystemBrowser);
+                assert_eq!(target, otto_plugin::UrlTarget::SystemBrowser);
             }
             other => panic!("expected OpenUrl, got {other:?}"),
         }
@@ -1404,7 +1404,7 @@ Append to `events.rs`'s test module (the file already has Blitz fixture setup):
 - [ ] **Step 5: Run the new integration test**
 
 ```bash
-cargo test -p savvagent-canvas events::tests::link_click_produces_open_url_effect
+cargo test -p otto-canvas events::tests::link_click_produces_open_url_effect
 ```
 
 Expected: PASS.
@@ -1412,7 +1412,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/interceptor.rs crates/savvagent-canvas/src/lib.rs crates/savvagent-canvas/src/events.rs
+git add crates/otto-canvas/src/interceptor.rs crates/otto-canvas/src/lib.rs crates/otto-canvas/src/events.rs
 git commit -m "feat(canvas): interceptor for link default action + URL classification"
 ```
 
@@ -1421,8 +1421,8 @@ git commit -m "feat(canvas): interceptor for link default action + URL classific
 ## Task 11: Interceptor — `<details>` toggle
 
 **Files:**
-- Modify: `crates/savvagent-canvas/src/interceptor.rs`
-- Modify: `crates/savvagent-canvas/src/canvas.rs` (re-resolve after toggle)
+- Modify: `crates/otto-canvas/src/interceptor.rs`
+- Modify: `crates/otto-canvas/src/canvas.rs` (re-resolve after toggle)
 
 A click on a `<summary>` toggles the parent `<details>`'s `open` attribute. The interceptor flips it and signals to the caller that a re-resolve is needed (so the next render reflects the new layout).
 
@@ -1506,7 +1506,7 @@ Append to `interceptor.rs`'s test module:
 - [ ] **Step 2: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent-canvas interceptor::tests::summary_click_returns_redraw_signal
+cargo test -p otto-canvas interceptor::tests::summary_click_returns_redraw_signal
 ```
 
 Expected: FAIL — `intercept_mut` doesn't exist yet.
@@ -1590,7 +1590,7 @@ fn toggle_details_parent(base: &mut BaseDocument, summary_id: u32) -> InterceptO
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent-canvas interceptor::
+cargo test -p otto-canvas interceptor::
 ```
 
 Expected: PASS.
@@ -1598,7 +1598,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/interceptor.rs
+git add crates/otto-canvas/src/interceptor.rs
 git commit -m "feat(canvas): interceptor for <details> toggle"
 ```
 
@@ -1607,7 +1607,7 @@ git commit -m "feat(canvas): interceptor for <details> toggle"
 ## Task 12: Interceptor — form submit (button)
 
 **Files:**
-- Modify: `crates/savvagent-canvas/src/interceptor.rs`
+- Modify: `crates/otto-canvas/src/interceptor.rs`
 
 A click on a `<button type="submit">` (or `<input type="submit">`) inside a form synthesizes an `Effect::OpenUrl` with the form's action attribute serialized in. For Phase 2 we keep it simple: scan up to the nearest `<form>` ancestor, take its `action` attribute (or current URL if absent), URL-encode form field name/value pairs, emit `OpenUrl { url, target: <classify_url> }`. The classification table from Task 10 applies — most form actions will be relative paths → `ContinueConversation`.
 
@@ -1647,10 +1647,10 @@ Append to `interceptor.rs`'s test module:
         let base: &mut BaseDocument = doc.as_mut();
         let outcome = crate::interceptor::intercept_mut(base, Some(btn_id));
         match outcome.effect {
-            Some(savvagent_plugin::Effect::OpenUrl { url, target }) => {
+            Some(otto_plugin::Effect::OpenUrl { url, target }) => {
                 assert!(url.starts_with("./review.md"), "url was {url:?}");
                 assert!(url.contains("title=hello"), "expected query string");
-                assert_eq!(target, savvagent_plugin::UrlTarget::ContinueConversation);
+                assert_eq!(target, otto_plugin::UrlTarget::ContinueConversation);
             }
             other => panic!("expected OpenUrl, got {other:?}"),
         }
@@ -1660,7 +1660,7 @@ Append to `interceptor.rs`'s test module:
 - [ ] **Step 2: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent-canvas interceptor::tests::submit_button_inside_form_emits_open_url
+cargo test -p otto-canvas interceptor::tests::submit_button_inside_form_emits_open_url
 ```
 
 Expected: FAIL.
@@ -1788,7 +1788,7 @@ And add `"button" | "input"` to the `intercept_mut` match:
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent-canvas interceptor::
+cargo test -p otto-canvas interceptor::
 ```
 
 Expected: PASS. The action `./review.md?title=hello` is a relative path with a query string, so `classify_url` returns `ContinueConversation`.
@@ -1796,7 +1796,7 @@ Expected: PASS. The action `./review.md?title=hello` is a relative path with a q
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/interceptor.rs
+git add crates/otto-canvas/src/interceptor.rs
 git commit -m "feat(canvas): interceptor for form submit"
 ```
 
@@ -1833,7 +1833,7 @@ git commit -m "feat(canvas): interceptor for form submit"
 ## Task 13: `HtmlCanvas::dispatch` — wire raw + interceptor + dirty re-resolve
 
 **Files:**
-- Modify: `crates/savvagent-canvas/src/canvas.rs`
+- Modify: `crates/otto-canvas/src/canvas.rs`
 
 Promote the no-op default `dispatch` to: drop events when frozen; parse a fresh document from source; replay `self.canvas_state` via `apply_state`; resolve; call raw dispatch; call the interceptor (`intercept_mut`); if dirty, re-resolve; re-derive `self.canvas_state` via `collect_state`; return `InputOutcome { effects, dirty }`.
 
@@ -1844,7 +1844,7 @@ Append to `canvas.rs`'s tests:
 ```rust
     #[tokio::test]
     async fn dispatch_link_click_returns_open_url_effect() {
-        use savvagent_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
+        use otto_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
 
         let mut c = HtmlCanvas::new(
             ContentBlockId(10),
@@ -1860,16 +1860,16 @@ Append to `canvas.rs`'s tests:
         });
         let outcome = c.dispatch(ev).await.expect("dispatch ok");
         assert_eq!(outcome.effects.len(), 1, "expected one effect");
-        let savvagent_plugin::Effect::OpenUrl { url, target } = outcome.effects.into_iter().next().unwrap() else {
+        let otto_plugin::Effect::OpenUrl { url, target } = outcome.effects.into_iter().next().unwrap() else {
             panic!("expected OpenUrl");
         };
         assert_eq!(url, "https://example.com");
-        assert_eq!(target, savvagent_plugin::UrlTarget::SystemBrowser);
+        assert_eq!(target, otto_plugin::UrlTarget::SystemBrowser);
     }
 
     #[tokio::test]
     async fn dispatch_drops_events_when_frozen() {
-        use savvagent_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
+        use otto_plugin::{InputEvent, KeyMods, MouseButton, MouseEventKind, MouseEventPortable};
 
         let mut c = HtmlCanvas::new(
             ContentBlockId(11),
@@ -1892,7 +1892,7 @@ Append to `canvas.rs`'s tests:
 - [ ] **Step 2: Run; verify they fail**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests::dispatch
+cargo test -p otto-canvas canvas::tests::dispatch
 ```
 
 Expected: FAIL.
@@ -1904,10 +1904,10 @@ Replace the default `dispatch` impl on `HtmlCanvas`:
 ```rust
 async fn dispatch(
     &mut self,
-    event: savvagent_plugin::InputEvent,
-) -> Result<savvagent_plugin::InputOutcome, savvagent_plugin::PluginError> {
+    event: otto_plugin::InputEvent,
+) -> Result<otto_plugin::InputOutcome, otto_plugin::PluginError> {
     if self.frozen {
-        return Ok(savvagent_plugin::InputOutcome {
+        return Ok(otto_plugin::InputOutcome {
             effects: Vec::new(),
             dirty: false,
         });
@@ -1917,7 +1917,7 @@ async fn dispatch(
         None => {
             // Renderer hasn't done its first render pass yet; nothing
             // to hit-test. Treat as no-op.
-            return Ok(savvagent_plugin::InputOutcome {
+            return Ok(otto_plugin::InputOutcome {
                 effects: Vec::new(),
                 dirty: false,
             });
@@ -1929,7 +1929,7 @@ async fn dispatch(
     if outcome.dirty {
         base.resolve(0.0);
     }
-    Ok(savvagent_plugin::InputOutcome {
+    Ok(otto_plugin::InputOutcome {
         effects: outcome.effect.into_iter().collect(),
         dirty: raw.dirty || outcome.dirty,
     })
@@ -1941,7 +1941,7 @@ async fn dispatch(
 - [ ] **Step 4: Run; verify they pass**
 
 ```bash
-cargo test -p savvagent-canvas
+cargo test -p otto-canvas
 ```
 
 Expected: all canvas tests pass.
@@ -1949,18 +1949,18 @@ Expected: all canvas tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/canvas.rs
+git add crates/otto-canvas/src/canvas.rs
 git commit -m "feat(canvas): dispatch wires raw + interceptor + dirty re-resolve"
 ```
 
 ---
 
-## Task 14: `savvagent-canvas::state` — `CanvasState` serde wire format
+## Task 14: `otto-canvas::state` — `CanvasState` serde wire format
 
 **Files:**
-- Create: `crates/savvagent-canvas/src/state.rs`
-- Modify: `crates/savvagent-canvas/Cargo.toml` (add `serde` + `serde_json` if not already deps)
-- Modify: `crates/savvagent-canvas/src/lib.rs`
+- Create: `crates/otto-canvas/src/state.rs`
+- Modify: `crates/otto-canvas/Cargo.toml` (add `serde` + `serde_json` if not already deps)
+- Modify: `crates/otto-canvas/src/lib.rs`
 
 The opaque blob `HtmlCanvas` writes to / reads from is a `serde_json`-encoded `CanvasState` struct. Includes a schema version so future fields can be added.
 
@@ -1969,7 +1969,7 @@ If Task 1's spike found NodeId is NOT cross-process stable, swap the `node_key` 
 - [ ] **Step 1: Verify deps**
 
 ```bash
-grep -E '^serde\b|^serde_json\b' crates/savvagent-canvas/Cargo.toml
+grep -E '^serde\b|^serde_json\b' crates/otto-canvas/Cargo.toml
 ```
 
 If serde + serde_json aren't already listed, add to `[dependencies]`:
@@ -1981,7 +1981,7 @@ serde_json = { workspace = true }
 
 - [ ] **Step 2: Write the failing test**
 
-Create `crates/savvagent-canvas/src/state.rs`:
+Create `crates/otto-canvas/src/state.rs`:
 
 ```rust
 //! `CanvasState` — persisted interactive state for `HtmlCanvas`.
@@ -2070,7 +2070,7 @@ mod tests {
 
 - [ ] **Step 3: Wire the module**
 
-In `crates/savvagent-canvas/src/lib.rs`:
+In `crates/otto-canvas/src/lib.rs`:
 
 ```rust
 mod state;
@@ -2080,7 +2080,7 @@ pub use state::CanvasState;
 - [ ] **Step 4: Run; verify tests pass**
 
 ```bash
-cargo test -p savvagent-canvas state::
+cargo test -p otto-canvas state::
 ```
 
 Expected: PASS.
@@ -2088,7 +2088,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/state.rs crates/savvagent-canvas/src/lib.rs crates/savvagent-canvas/Cargo.toml
+git add crates/otto-canvas/src/state.rs crates/otto-canvas/src/lib.rs crates/otto-canvas/Cargo.toml
 git commit -m "feat(canvas): CanvasState wire format for snapshot/restore"
 ```
 
@@ -2097,7 +2097,7 @@ git commit -m "feat(canvas): CanvasState wire format for snapshot/restore"
 ## Task 15: `HtmlCanvas::snapshot_state`
 
 **Files:**
-- Modify: `crates/savvagent-canvas/src/canvas.rs`
+- Modify: `crates/otto-canvas/src/canvas.rs`
 
 Walk the live Blitz DOM and capture form values, open details, focused node into a `CanvasState`. Return `None` if every field is empty. Return `None` if the canvas hasn't been rendered yet (no document).
 
@@ -2166,7 +2166,7 @@ impl HtmlCanvas {
 - [ ] **Step 2: Run; verify they fail**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests::snapshot
+cargo test -p otto-canvas canvas::tests::snapshot
 ```
 
 Expected: FAIL.
@@ -2245,7 +2245,7 @@ fn walk_state(base: &BaseDocument, node_id: u32, state: &mut crate::state::Canva
 - [ ] **Step 4: Run; verify they pass**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests::snapshot
+cargo test -p otto-canvas canvas::tests::snapshot
 ```
 
 Expected: PASS.
@@ -2253,7 +2253,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/canvas.rs
+git add crates/otto-canvas/src/canvas.rs
 git commit -m "feat(canvas): snapshot_state captures form/details/focus"
 ```
 
@@ -2262,7 +2262,7 @@ git commit -m "feat(canvas): snapshot_state captures form/details/focus"
 ## Task 16: `HtmlCanvas::restore_state`
 
 **Files:**
-- Modify: `crates/savvagent-canvas/src/canvas.rs`
+- Modify: `crates/otto-canvas/src/canvas.rs`
 
 Parse the blob; mutate the DOM to set `value` attributes on inputs, `open` on details, and `set_focus` to the focused index. On JSON parse failure, return `PluginError::StateRestoreFailed`. After mutating, call `base.resolve(0.0)` so the next render reflects restored state.
 
@@ -2312,7 +2312,7 @@ Append to `canvas.rs`'s tests:
         c.render(PixelSize { width: 100, height: 0 });
         let err = c.restore_state(b"not json").unwrap_err();
         assert!(
-            matches!(err, savvagent_plugin::PluginError::StateRestoreFailed(_)),
+            matches!(err, otto_plugin::PluginError::StateRestoreFailed(_)),
             "expected StateRestoreFailed, got {err:?}",
         );
     }
@@ -2321,7 +2321,7 @@ Append to `canvas.rs`'s tests:
 - [ ] **Step 2: Run; verify they fail**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests::restore
+cargo test -p otto-canvas canvas::tests::restore
 ```
 
 Expected: FAIL.
@@ -2334,9 +2334,9 @@ In `canvas.rs`:
 fn restore_state(
     &mut self,
     bytes: &[u8],
-) -> Result<(), savvagent_plugin::PluginError> {
+) -> Result<(), otto_plugin::PluginError> {
     let state = crate::state::CanvasState::from_bytes(bytes)
-        .map_err(savvagent_plugin::PluginError::StateRestoreFailed)?;
+        .map_err(otto_plugin::PluginError::StateRestoreFailed)?;
     let document = match self.document.as_mut() {
         Some(d) => d,
         None => return Ok(()), // No-op pre-render; ignore restore quietly
@@ -2401,7 +2401,7 @@ fn apply_state_walk(base: &mut BaseDocument, node_id: u32, state: &crate::state:
 - [ ] **Step 4: Run; verify they pass**
 
 ```bash
-cargo test -p savvagent-canvas canvas::tests::restore
+cargo test -p otto-canvas canvas::tests::restore
 ```
 
 Expected: PASS.
@@ -2409,7 +2409,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent-canvas/src/canvas.rs
+git add crates/otto-canvas/src/canvas.rs
 git commit -m "feat(canvas): restore_state applies persisted DOM state"
 ```
 
@@ -2418,21 +2418,21 @@ git commit -m "feat(canvas): restore_state applies persisted DOM state"
 ## Task 17: Tool-emitted HTML translation in `ToolRegistry::call`
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs` (or wherever tool-result translation lives — find via `grep`)
+- Modify: `crates/otto-host/src/session.rs` (or wherever tool-result translation lives — find via `grep`)
 
 The MCP tool-result content array can contain `{"type":"html","source":"..."}` items. Today the host concatenates all `text` items into one `ContentBlock::Text`. Phase 2 walks the array and emits one block per item: `text` items still concatenate; `html` items each become a `ContentBlock::Html`; the host assigns the `ContentBlockId`.
 
 - [ ] **Step 1: Locate the translation path**
 
 ```bash
-grep -rn "ContentBlock::Text\|tool.*result\|content.*array" crates/savvagent-host/src/ | head -20
+grep -rn "ContentBlock::Text\|tool.*result\|content.*array" crates/otto-host/src/ | head -20
 ```
 
 Find the function (likely in `session.rs` or `tool_call.rs`) that takes the MCP `CallToolResult` and turns it into one or more `ContentBlock`s. Read it; understand the current concatenation logic.
 
 - [ ] **Step 2: Write the failing test**
 
-Add to the appropriate `#[cfg(test)] mod tests` in `savvagent-host`:
+Add to the appropriate `#[cfg(test)] mod tests` in `otto-host`:
 
 ```rust
     #[test]
@@ -2465,7 +2465,7 @@ Add to the appropriate `#[cfg(test)] mod tests` in `savvagent-host`:
 - [ ] **Step 3: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent-host tool_result_html_item_becomes_html_block
+cargo test -p otto-host tool_result_html_item_becomes_html_block
 ```
 
 Expected: FAIL.
@@ -2525,14 +2525,14 @@ Pick (a) for cleanliness — it makes the html type a first-class translation ta
 - [ ] **Step 5: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent-host
+cargo test -p otto-host
 ```
 
 Expected: PASS.
 
 - [ ] **Step 6: Verify host-level integration** — write a small integration test that drives a fake tool returning html, asserts the Host emits the Html block into the conversation messages.
 
-Append to an existing host integration test file (or create `crates/savvagent-host/tests/tool_html.rs`):
+Append to an existing host integration test file (or create `crates/otto-host/tests/tool_html.rs`):
 
 ```rust
 #[tokio::test]
@@ -2544,12 +2544,12 @@ async fn host_emits_html_block_from_tool_result() {
 }
 ```
 
-Use the existing host test fixtures (`crates/savvagent-host/tests/support/`) for the harness. Drop the `todo!` once the fixture is wired.
+Use the existing host test fixtures (`crates/otto-host/tests/support/`) for the harness. Drop the `todo!` once the fixture is wired.
 
 - [ ] **Step 7: Run integration test**
 
 ```bash
-cargo test -p savvagent-host --test tool_html
+cargo test -p otto-host --test tool_html
 ```
 
 Expected: PASS.
@@ -2557,7 +2557,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent-host
+git add crates/otto-host
 git commit -m "feat(host): translate MCP html content items to ContentBlock::Html"
 ```
 
@@ -2565,17 +2565,17 @@ git commit -m "feat(host): translate MCP html content items to ContentBlock::Htm
 
 > **PLAN AMENDMENT #2 (2026-05-25, during execution):** Investigation
 > for Task 18 found the plan's persistence model is wrong. `Entry`
-> (`crates/savvagent/src/app.rs`) derives only `Debug, Clone` — it has
+> (`crates/otto/src/app.rs`) derives only `Debug, Clone` — it has
 > NO serde and is NEVER persisted. The authoritative transcript is
 > `TranscriptFile { schema_version, saved_at, messages: Vec<Message> }`
-> (`savvagent-host`), holding SPP `ContentBlock`s; `Host::load_transcript`
+> (`otto-host`), holding SPP `ContentBlock`s; `Host::load_transcript`
 > + `App::replay_transcript` rebuild `Entry::Canvas` from `messages` on
 > `/resume`. Therefore:
 >
 > - **Task 18 is REWORKED:** instead of adding `state` to `Entry::Canvas`
 >   and a `#[serde(other)] Unknown` on `Entry`, add an optional
 >   `state: Option<String>` field to **`ContentBlock::Html { source, state }`**
->   in `savvagent-protocol` (with `#[serde(default, skip_serializing_if =
+>   in `otto-protocol` (with `#[serde(default, skip_serializing_if =
 >   "Option::is_none")]`). This persists naturally in `TranscriptFile.messages`.
 >   Bump the SPP spec/version note. The 4 providers already translate
 >   `Html`→text in history, so the new field is inert for them; old
@@ -2596,7 +2596,7 @@ git commit -m "feat(host): translate MCP html content items to ContentBlock::Htm
 ## Task 18 (REWORKED — see amendment #2 above): `ContentBlock::Html { state }` persistence field
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
+- Modify: `crates/otto/src/app.rs`
 
 Two changes:
 1. Add an optional `state: Option<String>` (base64-encoded blob) field to `Entry::Canvas`.
@@ -2604,7 +2604,7 @@ Two changes:
 
 - [ ] **Step 1: Write the failing test**
 
-Append to the existing `#[cfg(test)] mod tests` in `crates/savvagent/src/app.rs`:
+Append to the existing `#[cfg(test)] mod tests` in `crates/otto/src/app.rs`:
 
 ```rust
     #[test]
@@ -2642,14 +2642,14 @@ Append to the existing `#[cfg(test)] mod tests` in `crates/savvagent/src/app.rs`
 - [ ] **Step 2: Run; verify they fail**
 
 ```bash
-cargo test -p savvagent --bin savvagent entry_canvas_state_round_trip entry_unknown_absorbs_future_variants
+cargo test -p otto --bin otto entry_canvas_state_round_trip entry_unknown_absorbs_future_variants
 ```
 
 Expected: FAIL (no `state` field; no `Unknown` variant).
 
 - [ ] **Step 3: Update `Entry`**
 
-In `crates/savvagent/src/app.rs`, modify the `Entry` enum:
+In `crates/otto/src/app.rs`, modify the `Entry` enum:
 
 ```rust
 pub enum Entry {
@@ -2672,7 +2672,7 @@ pub enum Entry {
     /// Phase 2: future Entry variants this build doesn't know about
     /// deserialize as `Unknown` rather than erroring the whole
     /// transcript load. Rendered as a single-line "[unknown entry
-    /// type — open in a newer savvagent]" placeholder.
+    /// type — open in a newer otto]" placeholder.
     #[serde(other)]
     Unknown,
 }
@@ -2683,7 +2683,7 @@ pub enum Entry {
 `#[serde(default)]` means `state` is optional on deserialize. But Rust struct-variant literals must include all fields. Search:
 
 ```bash
-grep -rn "Entry::Canvas {" crates/savvagent/src/ | head -20
+grep -rn "Entry::Canvas {" crates/otto/src/ | head -20
 ```
 
 For each match, add `state: None,` to the literal.
@@ -2701,7 +2701,7 @@ Entry::Unknown => {
     // Future Entry variant; render a placeholder so the transcript
     // is still readable.
     ratatui::widgets::Paragraph::new(
-        "[unknown entry type — open in a newer savvagent build]"
+        "[unknown entry type — open in a newer otto build]"
     )
     .style(/* dim style */ )
     .render(area, buf);
@@ -2711,7 +2711,7 @@ Entry::Unknown => {
 - [ ] **Step 6: Run; verify the tests pass**
 
 ```bash
-cargo test -p savvagent
+cargo test -p otto
 ```
 
 Expected: PASS.
@@ -2719,7 +2719,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs crates/savvagent/src/ui.rs
+git add crates/otto/src/app.rs crates/otto/src/ui.rs
 git commit -m "feat(tui): Entry::Canvas.state + Entry::Unknown serde fallback"
 ```
 
@@ -2728,14 +2728,14 @@ git commit -m "feat(tui): Entry::Canvas.state + Entry::Unknown serde fallback"
 ## Task 19: `AppFocus::Canvas` variant + state transitions
 
 **Files:**
-- Modify: `crates/savvagent/src/app.rs`
+- Modify: `crates/otto/src/app.rs`
 
 Add the focus variant carrying the focused canvas's `ContentBlockId` and (optionally) the currently focused element index within that canvas. Update the focus-transition helpers to fire `freeze`/`thaw` on the renderer at the right moments.
 
 - [ ] **Step 1: Locate `AppFocus`**
 
 ```bash
-grep -n "pub enum AppFocus" crates/savvagent/src/app.rs
+grep -n "pub enum AppFocus" crates/otto/src/app.rs
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -2762,7 +2762,7 @@ Append to `app.rs`'s tests:
 - [ ] **Step 3: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent app_focus_canvas_variant
+cargo test -p otto app_focus_canvas_variant
 ```
 
 Expected: FAIL — variant doesn't exist or has a different shape.
@@ -2786,7 +2786,7 @@ pub enum AppFocus {
 }
 ```
 
-Add the `use savvagent_plugin::ContentBlockId;` if not already imported.
+Add the `use otto_plugin::ContentBlockId;` if not already imported.
 
 - [ ] **Step 5: Extend `App` with the canvas focus accessor methods**
 
@@ -2843,7 +2843,7 @@ Address any non-exhaustive match warnings.
 - [ ] **Step 7: Run; verify tests pass**
 
 ```bash
-cargo test -p savvagent
+cargo test -p otto
 ```
 
 Expected: PASS.
@@ -2851,7 +2851,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/app.rs
+git add crates/otto/src/app.rs
 git commit -m "feat(tui): AppFocus::Canvas with freeze/thaw transitions"
 ```
 
@@ -2860,14 +2860,14 @@ git commit -m "feat(tui): AppFocus::Canvas with freeze/thaw transitions"
 ## Task 20: Focus chrome (1-cell border)
 
 **Files:**
-- Modify: `crates/savvagent/src/ui.rs`
+- Modify: `crates/otto/src/ui.rs`
 
 When the conversation log renders a canvas and `App.focus == AppFocus::Canvas { id, .. }` matches that canvas, draw a 1-cell-wide ratatui border around the canvas's image region.
 
 - [ ] **Step 1: Locate the existing canvas render path**
 
 ```bash
-grep -n "Entry::Canvas\|StatefulImage\|ratatui_image" crates/savvagent/src/ui.rs
+grep -n "Entry::Canvas\|StatefulImage\|ratatui_image" crates/otto/src/ui.rs
 ```
 
 - [ ] **Step 2: Write the test**
@@ -2905,7 +2905,7 @@ Append to `ui.rs`'s tests (or create one if none exist):
 - [ ] **Step 3: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent focused_canvas_gets_border
+cargo test -p otto focused_canvas_gets_border
 ```
 
 Expected: FAIL.
@@ -2933,7 +2933,7 @@ let inner_area = if is_focused {
 - [ ] **Step 5: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent focused_canvas_gets_border
+cargo test -p otto focused_canvas_gets_border
 ```
 
 Expected: PASS.
@@ -2941,7 +2941,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/ui.rs crates/savvagent/src/test_helpers.rs
+git add crates/otto/src/ui.rs crates/otto/src/test_helpers.rs
 git commit -m "feat(tui): focus chrome around focused canvas"
 ```
 
@@ -2950,8 +2950,8 @@ git commit -m "feat(tui): focus chrome around focused canvas"
 ## Task 21: Mouse routing — click in canvas focuses + dispatches
 
 **Files:**
-- Modify: `crates/savvagent/src/tui.rs`
-- Modify: `crates/savvagent/src/ui.rs` (track canvas cell rects)
+- Modify: `crates/otto/src/tui.rs`
+- Modify: `crates/otto/src/ui.rs` (track canvas cell rects)
 
 Crossterm mouse mode is already enabled (ratatui-image needed it in Phase 1). On each mouse event the TUI receives, walk the table of visible canvases (with their cell rects from the most recent render), find the one the click landed in, transition `AppFocus::Canvas`, and dispatch the event into the renderer via `coords::cell_to_pixel`.
 
@@ -2967,11 +2967,11 @@ pub struct App {
     /// keyed by canvas id. Populated during render in `ui.rs`; consumed
     /// by mouse-event routing in `tui.rs`. Stale entries (canvases that
     /// scrolled out of view) are pruned on each render.
-    pub canvas_rects: HashMap<ContentBlockId, savvagent_canvas::CellRect>,
+    pub canvas_rects: HashMap<ContentBlockId, otto_canvas::CellRect>,
 }
 ```
 
-Initialize in `App::new` (empty map). Add `use savvagent_canvas::CellRect;` and `use std::collections::HashMap;` if not present.
+Initialize in `App::new` (empty map). Add `use otto_canvas::CellRect;` and `use std::collections::HashMap;` if not present.
 
 - [ ] **Step 2: Populate `canvas_rects` during render**
 
@@ -2980,7 +2980,7 @@ In the canvas render path in `ui.rs`, after computing `canvas_area`:
 ```rust
 app.canvas_rects.insert(
     ContentBlockId(canvas_id),
-    savvagent_canvas::CellRect {
+    otto_canvas::CellRect {
         col: canvas_area.x,
         row: canvas_area.y,
         width: canvas_area.width,
@@ -3002,7 +3002,7 @@ Append to `tui.rs`'s tests (or wherever mouse routing lives):
         // Pretend the canvas was rendered at cells (col=2..12, row=3..8).
         app.canvas_rects.insert(
             ContentBlockId(1),
-            savvagent_canvas::CellRect { col: 2, row: 3, width: 10, height: 5 },
+            otto_canvas::CellRect { col: 2, row: 3, width: 10, height: 5 },
         );
         let event = crossterm::event::MouseEvent {
             kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
@@ -3010,7 +3010,7 @@ Append to `tui.rs`'s tests (or wherever mouse routing lives):
             row: 5,
             modifiers: crossterm::event::KeyModifiers::empty(),
         };
-        let cell_size = savvagent_canvas::CellPixelSize { width: 8, height: 16 };
+        let cell_size = otto_canvas::CellPixelSize { width: 8, height: 16 };
         handle_mouse_event(&mut app, event, cell_size).await;
         assert!(app.is_canvas_focused(ContentBlockId(1)));
     }
@@ -3019,7 +3019,7 @@ Append to `tui.rs`'s tests (or wherever mouse routing lives):
 - [ ] **Step 4: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent mouse_press_inside_canvas_focuses_it
+cargo test -p otto mouse_press_inside_canvas_focuses_it
 ```
 
 Expected: FAIL — `handle_mouse_event` doesn't exist or doesn't yet route to canvas focus.
@@ -3032,20 +3032,20 @@ In `tui.rs`:
 pub async fn handle_mouse_event(
     app: &mut App,
     event: crossterm::event::MouseEvent,
-    cell_size: savvagent_canvas::CellPixelSize,
+    cell_size: otto_canvas::CellPixelSize,
 ) {
     // Find a canvas containing the event's cell.
     let hit = app
         .canvas_rects
         .iter()
-        .find(|(_, rect)| savvagent_canvas::contains_cell(**rect, event.column, event.row))
+        .find(|(_, rect)| otto_canvas::contains_cell(**rect, event.column, event.row))
         .map(|(id, rect)| (*id, *rect));
     let Some((canvas_id, rect)) = hit else {
         // Pass through to whatever the chat input does (transcript scroll, etc.)
         return handle_non_canvas_mouse(app, event).await;
     };
 
-    let (x_px, y_px) = match savvagent_canvas::cell_to_pixel(
+    let (x_px, y_px) = match otto_canvas::cell_to_pixel(
         rect, cell_size, event.column, event.row,
     ) {
         Some(p) => p,
@@ -3059,54 +3059,54 @@ pub async fn handle_mouse_event(
 
     // Translate kind and dispatch.
     let kind = match event.kind {
-        crossterm::event::MouseEventKind::Down(_) => savvagent_plugin::MouseEventKind::Press,
-        crossterm::event::MouseEventKind::Up(_) => savvagent_plugin::MouseEventKind::Release,
+        crossterm::event::MouseEventKind::Down(_) => otto_plugin::MouseEventKind::Press,
+        crossterm::event::MouseEventKind::Up(_) => otto_plugin::MouseEventKind::Release,
         crossterm::event::MouseEventKind::Drag(_) | crossterm::event::MouseEventKind::Moved => {
-            savvagent_plugin::MouseEventKind::Move
+            otto_plugin::MouseEventKind::Move
         }
-        crossterm::event::MouseEventKind::ScrollUp => savvagent_plugin::MouseEventKind::ScrollUp,
-        crossterm::event::MouseEventKind::ScrollDown => savvagent_plugin::MouseEventKind::ScrollDown,
+        crossterm::event::MouseEventKind::ScrollUp => otto_plugin::MouseEventKind::ScrollUp,
+        crossterm::event::MouseEventKind::ScrollDown => otto_plugin::MouseEventKind::ScrollDown,
     };
     let button = match event.kind {
         crossterm::event::MouseEventKind::Down(b)
         | crossterm::event::MouseEventKind::Up(b)
         | crossterm::event::MouseEventKind::Drag(b) => Some(match b {
-            crossterm::event::MouseButton::Left => savvagent_plugin::MouseButton::Left,
-            crossterm::event::MouseButton::Right => savvagent_plugin::MouseButton::Right,
-            crossterm::event::MouseButton::Middle => savvagent_plugin::MouseButton::Middle,
+            crossterm::event::MouseButton::Left => otto_plugin::MouseButton::Left,
+            crossterm::event::MouseButton::Right => otto_plugin::MouseButton::Right,
+            crossterm::event::MouseButton::Middle => otto_plugin::MouseButton::Middle,
         }),
         _ => None,
     };
 
-    let portable = savvagent_plugin::MouseEventPortable {
+    let portable = otto_plugin::MouseEventPortable {
         kind, button, x_pixel: x_px, y_pixel: y_px,
         modifiers: convert_modifiers(event.modifiers),
     };
 
     if let Some(renderer) = app.canvas_registry.get_mut(canvas_id) {
-        if let Ok(outcome) = renderer.dispatch(savvagent_plugin::InputEvent::Mouse(portable)).await {
+        if let Ok(outcome) = renderer.dispatch(otto_plugin::InputEvent::Mouse(portable)).await {
             apply_canvas_effects(app, outcome.effects).await;
             // Mark dirty for re-render if needed.
         }
     }
 }
 
-fn convert_modifiers(km: crossterm::event::KeyModifiers) -> savvagent_plugin::KeyMods {
-    let mut out = savvagent_plugin::KeyMods::default();
+fn convert_modifiers(km: crossterm::event::KeyModifiers) -> otto_plugin::KeyMods {
+    let mut out = otto_plugin::KeyMods::default();
     out.shift = km.contains(crossterm::event::KeyModifiers::SHIFT);
     out.ctrl = km.contains(crossterm::event::KeyModifiers::CONTROL);
     out.alt = km.contains(crossterm::event::KeyModifiers::ALT);
     out
 }
 
-async fn apply_canvas_effects(app: &mut App, effects: Vec<savvagent_plugin::Effect>) {
+async fn apply_canvas_effects(app: &mut App, effects: Vec<otto_plugin::Effect>) {
     for effect in effects {
         match effect {
-            savvagent_plugin::Effect::OpenUrl { url, target } => match target {
-                savvagent_plugin::UrlTarget::SystemBrowser => {
+            otto_plugin::Effect::OpenUrl { url, target } => match target {
+                otto_plugin::UrlTarget::SystemBrowser => {
                     let _ = open_in_system_browser(&url).await;
                 }
-                savvagent_plugin::UrlTarget::ContinueConversation => {
+                otto_plugin::UrlTarget::ContinueConversation => {
                     app.pending_user_prompt = Some(url);
                 }
             },
@@ -3119,7 +3119,7 @@ async fn apply_canvas_effects(app: &mut App, effects: Vec<savvagent_plugin::Effe
 }
 ```
 
-(`open_in_system_browser` is a small helper that shells out — Task 24 implements it for Ctrl-O; here we reuse. If not yet implemented, factor it now into `crates/savvagent/src/plugin/builtin/html_canvas/open_in_browser.rs`.)
+(`open_in_system_browser` is a small helper that shells out — Task 24 implements it for Ctrl-O; here we reuse. If not yet implemented, factor it now into `crates/otto/src/plugin/builtin/html_canvas/open_in_browser.rs`.)
 
 - [ ] **Step 6: Wire the entrypoint**
 
@@ -3136,7 +3136,7 @@ Event::Mouse(mouse) => {
 - [ ] **Step 7: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent mouse_press_inside_canvas_focuses_it
+cargo test -p otto mouse_press_inside_canvas_focuses_it
 ```
 
 Expected: PASS.
@@ -3144,7 +3144,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent/src/tui.rs crates/savvagent/src/app.rs crates/savvagent/src/ui.rs
+git add crates/otto/src/tui.rs crates/otto/src/app.rs crates/otto/src/ui.rs
 git commit -m "feat(tui): mouse routing focuses canvas + dispatches events"
 ```
 
@@ -3153,7 +3153,7 @@ git commit -m "feat(tui): mouse routing focuses canvas + dispatches events"
 ## Task 22: Keyboard routing — Tab/Shift-Tab/Esc within canvas
 
 **Files:**
-- Modify: `crates/savvagent/src/tui.rs`
+- Modify: `crates/otto/src/tui.rs`
 
 When `AppFocus::Canvas`, intercept Tab (next focusable), Shift-Tab (prev), Esc (unfocus). Anything else passes through to the renderer as `InputEvent::Key`.
 
@@ -3194,7 +3194,7 @@ When `AppFocus::Canvas`, intercept Tab (next focusable), Shift-Tab (prev), Esc (
 - [ ] **Step 2: Run; verify they fail**
 
 ```bash
-cargo test -p savvagent tab_cycles_focused_element esc_unfocuses_canvas
+cargo test -p otto tab_cycles_focused_element esc_unfocuses_canvas
 ```
 
 Expected: FAIL.
@@ -3233,14 +3233,14 @@ pub async fn handle_key_event(app: &mut App, event: crossterm::event::KeyEvent) 
 
     // Everything else → dispatch to renderer as InputEvent::Key.
     if let AppFocus::Canvas { id, .. } = app.focus {
-        let portable = savvagent_plugin::KeyEventPortable {
+        let portable = otto_plugin::KeyEventPortable {
             // Map KeyCode → portable shape. Reuse the same mapper Phase 1
             // used for KeyScope plugin keybindings.
             ..convert_key_event(event)
         };
         if let Some(renderer) = app.canvas_registry.get_mut(id) {
             if let Ok(outcome) = renderer
-                .dispatch(savvagent_plugin::InputEvent::Key(portable))
+                .dispatch(otto_plugin::InputEvent::Key(portable))
                 .await
             {
                 apply_canvas_effects(app, outcome.effects).await;
@@ -3277,12 +3277,12 @@ async fn cycle_canvas_focus(app: &mut App, delta: i32) {
 }
 ```
 
-`convert_key_event` reuses whatever mapping Phase 1 set up for plugin keybindings — find it via `grep KeyEventPortable crates/savvagent/src/`.
+`convert_key_event` reuses whatever mapping Phase 1 set up for plugin keybindings — find it via `grep KeyEventPortable crates/otto/src/`.
 
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent tab_cycles_focused_element esc_unfocuses_canvas
+cargo test -p otto tab_cycles_focused_element esc_unfocuses_canvas
 ```
 
 Expected: PASS.
@@ -3290,7 +3290,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/tui.rs
+git add crates/otto/src/tui.rs
 git commit -m "feat(tui): keyboard routing Tab/Shift-Tab/Esc within canvas"
 ```
 
@@ -3299,7 +3299,7 @@ git commit -m "feat(tui): keyboard routing Tab/Shift-Tab/Esc within canvas"
 ## Task 23: Keyboard routing — Ctrl-J / Ctrl-K canvas traversal
 
 **Files:**
-- Modify: `crates/savvagent/src/tui.rs`
+- Modify: `crates/otto/src/tui.rs`
 
 Ctrl-J jumps focus to the next canvas in the transcript log (after the currently focused one); Ctrl-K jumps to the previous. From `ChatInput` focus, Ctrl-J jumps to the first canvas in the log; Ctrl-K to the last.
 
@@ -3324,7 +3324,7 @@ Ctrl-J jumps focus to the next canvas in the transcript log (after the currently
 - [ ] **Step 2: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent ctrl_j_jumps_to_next_canvas
+cargo test -p otto ctrl_j_jumps_to_next_canvas
 ```
 
 Expected: FAIL.
@@ -3400,7 +3400,7 @@ async fn handle_non_canvas_key(app: &mut App, event: crossterm::event::KeyEvent)
 - [ ] **Step 4: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent ctrl_j_jumps_to_next_canvas
+cargo test -p otto ctrl_j_jumps_to_next_canvas
 ```
 
 Expected: PASS.
@@ -3408,7 +3408,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/tui.rs
+git add crates/otto/src/tui.rs
 git commit -m "feat(tui): Ctrl-J/Ctrl-K canvas traversal"
 ```
 
@@ -3417,15 +3417,15 @@ git commit -m "feat(tui): Ctrl-J/Ctrl-K canvas traversal"
 ## Task 24: Keyboard routing — Ctrl-O open in browser
 
 **Files:**
-- Create: `crates/savvagent/src/plugin/builtin/html_canvas/open_in_browser.rs`
-- Modify: `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`
-- Modify: `crates/savvagent/src/tui.rs`
+- Create: `crates/otto/src/plugin/builtin/html_canvas/open_in_browser.rs`
+- Modify: `crates/otto/src/plugin/builtin/html_canvas/mod.rs`
+- Modify: `crates/otto/src/tui.rs`
 
 Ctrl-O on a focused canvas writes the canvas's source to a temp file and shells out to `xdg-open` / `open` / `start`. The temp file path includes the canvas id and a timestamp so reopening the same canvas doesn't blow away a previous one mid-read.
 
 - [ ] **Step 1: Create the helper module**
 
-Create `crates/savvagent/src/plugin/builtin/html_canvas/open_in_browser.rs`:
+Create `crates/otto/src/plugin/builtin/html_canvas/open_in_browser.rs`:
 
 ```rust
 //! Ctrl-O implementation: write canvas to a temp file and shell out
@@ -3439,7 +3439,7 @@ pub fn write_temp_html(id: u32, source: &str) -> std::io::Result<PathBuf> {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let path = std::env::temp_dir().join(format!("savvagent-canvas-{id}-{now}.html"));
+    let path = std::env::temp_dir().join(format!("otto-canvas-{id}-{now}.html"));
     std::fs::write(&path, source)?;
     Ok(path)
 }
@@ -3483,7 +3483,7 @@ mod tests {
 
 - [ ] **Step 2: Wire the module**
 
-In `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`, add:
+In `crates/otto/src/plugin/builtin/html_canvas/mod.rs`, add:
 
 ```rust
 pub mod open_in_browser;
@@ -3510,7 +3510,7 @@ pub mod open_in_browser;
 - [ ] **Step 4: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent ctrl_o_writes_temp_file_and_shells_open
+cargo test -p otto ctrl_o_writes_temp_file_and_shells_open
 ```
 
 Expected: FAIL.
@@ -3555,7 +3555,7 @@ In the key-routing match:
 - [ ] **Step 6: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent ctrl_o_writes_temp_file_and_shells_open
+cargo test -p otto ctrl_o_writes_temp_file_and_shells_open
 ```
 
 Expected: PASS.
@@ -3563,7 +3563,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/html_canvas/open_in_browser.rs crates/savvagent/src/plugin/builtin/html_canvas/mod.rs crates/savvagent/src/tui.rs
+git add crates/otto/src/plugin/builtin/html_canvas/open_in_browser.rs crates/otto/src/plugin/builtin/html_canvas/mod.rs crates/otto/src/tui.rs
 git commit -m "feat(tui): Ctrl-O writes canvas to temp file + shells open"
 ```
 
@@ -3572,8 +3572,8 @@ git commit -m "feat(tui): Ctrl-O writes canvas to temp file + shells open"
 ## Task 25: `KeyScope::OnFocusedCanvas` precedence enforcement
 
 **Files:**
-- Modify: `crates/savvagent/src/tui.rs`
-- Modify: `crates/savvagent/src/plugin/registry.rs` (or wherever scope-resolution lives)
+- Modify: `crates/otto/src/tui.rs`
+- Modify: `crates/otto/src/plugin/registry.rs` (or wherever scope-resolution lives)
 
 The spec says: built-in canvas keys (Tab, Shift-Tab, Esc, Ctrl-J, Ctrl-K, Ctrl-O) take precedence over plugin-registered `OnFocusedCanvas` bindings. The host runs the built-in matcher first; only on a miss does it look at plugin bindings.
 
@@ -3617,7 +3617,7 @@ The spec says: built-in canvas keys (Tab, Shift-Tab, Esc, Ctrl-J, Ctrl-K, Ctrl-O
 - [ ] **Step 2: Run; verify they fail**
 
 ```bash
-cargo test -p savvagent plugin_binding
+cargo test -p otto plugin_binding
 ```
 
 Expected: FAIL — either the test helpers don't exist or the precedence isn't enforced.
@@ -3649,7 +3649,7 @@ In `handle_key_event`, after the built-in match block but before passing through
 - [ ] **Step 4: Run; verify they pass**
 
 ```bash
-cargo test -p savvagent plugin_binding
+cargo test -p otto plugin_binding
 ```
 
 Expected: PASS.
@@ -3657,7 +3657,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/savvagent/src/tui.rs
+git add crates/otto/src/tui.rs
 git commit -m "feat(tui): canvas key precedence over plugin OnFocusedCanvas bindings"
 ```
 
@@ -3666,15 +3666,15 @@ git commit -m "feat(tui): canvas key precedence over plugin OnFocusedCanvas bind
 ## Task 26: Transcript snapshot triggers
 
 **Files:**
-- Modify: `crates/savvagent-host/src/session.rs` (or wherever transcript saving lives)
-- Modify: `crates/savvagent/src/app.rs` (snapshot collection)
+- Modify: `crates/otto-host/src/session.rs` (or wherever transcript saving lives)
+- Modify: `crates/otto/src/app.rs` (snapshot collection)
 
 Snapshots fire at: every `TurnComplete`, before manual `/save`, at clean TUI shutdown. The snapshot iterates all canvases in the registry; for each non-streaming one, calls `snapshot_state()` and base64-encodes the result into the matching `Entry::Canvas.state` field before writing the transcript JSON.
 
 - [ ] **Step 1: Find the existing transcript-save path**
 
 ```bash
-grep -rn "transcript.*write\|save_transcript\|to_json\|TurnComplete" crates/savvagent crates/savvagent-host | head -20
+grep -rn "transcript.*write\|save_transcript\|to_json\|TurnComplete" crates/otto crates/otto-host | head -20
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -3699,7 +3699,7 @@ grep -rn "transcript.*write\|save_transcript\|to_json\|TurnComplete" crates/savv
 - [ ] **Step 3: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent transcript_save_includes_canvas_state
+cargo test -p otto transcript_save_includes_canvas_state
 ```
 
 Expected: FAIL — `save_transcript` doesn't yet call `snapshot_state`.
@@ -3728,7 +3728,7 @@ for entry in &mut app.entries {
 // ... existing serde_json::to_writer ...
 ```
 
-Add `base64 = { workspace = true }` to `crates/savvagent/Cargo.toml` if not already present.
+Add `base64 = { workspace = true }` to `crates/otto/Cargo.toml` if not already present.
 
 - [ ] **Step 5: Wire the snapshot to fire on `TurnComplete`**
 
@@ -3741,7 +3741,7 @@ In the TUI shutdown path (search `tui.rs` for `Event::Quit` or similar), call sa
 - [ ] **Step 7: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent transcript_save_includes_canvas_state
+cargo test -p otto transcript_save_includes_canvas_state
 ```
 
 Expected: PASS.
@@ -3749,7 +3749,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add crates/savvagent crates/savvagent-host
+git add crates/otto crates/otto-host
 git commit -m "feat(host): snapshot canvas state on save / TurnComplete / shutdown"
 ```
 
@@ -3758,14 +3758,14 @@ git commit -m "feat(host): snapshot canvas state on save / TurnComplete / shutdo
 ## Task 27: Transcript restore on `/resume`
 
 **Files:**
-- Modify: `crates/savvagent/src/plugin/builtin/html_canvas/mod.rs`
+- Modify: `crates/otto/src/plugin/builtin/html_canvas/mod.rs`
 
 When the TUI loads a transcript via `/resume`, each `Entry::Canvas { source, state }` triggers `HtmlCanvas::new(source)`; if `state` is `Some`, base64-decode and pass to `renderer.restore_state(&bytes)`. On error, log and continue (renderer falls back to defaults).
 
 - [ ] **Step 1: Find the existing `/resume` path**
 
 ```bash
-grep -rn "resume\|load_transcript\|create_renderer.*Canvas" crates/savvagent | head -20
+grep -rn "resume\|load_transcript\|create_renderer.*Canvas" crates/otto | head -20
 ```
 
 - [ ] **Step 2: Write the failing test**
@@ -3787,7 +3787,7 @@ grep -rn "resume\|load_transcript\|create_renderer.*Canvas" crates/savvagent | h
         let renderer = app.canvas_registry.get(ContentBlockId(1)).expect("renderer present");
         // Take a snapshot of the live state; verify open_details is non-empty.
         let live = renderer.snapshot_state().expect("non-empty after restore");
-        let live_state = savvagent_canvas::CanvasState::from_bytes(&live).unwrap();
+        let live_state = otto_canvas::CanvasState::from_bytes(&live).unwrap();
         assert!(!live_state.open_details.is_empty());
     }
 ```
@@ -3795,7 +3795,7 @@ grep -rn "resume\|load_transcript\|create_renderer.*Canvas" crates/savvagent | h
 - [ ] **Step 3: Run; verify it fails**
 
 ```bash
-cargo test -p savvagent resume_restores_canvas_state
+cargo test -p otto resume_restores_canvas_state
 ```
 
 Expected: FAIL.
@@ -3834,7 +3834,7 @@ if let Some(state_b64) = state.as_deref() {
 - [ ] **Step 5: Run; verify it passes**
 
 ```bash
-cargo test -p savvagent resume_restores_canvas_state
+cargo test -p otto resume_restores_canvas_state
 ```
 
 Expected: PASS.
@@ -3842,7 +3842,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add crates/savvagent/src/plugin/builtin/html_canvas/mod.rs
+git add crates/otto/src/plugin/builtin/html_canvas/mod.rs
 git commit -m "feat(tui): /resume restores canvas interactive state"
 ```
 
@@ -3913,7 +3913,7 @@ In `CHANGELOG.md`, replace the existing `## [0.17.0] - unreleased` block with th
 
 ### Known Issues
 
-- Windows CI continues to skip `savvagent-canvas` and `savvagent` test
+- Windows CI continues to skip `otto-canvas` and `otto` test
   binaries due to a Blitz / DirectWrite font-discovery hang on the
   GitHub-hosted `windows-latest` runner image. Local Windows dev runs
   exercise these crates normally. Tracked separately.
