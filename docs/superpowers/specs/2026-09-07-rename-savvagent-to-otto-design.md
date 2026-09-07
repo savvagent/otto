@@ -120,6 +120,35 @@ the next release regardless of size).
   spawns at runtime (`otto-tool-fs`); `cargo build` (bare, matching `default-members`) must succeed,
   not just `cargo build --workspace`.
 
+## Spec critique corrections (round 1)
+
+- The plugin ABI rename is broader than the WIT package alone: `crates/savvagent-plugin-wasm`'s
+  manifest format requires a `[plugin].savvagent` key (`ManifestPlugin::savvagent`), and its
+  discovery module exposes public `SourceScope::{ProjectSavvagent,UserSavvagent}` variants. Both are
+  part of the plugin's public interface and must rename to `otto` alongside the WIT package, with
+  every example/fixture manifest (`savvagent = "^0.18"` etc.) updated to `otto = "^0.18"`.
+- The committed `.wasm` test fixtures under `crates/savvagent-plugin-wasm/tests/fixtures/*.wasm` are
+  compiled artifacts embedding the old WIT world/interface names. They must be rebuilt from
+  `tests/fixtures-src/` after the WIT package/manifest key rename and re-committed, not left as
+  stale binaries — otherwise the plugin-wasm adapter test suite silently keeps testing the old ABI
+  name.
+- Hardcoded GitHub repository identifiers for the self-update and in-app changelog features
+  (`crates/savvagent/src/plugin/builtin/self_update/{check,apply}.rs`'s `REPO_NAME` constant and
+  release-API URL, `crates/savvagent/src/plugin/builtin/changelog/fetch.rs`'s raw-changelog URL) are
+  a runtime-visible surface, not just documentation — these must change from
+  `savvagent/savvagent-cli` to `savvagent/otto` or `/update` and the in-app changelog viewer will
+  keep pointing at the old repository.
+- The final tracked-file grep sweep is broadened to **all tracked files**, explicitly including
+  `.gitignore` (which references old crate directory paths in its own comments/patterns) and every
+  tracked file under `.claude/**` (not just `tui-engineer/SKILL.md`).
+- Verification of the provider-transport-split env var rename (`SAVVAGENT_PROVIDER_URL` →
+  `OTTO_PROVIDER_URL`) is made explicit rather than relying on compilation alone: confirm the
+  in-process path is selected when unset, and the MCP-over-HTTP path is selected when set, matching
+  existing test coverage for that env var under its new name.
+- The `CHANGELOG.md` historical-entry exception is implemented by excluding only already-dated
+  release sections from the final grep sweep, not the whole file — the `[Unreleased]` section must
+  still be caught by the sweep if it accidentally retains an old-name reference.
+
 ## Risks & Open Questions
 
 - 383 files is large enough that a single missed reference is likely on the first pass; the plan

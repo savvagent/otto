@@ -154,6 +154,29 @@ fixture under `examples/plugin-hello-*` referencing the WIT package, `CHANGELOG.
       reference the old package) to the new `otto:plugin@0.1.0` package.
 - [ ] Update `.github/workflows/wit-dep-guard.yml` and `.github/workflows/wit-portability-guard.yml`
       for the new WIT package name wherever they reference it literally.
+- [ ] Rename the plugin manifest's public `[plugin].savvagent` key to `[plugin].otto` in
+      `crates/otto-plugin-wasm/src/manifest.rs` (`ManifestPlugin::savvagent` field → `::otto`,
+      including its doc comment and `validate_version_range` call site), and update every example
+      and test-fixture manifest string in that file and under `examples/plugin-hello-*` from
+      `savvagent = "^0.18"` (etc.) to `otto = "^0.18"`.
+- [ ] Rename the public `SourceScope::{ProjectSavvagent,UserSavvagent}` enum variants in
+      `crates/otto-plugin-wasm/src/discovery.rs` to `{ProjectOtto,UserOtto}` and update every call
+      site and test assertion referencing them.
+- [ ] Rebuild the committed `.wasm` test fixtures under
+      `crates/otto-plugin-wasm/tests/fixtures/*.wasm` from their sources in
+      `crates/otto-plugin-wasm/tests/fixtures-src/*` now that the WIT package and manifest key have
+      changed, and re-commit the rebuilt binaries — do not leave the old compiled artifacts in
+      place. Run the plugin-wasm adapter test suite (`cargo test -p otto-plugin-wasm`) to confirm
+      they load correctly under the new ABI names.
+- [ ] Rename the hardcoded GitHub repository identifiers used by the self-update and in-app
+      changelog features: `crates/otto/src/plugin/builtin/self_update/apply.rs`'s `REPO_NAME`
+      constant and the release-download URL assertion, `crates/otto/src/plugin/builtin/self_update/check.rs`'s
+      release-API URL constant, and `crates/otto/src/plugin/builtin/changelog/fetch.rs`'s raw-changelog
+      URL constant and its test assertion — all from `savvagent/savvagent-cli` to `savvagent/otto`.
+- [ ] Verify the provider-transport-split env var rename explicitly (not just via compilation):
+      confirm existing tests covering `SAVVAGENT_PROVIDER_URL` (now `OTTO_PROVIDER_URL`) still pass
+      under the new name — unset selects the in-process `InProcessProviderClient` path, set selects
+      the MCP-over-HTTP `rmcp` Streamable HTTP path.
 - [ ] Update installer URL references (`.../savvagent/savvagent-cli/releases/latest/download/
       savvagent-installer.sh` and `.ps1`) to `.../savvagent/otto/releases/latest/download/
       otto-installer.sh` in `README.md` and any install script under the repo.
@@ -196,6 +219,10 @@ fixture under `examples/plugin-hello-*` referencing the WIT package, `CHANGELOG.
       names, cache keys, artifact names, WIT package references not already handled in Task 3) and
       replace with `otto` equivalents.
 - [ ] Sweep `.claude/skills/tui-engineer/SKILL.md` for `savvagent` occurrences and replace.
+- [ ] Sweep every other tracked file under `.claude/**` (e.g. `.claude/skills/rust-engineer/SKILL.md`)
+      for `savvagent` occurrences and replace, not just `tui-engineer/SKILL.md`.
+- [ ] Sweep `.gitignore` for `savvagent`-derived path references (crate directory paths, generated
+      file comments) and update them to the new `otto-*` crate directory names.
 - [ ] Sweep `crates/otto/locales/{en,es,hi,pt}.toml` for every string mentioning "savvagent",
       `~/.savvagent/...`, `savvagent-tool-*`, or `SAVVAGENT_TOOL_*_BIN` and update all four locale
       catalogs consistently (script the substitution rather than hand-editing four files
@@ -205,12 +232,12 @@ fixture under `examples/plugin-hello-*` referencing the WIT package, `CHANGELOG.
       name) with any additional docs/CI/locale-specific notes, if not already fully covered by
       Task 3's entry.
 - [ ] Final verification sweep: `grep -ril "savvagent" --include="*" . | grep -v -E
-      '(^\./target/|^\./\.git/|Cargo\.lock|^\./CHANGELOG\.md)'` (case-insensitive) across the whole
-      tree, excluding `target/`, `.git/`, `Cargo.lock`, and `CHANGELOG.md` (whose dated history is
-      intentionally left alone) — must return zero hits (aside from the `savvagent` GitHub org
-      handle, which is intentional and should be spot-checked, not blanket-flagged as a miss).
-      Separately confirm `CHANGELOG.md`'s `[Unreleased]` section (and only that section) now
-      mentions `otto` for anything newly documented.
+      '(^\./target/|^\./\.git/|Cargo\.lock)'` (case-insensitive) across the whole tree, excluding
+      only `target/`, `.git/`, and `Cargo.lock` — must return zero hits except (a) the intentional
+      `savvagent` GitHub org handle, spot-checked rather than blanket-flagged, and (b) dated,
+      already-released `CHANGELOG.md` sections (verify by inspecting each `CHANGELOG.md` hit
+      individually: a hit inside the `[Unreleased]` section is a real miss and must be fixed; a hit
+      inside a dated `## X.Y.Z - YYYY-MM-DD` section is expected historical record).
 - [ ] `cargo build --workspace --all-targets` — final green build.
 - [ ] `cargo test --workspace --no-fail-fast` — final green test run.
 - [ ] `cargo clippy --workspace --all-targets` — no new warnings (`RUSTFLAGS=-D warnings` in CI).
