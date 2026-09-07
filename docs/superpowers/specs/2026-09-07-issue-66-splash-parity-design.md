@@ -23,28 +23,33 @@ and needs tests to prove the shared rendering path stays aligned.
 
 ## Approach
 
-Route both experiences through the existing startup splash renderer instead of
+Route both experiences through a single splash-content source instead of
 maintaining two independent layouts.
 
-1. Keep `crates/otto/src/splash.rs` as the single source of truth for the
-   splash visuals. The existing `render(frame, area, sandbox)` function already
-   owns the logo, tagline, sandbox truthfulness line, version string, and
-   hint.
-2. Update `crates/otto/src/ui.rs` so the fullscreen plugin-screen paint path
-   recognizes the `"splash"` screen id and calls `crate::splash::render(...)`
-   with `app.splash_sandbox`, just like the startup overlay path already does.
-   That makes `/splash` and startup render from the same function and the same
-   cached sandbox state.
-3. Simplify `crates/otto/src/plugin/builtin/splash/screen.rs` so the screen
-   only owns identity and dismiss behavior. Because the shared renderer’s hint
-   says “press any key to continue,” the screen should also close on any key,
-   matching the startup overlay instead of requiring Esc/Enter.
-4. Remove now-unused connect-status-specific splash plugin state from
+1. Keep `crates/otto/src/splash.rs` as the single source of truth for splash
+   content by extracting a helper that produces the shared logo/tagline/sandbox
+   lines and versioned hint from the current `SandboxSplashState`. The startup
+   `render(frame, area, sandbox)` path should consume that helper rather than
+   keeping separate inline content assembly.
+2. Update `crates/otto/src/plugin/builtin/splash/screen.rs` so
+   `SplashScreen::render` returns that same shared splash content for screen
+   stack consumers (including egui), and `SplashScreen::tips()` returns no
+   extra footer hint chrome that would diverge from startup.
+3. Update `crates/otto/src/ui.rs` so the fullscreen ratatui plugin-screen paint
+   path recognizes the `"splash"` screen id and calls `crate::splash::render(...)`
+   with the same `SandboxSplashState`, preserving the centered fullscreen
+   startup layout for `/splash` in the terminal UI instead of left-aligning the
+   shared text lines.
+4. Feed the current `app.splash_sandbox` into `/splash` screen creation from
+   the screen-open path so the plugin screen and startup overlay both render
+   from the same cached, truthfulness-preserving sandbox state.
+5. Remove now-unused connect-status-specific splash plugin state from
    `crates/otto/src/plugin/builtin/splash/mod.rs` if the shared renderer no
    longer consumes it.
-5. Add targeted tests around the fullscreen screen paint special-case and the
-   any-key dismissal behavior so future edits cannot silently reintroduce the
-   divergent `/splash` view.
+6. Add targeted tests around shared content generation, the fullscreen
+   splash-screen paint special-case, empty tips, and the any-key dismissal
+   behavior so future edits cannot silently reintroduce the divergent `/splash`
+   view.
 
 ## Scope
 
@@ -53,6 +58,9 @@ maintaining two independent layouts.
 - `/splash` dismiss behavior needed to match the shared hint text
 - Cleanup of splash-plugin-only state that existed solely for the old
   connect-status screen
+- Minimal screen-open plumbing needed to inject `app.splash_sandbox` into the
+  `/splash` screen instance
+- Egui compatibility via the shared `SplashScreen::render` content path
 - Targeted Rust tests for the new shared path
 
 **Out:**
@@ -76,8 +84,9 @@ and dismiss behavior are aligned with the existing startup splash.
 ## Premise corrections
 
 - The current `/splash` screen is not just missing styling — it is a separate
-  connect-status-oriented UI path. Fixing the issue cleanly means reusing the
-  startup renderer rather than restyling the plugin screen’s current text.
+  connect-status-oriented UI path. Fixing the issue cleanly means reusing one
+  shared content source across startup, ratatui screen-stack rendering, and any
+  other frontend that consumes `SplashScreen::render`.
 - The authoritative sandbox line should come from `App::splash_sandbox`, which
   is already loaded once and refreshed from the active host. Re-reading config
   or synthesizing a second sandbox source for `/splash` would regress the
@@ -94,21 +103,25 @@ and dismiss behavior are aligned with the existing startup splash.
 - **A small `ui.rs` special-case for the splash screen is acceptable.**
   Rationale: `paint_screen` already owns fullscreen-screen rendering, and
   routing one screen id through the existing renderer avoids inventing a second
-  splash layout data model.
+  ratatui splash layout.
 - **This ships as a PATCH release (`v0.25.3`).** Rationale: it is a bug fix
   with no public-interface change.
 
 ## Goal & Success Criteria
 
 Make `/splash` render the same startup splash visuals by reusing the existing
-startup renderer, while preserving the cached sandbox-state truthfulness and
-keeping the change internal to the TUI crate.
+shared splash content and the existing startup renderer, while preserving the
+cached sandbox-state truthfulness and keeping the change internal to the TUI
+crate.
 
 - [ ] Opening `/splash` paints the same logo, tagline, sandbox line, and
       versioned hint that startup paints.
 - [ ] Both startup splash and `/splash` derive their visible content from the
-      same rendering function in `crates/otto/src/splash.rs`.
+      same shared content helper in `crates/otto/src/splash.rs`, and ratatui
+      `/splash` uses the existing centered startup renderer.
 - [ ] `/splash` key handling matches the shared hint by closing on any key.
+- [ ] `/splash` adds no extra screen tips/footer hint outside the shared splash
+      content.
 - [ ] `cargo test -p otto splash` and any targeted `ui`/plugin splash tests
       added for this change pass.
 - [ ] `cargo build --workspace --all-targets`, `cargo test --workspace
@@ -122,8 +135,12 @@ keeping the change internal to the TUI crate.
   disk.
 - The splash fullscreen special-case must not affect non-splash screens; other
   screen ids should continue rendering through `Screen::render`.
+- Frontends that use `Screen::render` directly must still receive the shared
+  splash content even if they do not use the ratatui fullscreen special-case.
 - Key handling for `/splash` should remain non-panicking and close cleanly for
   printable and non-printable keys alike.
+- `/splash` must not add a second dismiss hint via `tips()` once the shared
+  hint is rendered inline.
 - Removing the connect-status-specific splash state must not leave dead hook
   subscriptions or stale tests behind.
 
