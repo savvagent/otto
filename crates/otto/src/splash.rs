@@ -291,4 +291,11 @@ mod tests {
         let state = SandboxSplashState::from_host_config(&cfg);
         assert!(matches!(state, SandboxSplashState::OffExplicit));
     }
+
+    #[test]
+    fn logo_rows_match_logo_width() {
+        for row in LOGO {
+            assert_eq!(row.chars().count(), usize::from(LOGO_WIDTH));
+        }
+    }
 }
