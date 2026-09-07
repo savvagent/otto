@@ -14,7 +14,9 @@ use otto_plugin::{
     TextMods, ThemeColor,
 };
 
-use super::provider_common::{BuiltinProviderPlugin, build_dynamic_caps};
+use super::provider_common::{
+    BuiltinProviderPlugin, DynamicCapsOutcome, ProviderBuildOutcome, build_dynamic_caps,
+};
 
 const PLUGIN_ID: &str = "internal:provider-gemini";
 const PROVIDER_ID: &str = "gemini";
@@ -87,27 +89,45 @@ impl ProviderGeminiPlugin {
         .expect("static provider capabilities are valid")
     }
 
-    /// Attempt to build a [`ProviderRegistration`] from the keyring and the
-    /// plugin's static capability metadata. Returns `Ok(None)` when
-    /// credentials are absent.
-    pub(crate) async fn try_build_registration(
-        &self,
-    ) -> Result<Option<(ProviderRegistration, Option<String>)>, String> {
-        let key = match crate::creds::load(PROVIDER_ID) {
-            Ok(Some(k)) => k,
-            Ok(None) => return Ok(None),
-            Err(e) => return Err(format!("keyring read: {e}")),
+    /// Attempt to build a [`ProviderRegistration`] from the keyring (or the
+    /// `GEMINI_API_KEY`/`GOOGLE_API_KEY` environment fallback) and the
+    /// plugin's static capability metadata.
+    pub(crate) async fn try_build_registration(&self) -> Result<ProviderBuildOutcome, String> {
+        let keyring_key = match crate::creds::load(PROVIDER_ID) {
+            Ok(Some(k)) => Some(k),
+            Ok(None) => None,
+            Err(e) => {
+                tracing::warn!(provider = PROVIDER_ID, error = %e,
+                    "keyring read failed; falling back to environment credential check");
+                None
+            }
         };
-        let provider = provider_gemini::GeminiProvider::builder()
-            .api_key(&key)
-            .build()
-            .map_err(|e| format!("client build: {e}"))?;
+        let env_key_present = keyring_key.is_none()
+            && (std::env::var("GEMINI_API_KEY").is_ok_and(|v| !v.is_empty())
+                || std::env::var("GOOGLE_API_KEY").is_ok_and(|v| !v.is_empty()));
+        if keyring_key.is_none() && !env_key_present {
+            return Ok(ProviderBuildOutcome::Unavailable);
+        }
+        let mut builder = provider_gemini::GeminiProvider::builder();
+        if let Some(key) = &keyring_key {
+            builder = builder.api_key(key);
+        }
+        // else: keyring had no entry but GEMINI_API_KEY/GOOGLE_API_KEY is
+        // set — build() resolves it from the environment itself.
+        let provider = builder.build().map_err(|e| format!("client build: {e}"))?;
         let client: Arc<dyn ProviderClient + Send + Sync> =
             Arc::new(InProcessProviderClient::new(Arc::new(provider)));
         // Prefer the live /v1beta/models catalog so deprecated ids drop out
-        // automatically. Falls back to the curated static list on any error.
+        // automatically. Falls back to the curated static list on a
+        // transient/unsupported error, or rejects the provider outright on
+        // an auth/quota error.
         let (caps, note) =
-            build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await;
+            match build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await {
+                DynamicCapsOutcome::Ready(caps, note) => (caps, note),
+                DynamicCapsOutcome::Rejected(reason) => {
+                    return Ok(ProviderBuildOutcome::Rejected(reason));
+                }
+            };
         let reg = ProviderRegistration::new(
             otto_protocol::ProviderId::new(PROVIDER_ID)
                 .expect("PROVIDER_ID is a valid provider id"),
@@ -127,7 +147,7 @@ impl ProviderGeminiPlugin {
                 model: "gemini-2.5-pro".into(),
             },
         ]);
-        Ok(Some((reg, note)))
+        Ok(ProviderBuildOutcome::Ready(reg, note))
     }
 
     fn try_connect_from_keyring(&mut self) -> Option<()> {

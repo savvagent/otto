@@ -235,9 +235,25 @@ fn map_reqwest_error(e: reqwest::Error) -> ProviderError {
     }
 }
 
-/// Build a `Network`-kind [`ProviderError`] that surfaces the response body
-/// alongside the HTTP status. The body is truncated at 512 bytes so a wall of
-/// JSON doesn't blow up the TUI note line.
+/// Map an HTTP status code from any OpenAI REST endpoint to the closest
+/// [`ErrorKind`]. Shared between `/v1/chat/completions` and `/v1/models` so
+/// a 401 looks like an auth failure no matter which call surfaced it.
+fn status_to_error_kind(status: u16) -> ErrorKind {
+    match status {
+        400 => ErrorKind::InvalidRequest,
+        401 => ErrorKind::Authentication,
+        403 => ErrorKind::PermissionDenied,
+        404 => ErrorKind::ModelNotFound,
+        413 => ErrorKind::ContextLengthExceeded,
+        429 => ErrorKind::RateLimited,
+        500 | 502 | 503 | 504 => ErrorKind::Overloaded,
+        _ => ErrorKind::Internal,
+    }
+}
+
+/// Build a [`ProviderError`] classified by HTTP status, surfacing the
+/// response body alongside it. The body is truncated at 512 bytes so a wall
+/// of JSON doesn't blow up the TUI note line.
 fn http_status_error(label: &str, status: reqwest::StatusCode, body: String) -> ProviderError {
     let truncated = if body.len() > 512 {
         format!("{}…", &body[..512])
@@ -250,7 +266,7 @@ fn http_status_error(label: &str, status: reqwest::StatusCode, body: String) -> 
         format!("{label} returned HTTP {status}: {truncated}")
     };
     ProviderError {
-        kind: ErrorKind::Network,
+        kind: status_to_error_kind(status.as_u16()),
         message,
         retry_after_ms: None,
         provider_code: None,
@@ -266,16 +282,7 @@ async fn parse_error_response(resp: reqwest::Response) -> ProviderError {
         .and_then(|s| s.parse::<u64>().ok())
         .map(|s| s * 1000);
 
-    let kind = match status.as_u16() {
-        400 => ErrorKind::InvalidRequest,
-        401 => ErrorKind::Authentication,
-        403 => ErrorKind::PermissionDenied,
-        404 => ErrorKind::ModelNotFound,
-        413 => ErrorKind::ContextLengthExceeded,
-        429 => ErrorKind::RateLimited,
-        500 | 502 | 503 | 504 => ErrorKind::Overloaded,
-        _ => ErrorKind::Internal,
-    };
+    let kind = status_to_error_kind(status.as_u16());
 
     let body = resp.text().await.unwrap_or_default();
     let (message, provider_code) = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
@@ -492,7 +499,11 @@ mod list_models_tests {
             .build()
             .unwrap();
         let err = provider.list_models().await.expect_err("must fail on 401");
-        assert!(matches!(err.kind, ErrorKind::Network), "kind: {:?}", err);
+        assert!(
+            matches!(err.kind, ErrorKind::Authentication),
+            "kind: {:?}",
+            err
+        );
         assert!(err.message.contains("HTTP 401"), "msg: {}", err.message);
         // The response body must show up in the error so a user staring at
         // the TUI note can tell `invalid_api_key` from `model_overloaded`.

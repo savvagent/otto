@@ -327,7 +327,7 @@ impl OttoApp {
             &self.tool_bins,
         )
         .await;
-        crate::apply_pending_pool_add(&mut self.app, &self.host_slot).await;
+        crate::apply_pending_pool_add(&mut self.app, &self.host_slot, false).await;
         crate::apply_pending_gate(&mut self.app, &self.host_slot).await;
         crate::apply_pending_in_process_tools(&mut self.app, &self.host_slot).await;
         crate::apply_pending_routing_reload(&mut self.app, &self.host_slot).await;

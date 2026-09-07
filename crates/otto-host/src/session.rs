@@ -139,8 +139,15 @@ pub enum HostError {
     #[error("{0}")]
     Startup(#[from] anyhow::Error),
     /// The provider returned an SPP-level error.
-    #[error("provider error: {kind:?}: {message}", kind = .0.kind, message = .0.message)]
-    Provider(ProviderError),
+    #[error("{name} rejected the request: {message}", message = .error.message)]
+    Provider {
+        /// Human-readable name of the provider that returned the error
+        /// (e.g. `"Anthropic"`), captured from the lease before it was
+        /// dropped.
+        name: String,
+        /// The underlying SPP-level error.
+        error: ProviderError,
+    },
     /// Loop ran past [`HostConfig::max_iterations`] without reaching `end_turn`.
     #[error("tool-use loop exceeded {0} iterations")]
     LoopLimit(u32),
@@ -163,6 +170,29 @@ pub enum HostError {
     )]
     #[error("malformed assistant response: {0}")]
     MalformedResponse(String),
+}
+
+#[cfg(test)]
+mod host_error_tests {
+    use super::*;
+    use otto_protocol::ErrorKind;
+
+    #[test]
+    fn provider_error_display_includes_provider_name() {
+        let err = HostError::Provider {
+            name: "Anthropic".into(),
+            error: ProviderError {
+                kind: ErrorKind::Authentication,
+                message: "invalid api key".into(),
+                retry_after_ms: None,
+                provider_code: None,
+            },
+        };
+        assert_eq!(
+            err.to_string(),
+            "Anthropic rejected the request: invalid api key"
+        );
+    }
 }
 
 /// Status of one tool call inside a [`TurnOutcome`].
@@ -1220,6 +1250,7 @@ impl Host {
                 entry.lease()
                 // `pool` guard dropped here
             };
+            let provider_display_name = lease.display_name().to_string();
 
             // Spawn the provider call so we can race it against a cancel signal.
             let client = Arc::clone(lease.client());
@@ -1285,7 +1316,10 @@ impl Host {
             if let Some(task) = forwarder {
                 let _ = task.await;
             }
-            let resp = resp_result.map_err(HostError::Provider)?;
+            let resp = resp_result.map_err(|error| HostError::Provider {
+                name: provider_display_name,
+                error,
+            })?;
             tracing::debug!(
                 iteration = iterations,
                 stop_reason = ?resp.stop_reason,

@@ -535,6 +535,11 @@ pub struct App {
     pub input_mode: InputMode,
     pub model: String,
     pub transcript_dir: PathBuf,
+    /// Mirrors `config_file.startup.verbose` at the moment the host was
+    /// bootstrapped (`HostBoot::startup_verbose`, `false` when no host was
+    /// built at startup). Gates whether `apply_pending_pool_add`'s
+    /// startup-triggered drain surfaces rejected/fallback notes.
+    pub startup_verbose: bool,
 
     /// Finalized + in-progress conversation entries.
     pub entries: Vec<Entry>,
@@ -970,6 +975,7 @@ impl App {
             input_mode: InputMode::Editing,
             model,
             transcript_dir,
+            startup_verbose: false,
             entries: Vec::new(),
             live_text: String::new(),
             is_loading: false,

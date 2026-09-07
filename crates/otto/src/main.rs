@@ -230,6 +230,11 @@ pub(crate) struct HostBoot {
     pub startup_notes: Vec<String>,
     /// Seed data for the `/mcp` manager screen.
     pub mcp_manager_seed: McpManagerSeed,
+    /// Mirrors `config_file.startup.verbose` at the moment the host was
+    /// built. Carried forward onto `App` so the async pool-add drain
+    /// (`apply_pending_pool_add`) can apply the same startup-quiet gate
+    /// after `ConfigFile` itself has gone out of scope.
+    pub startup_verbose: bool,
 }
 
 #[allow(dead_code)]
@@ -306,20 +311,23 @@ pub(crate) async fn build_app_with_host(
     project_root: std::path::PathBuf,
     tool_bins: ToolBins,
 ) -> Result<(App, HostSlot, std::path::PathBuf, ToolBins)> {
-    let (header_model, initial_provider, startup_notes, mcp_manager_seed) = match &initial {
-        Some(boot) => (
-            boot.header_model.clone(),
-            boot.provider_id,
-            boot.startup_notes.clone(),
-            boot.mcp_manager_seed.clone(),
-        ),
-        None => (
-            "(disconnected)".to_string(),
-            None,
-            Vec::new(),
-            McpManagerSeed::default(),
-        ),
-    };
+    let (header_model, initial_provider, startup_notes, mcp_manager_seed, startup_verbose) =
+        match &initial {
+            Some(boot) => (
+                boot.header_model.clone(),
+                boot.provider_id,
+                boot.startup_notes.clone(),
+                boot.mcp_manager_seed.clone(),
+                boot.startup_verbose,
+            ),
+            None => (
+                "(disconnected)".to_string(),
+                None,
+                Vec::new(),
+                McpManagerSeed::default(),
+                false,
+            ),
+        };
 
     let host_slot: HostSlot = Arc::new(RwLock::new(initial.map(|boot| boot.host)));
     let mcp_statuses = if let Some(host) = current_host(&host_slot).await {
@@ -335,6 +343,7 @@ pub(crate) async fn build_app_with_host(
     let initial_locale = crate::plugin::builtin::language::catalog::detect_initial();
     rust_i18n::set_locale(&initial_locale);
     let mut app = App::new(header_model, transcript_dir, initial_locale);
+    app.startup_verbose = startup_verbose;
     app.load_prompt_history(&project_root);
 
     // Load user-defined hooks from settings.json. The HooksIndex is
@@ -512,6 +521,7 @@ async fn bootstrap_pool_host(
                     provider_id: None,
                     startup_notes: notes,
                     mcp_manager_seed: McpManagerSeed::default(),
+                    startup_verbose: config_file.startup.verbose,
                 });
             }
             Err(e) => {
@@ -535,23 +545,42 @@ async fn bootstrap_pool_host(
     macro_rules! try_provider {
         ($plugin:expr, $log_name:literal, $spec_id:literal) => {{
             match tokio::time::timeout(timeout_dur, $plugin.try_build_registration()).await {
-                Ok(Ok(Some((reg, fallback_note)))) => {
+                Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Ready(reg, fallback_note))) => {
                     providers.push(reg);
                     if let Some(note) = fallback_note {
-                        deferred_notes.push(note);
+                        if config_file.startup.verbose {
+                            deferred_notes.push(note);
+                        }
                     }
                 }
-                Ok(Ok(None)) => {
+                Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Unavailable)) => {
                     // No credentials stored; user will /connect later.
+                }
+                Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Rejected(reason))) => {
+                    // A key was found but list_models rejected it (bad key,
+                    // no credit, rate-limited, org disabled, ...). Don't
+                    // register a falsely-healthy provider; always log, only
+                    // surface a transcript note when verbose.
+                    tracing::warn!(plugin = $log_name, reason = %reason, "provider key rejected at startup");
+                    if config_file.startup.verbose {
+                        deferred_notes.push(rust_i18n::t!(
+                            "notes.startup-build-failed",
+                            name = $log_name,
+                            err = reason,
+                            id = $spec_id
+                        ).to_string());
+                    }
                 }
                 Ok(Err(e)) => {
                     tracing::warn!(plugin = $log_name, error = %e, "provider build failed at startup");
-                    deferred_notes.push(rust_i18n::t!(
-                        "notes.startup-build-failed",
-                        name = $log_name,
-                        err = e.to_string(),
-                        id = $spec_id
-                    ).to_string());
+                    if config_file.startup.verbose {
+                        deferred_notes.push(rust_i18n::t!(
+                            "notes.startup-build-failed",
+                            name = $log_name,
+                            err = e.to_string(),
+                            id = $spec_id
+                        ).to_string());
+                    }
                 }
                 Err(_elapsed) => {
                     let ms = config_file.startup.connect_timeout_ms;
@@ -560,12 +589,14 @@ async fn bootstrap_pool_host(
                         timeout_ms = ms,
                         "provider auto-connect timed out"
                     );
-                    deferred_notes.push(rust_i18n::t!(
-                        "notes.startup-timeout",
-                        name = $log_name,
-                        ms = ms.to_string(),
-                        id = $spec_id
-                    ).to_string());
+                    if config_file.startup.verbose {
+                        deferred_notes.push(rust_i18n::t!(
+                            "notes.startup-timeout",
+                            name = $log_name,
+                            ms = ms.to_string(),
+                            id = $spec_id
+                        ).to_string());
+                    }
                 }
             }
         }};
@@ -721,6 +752,7 @@ async fn bootstrap_pool_host(
                 provider_id: initial_provider_id,
                 startup_notes: deferred_notes,
                 mcp_manager_seed,
+                startup_verbose: config_file.startup.verbose,
             })
         }
         Err(e) => {
@@ -1091,7 +1123,7 @@ pub(crate) async fn dispatch_slash_command(
                     ));
                 }
                 apply_pending_model_change(app, host_slot, project_root, tool_bins).await;
-                apply_pending_pool_add(app, host_slot).await;
+                apply_pending_pool_add(app, host_slot, false).await;
                 apply_pending_gate(app, host_slot).await;
                 apply_pending_in_process_tools(app, host_slot).await;
                 apply_pending_routing_reload(app, host_slot).await;
@@ -1680,7 +1712,17 @@ pub(crate) async fn apply_pending_model_change(
 /// client build is the price for fixing the silent-failure path where
 /// `/connect <provider>` with a stored key only landed in
 /// `App::registered_providers` and never the host pool.
-pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot) {
+///
+/// `startup` distinguishes the one call site reached right after
+/// `HostEvent::HostStarting`'s silent-connect subscribers run (`true`) from
+/// the other call sites reached after the TUI event loop is already
+/// running, in response to a slash command or bound action (`false`).
+/// Notes are only unconditionally shown for the latter — the existing
+/// `/connect`-adjacent UX. For the startup drain, notes are gated behind
+/// `app.startup_verbose` so a revoked/rejected provider configured
+/// alongside a healthy one doesn't reintroduce startup chatter.
+pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot, startup: bool) {
+    use crate::plugin::builtin::provider_common::ProviderBuildOutcome;
     use crate::plugin::builtin::{
         provider_anthropic::ProviderAnthropicPlugin, provider_deepseek::ProviderDeepSeekPlugin,
         provider_gemini::ProviderGeminiPlugin, provider_local::ProviderLocalPlugin,
@@ -1733,27 +1775,51 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot) 
             return;
         }
     };
+    let show_notes = !startup || app.startup_verbose;
     let reg = match reg {
-        Ok(Some((r, fallback_note))) => {
+        Ok(ProviderBuildOutcome::Ready(r, fallback_note)) => {
             if let Some(note) = fallback_note {
-                app.push_note(note);
+                if show_notes {
+                    app.push_note(note);
+                }
             }
             r
         }
-        Ok(None) => {
+        Ok(ProviderBuildOutcome::Unavailable) => {
             // Key vanished from keyring between RegisterProvider being
             // emitted and this drainer running. Rare; surface a note so
             // the user knows what happened.
-            app.push_note(
-                rust_i18n::t!("notes.connect-keyring-not-found", id = spec.id).to_string(),
-            );
+            tracing::warn!(provider = %pending.id.as_str(),
+                "apply_pending_pool_add: credentials no longer available when rebuilding registration");
+            if show_notes {
+                app.push_note(
+                    rust_i18n::t!("notes.connect-keyring-not-found", id = spec.id).to_string(),
+                );
+            }
+            return;
+        }
+        Ok(ProviderBuildOutcome::Rejected(reason)) => {
+            // The stored key was rejected by list_models (bad key, no
+            // credit, rate-limited, org disabled, ...). Don't register a
+            // falsely-healthy provider.
+            tracing::warn!(provider = %pending.id.as_str(), reason = %reason,
+                "apply_pending_pool_add: provider key rejected");
+            if show_notes {
+                app.push_note(
+                    rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string(),
+                );
+            }
             return;
         }
         Err(e) => {
-            app.push_note(
-                rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e:#}"))
-                    .to_string(),
-            );
+            tracing::warn!(provider = %pending.id.as_str(), error = %e,
+                "apply_pending_pool_add: failed to rebuild registration");
+            if show_notes {
+                app.push_note(
+                    rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e:#}"))
+                        .to_string(),
+                );
+            }
             return;
         }
     };
@@ -1773,10 +1839,14 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot) 
             return;
         }
         Err(e) => {
-            app.push_note(
-                rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e}"))
-                    .to_string(),
-            );
+            tracing::warn!(provider = %pending.id.as_str(), error = %e,
+                "apply_pending_pool_add: host.add_provider failed");
+            if show_notes {
+                app.push_note(
+                    rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e}"))
+                        .to_string(),
+                );
+            }
             return;
         }
     }
@@ -2488,17 +2558,31 @@ async fn perform_connect(
         }
     };
     let reg = match reg_result {
-        Ok(Some((r, fallback_note))) => {
+        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Ready(
+            r,
+            fallback_note,
+        )) => {
             if let Some(note) = fallback_note {
                 app.push_note(note);
             }
             r
         }
-        Ok(None) => {
-            // Keyring read returned None despite the just-saved key — likely
-            // a backend issue.
+        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Unavailable) => {
+            // Keyring read returned nothing despite the just-saved key —
+            // likely a backend issue.
             app.push_note(
                 rust_i18n::t!("notes.connect-keyring-not-found", id = spec.id).to_string(),
+            );
+            return;
+        }
+        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Rejected(reason)) => {
+            // The just-saved key was rejected by list_models (bad key, no
+            // credit, rate-limited, org disabled, ...). Surface the real
+            // reason instead of the misleading "key not found" message —
+            // this is a direct response to a user-initiated /connect, so
+            // always shown (not gated by startup.verbose).
+            app.push_note(
+                rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string(),
             );
             return;
         }
@@ -3074,7 +3158,7 @@ async fn run_app(
     // route to silently-connected providers. Idempotent w.r.t. providers
     // bootstrap_pool_host already added (apply_pending_pool_add handles
     // PoolError::AlreadyRegistered as a debug no-op).
-    apply_pending_pool_add(app, &host_slot).await;
+    apply_pending_pool_add(app, &host_slot, true).await;
     apply_pending_gate(app, &host_slot).await;
     apply_pending_in_process_tools(app, &host_slot).await;
 
@@ -3481,7 +3565,7 @@ async fn run_app(
                 tracing::warn!(error = %e, "apply_effects from screen failed");
             }
             apply_pending_model_change(app, &host_slot, &project_root, &tool_bins).await;
-            apply_pending_pool_add(app, &host_slot).await;
+            apply_pending_pool_add(app, &host_slot, false).await;
             apply_pending_gate(app, &host_slot).await;
             apply_pending_in_process_tools(app, &host_slot).await;
             apply_pending_routing_reload(app, &host_slot).await;
@@ -3767,7 +3851,7 @@ async fn run_app(
                                         &tool_bins,
                                     )
                                     .await;
-                                    apply_pending_pool_add(app, &host_slot).await;
+                                    apply_pending_pool_add(app, &host_slot, false).await;
                                     apply_pending_gate(app, &host_slot).await;
                                     apply_pending_in_process_tools(app, &host_slot).await;
                                     apply_pending_routing_reload(app, &host_slot).await;

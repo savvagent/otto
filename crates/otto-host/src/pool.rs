@@ -94,6 +94,7 @@ impl PoolEntry {
         ProviderLease {
             client: Arc::clone(&self.client),
             active_turns: Arc::clone(&self.active_turns),
+            display_name: self.display_name.clone(),
         }
     }
 
@@ -112,12 +113,20 @@ impl PoolEntry {
 pub struct ProviderLease {
     client: Arc<dyn ProviderClient + Send + Sync>,
     active_turns: Arc<AtomicUsize>,
+    display_name: String,
 }
 
 impl ProviderLease {
     /// The underlying provider client, usable for the duration of the lease.
     pub fn client(&self) -> &Arc<dyn ProviderClient + Send + Sync> {
         &self.client
+    }
+
+    /// The human-readable provider name (e.g. `"Anthropic"`), captured from
+    /// the pool entry at lease time so it stays available for error
+    /// attribution even after the lease is dropped.
+    pub fn display_name(&self) -> &str {
+        &self.display_name
     }
 }
 
@@ -195,5 +204,12 @@ mod tests {
         drop(lease);
         // Now both strong refs are gone.
         assert!(arc_weak.upgrade().is_none());
+    }
+
+    #[test]
+    fn lease_display_name_matches_entry() {
+        let e = entry();
+        let lease = e.lease();
+        assert_eq!(lease.display_name(), "Stub");
     }
 }

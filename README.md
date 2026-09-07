@@ -459,6 +459,11 @@ compatibility gate passing in Phase 2.
 policy = "opt-in"
 startup_providers = ["anthropic"]
 connect_timeout_ms = 3000
+# When false (default), startup connection problems (missing/rejected keys,
+# build failures, timeouts) are logged but not shown as notes, so a normal
+# launch stays quiet. Set to true to surface those notes at startup too —
+# useful when diagnosing why a provider didn't come up automatically.
+verbose = false
 
 [migration]
 # Set to true after the first-launch migration picker has run.
@@ -934,13 +939,13 @@ args = []
 | `OTTO_BRAVE_API_KEY` / `BRAVE_API_KEY` | `otto-tool-web` | (unset) | API key for `web_search` via the Brave Search API. |
 | `OTTO_SEARXNG_URL` | `otto-tool-web` | (unset) | Base URL of a self-hosted SearXNG instance, used for `web_search` if no Brave key is set. |
 | `OTTO_NO_UPDATE_CHECK` | `otto` | (unset) | Override switch for CI/scripting: when set, disables the launch-time and periodic update check regardless of `[update]` config, and disables `/update`. CLI equivalent: `--no-update-check`. |
-| `ANTHROPIC_API_KEY` | `otto-anthropic` | — | Read at server start. In-process flow gets it from `/connect`. |
+| `ANTHROPIC_API_KEY` | `otto-anthropic` | — | Read at server start. In-process flow uses the keyring key from `/connect` when present, and falls back to this env var (used as-is, without prompting) when no keyring key is stored — including during automatic startup connection. |
 | `ANTHROPIC_BASE_URL` | `otto-anthropic` | `https://api.anthropic.com` | For local mocks. |
 | `OTTO_ANTHROPIC_LISTEN` | `otto-anthropic` | `127.0.0.1:8787` | Bind address. |
-| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | `otto-gemini` | — | Same idea. |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | `otto-gemini` | — | Same idea as `ANTHROPIC_API_KEY`; `GEMINI_API_KEY` is checked first, then `GOOGLE_API_KEY`. |
 | `GEMINI_BASE_URL` | `otto-gemini` | `https://generativelanguage.googleapis.com` | |
 | `OTTO_GEMINI_LISTEN` | `otto-gemini` | `127.0.0.1:8788` | |
-| `OPENAI_API_KEY` | `otto-openai` | — | Same idea. |
+| `OPENAI_API_KEY` | `otto-openai` | — | Same idea as `ANTHROPIC_API_KEY`. |
 | `OPENAI_BASE_URL` | `otto-openai` | `https://api.openai.com` | For local mocks. |
 | `OTTO_OPENAI_LISTEN` | `otto-openai` | `127.0.0.1:8789` | Bind address. |
 | `DEEPSEEK_API_KEY` | `otto-deepseek` | — | Same idea. |
@@ -957,7 +962,7 @@ args = []
 |---|---|---|
 | `~/.otto/transcripts/<unix_secs>.json` | TUI | One pretty-printed `Vec<spp::Message>` per save (auto on `TurnComplete`, manual on `/save`). |
 | `~/.otto/canvases/<unix>-<turn>-<block>.html` | `internal:html-canvas` plugin | Auto-exported HTML source for each finalized canvas. Written with `0o600` permissions. Present only when the plugin is enabled. |
-| `~/.otto/config.toml` | TUI startup, `/theme`, `/language`, `/mcp`, `internal:self-update` | Startup connection policy (`opt-in` / `all` / `last-used` / `none`), `startup_providers`, per-provider `connect_timeout_ms`, one-time migration flag, `[language].code`, `[theme].name`, `[update]` settings (`periodic_interval_secs`, `disabled`), and `[[mcp_servers]]` entries for user-configured stdio/HTTP MCP servers. Created automatically on first launch when multiple keyring entries are found, and updated when those features persist settings. |
+| `~/.otto/config.toml` | TUI startup, `/theme`, `/language`, `/mcp`, `internal:self-update` | Startup connection policy (`opt-in` / `all` / `last-used` / `none`), `startup_providers`, per-provider `connect_timeout_ms`, `[startup].verbose` (surface startup connection notes instead of just logging them; default `false`), one-time migration flag, `[language].code`, `[theme].name`, `[update]` settings (`periodic_interval_secs`, `disabled`), and `[[mcp_servers]]` entries for user-configured stdio/HTTP MCP servers. Created automatically on first launch when multiple keyring entries are found, and updated when those features persist settings. |
 | `~/.otto/models.toml` | `/model` | `{ providers: { id = model } }`. Re-applied at `/connect`. |
 | `~/.otto/plugins.toml` | `/plugins` | Optional plugin enabled-set. Core plugins ignore this file. |
 | `~/.otto/sandbox.toml` | `/sandbox` | Sandbox mode + per-tool `allow_net` overrides. |

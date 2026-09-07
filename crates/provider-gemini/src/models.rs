@@ -9,7 +9,7 @@
 use otto_protocol::{ErrorKind, ListModelsResponse, ModelInfo, ProviderError};
 use serde::Deserialize;
 
-use crate::{API_VERSION, GeminiProvider, map_reqwest_error};
+use crate::{API_VERSION, GeminiProvider, map_reqwest_error, status_to_error_kind};
 
 /// The model id we report as `default_model_id` when it appears in the
 /// catalog. Keep in sync with `crates/otto/src/providers.rs`'s
@@ -64,7 +64,7 @@ pub async fn list_models(provider: &GeminiProvider) -> Result<ListModelsResponse
             format!("Gemini /{API_VERSION}/models returned HTTP {status}: {truncated}")
         };
         return Err(ProviderError {
-            kind: ErrorKind::Network,
+            kind: status_to_error_kind(status.as_u16()),
             message,
             retry_after_ms: None,
             provider_code: None,
@@ -252,7 +252,11 @@ mod tests {
         let err = list_models(&provider)
             .await
             .expect_err("401 must surface as ProviderError");
-        assert!(matches!(err.kind, ErrorKind::Network), "kind: {:?}", err);
+        assert!(
+            matches!(err.kind, ErrorKind::Authentication),
+            "kind: {:?}",
+            err
+        );
         assert!(err.message.contains("HTTP 401"), "msg: {}", err.message);
         // The response body must show up in the error so a user staring at
         // the TUI note can tell `invalid api key` from `model_overloaded`.
