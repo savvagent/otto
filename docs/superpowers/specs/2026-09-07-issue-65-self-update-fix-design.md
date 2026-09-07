@@ -26,7 +26,7 @@ Success criteria:
 
 ## Approach
 
-1. **Tighten first-tick cache trust.** Keep the existing cache file and TTL, but change the first-tick decision in `crates/otto/src/plugin/builtin/self_update/mod.rs` so cached data is only authoritative when it indicates the running binary is *behind* the cached tag. A cached `Equal` result becomes a "must revalidate now" case instead of a startup skip, because it cannot prove that GitHub has not published a newer release since the cache write.
+1. **Tighten first-tick cache trust.** Keep the existing cache file and TTL, but change the first-tick decision in `crates/otto/src/plugin/builtin/self_update/mod.rs` so cached data is only authoritative when it indicates the running binary is *behind* the cached tag. A cached `Equal` result becomes a "must revalidate now" case instead of a startup skip, because it cannot prove that GitHub has not published a newer release since the cache write. A cached `Behind` result remains a fast path: startup may publish/install from cache immediately, then let the next periodic tick perform any later revalidation.
 2. **Split cached classification from live classification.** Add a small helper in `self_update/mod.rs` to classify cached tags and decide whether to trust them. This keeps the policy local to the plugin rather than overloading `cache.rs` (which should stay a format/TTL helper) or `check.rs` (which should stay a pure GitHub-fetch + semver module).
 3. **Make `/update` authoritative.** Refactor the slash handler in `self_update/mod.rs` so `/update` can perform a live `check_for_update` call itself, independent of the background task's current state. The command should still respect `Disabled` and dev-build short-circuits, but otherwise it should fetch the latest tag now, update plugin state with the result, and run `run_install` when the live result is `Available`.
 4. **Preserve the existing plugin boundaries.** The fix stays entirely inside `crates/otto`'s self-update plugin and README text. No host turn-loop changes, no tool transport changes, no provider pool changes, and no host-swap lock changes are needed.
@@ -70,6 +70,7 @@ There is a user-visible **behavior correction** to the documented slash-command 
 - If the startup live revalidation fails after an `Equal` cached tag, publish `CheckFailed` so the banner can explain the check failure rather than silently implying no update exists.
 - If cached data shows a newer release (`Behind`), keep the fast path: publish/install from cache immediately rather than delaying the user-visible signal on network latency.
 - `/update` invoked while an install is already running should keep the existing in-progress note instead of starting a second installer.
+- `/update` invoked after a successful install (`Updated`) should keep the existing restart-needed note rather than re-downloading the same release in the same process.
 - `InstallFailed` with the same tag should still preserve the failure context for the background periodic path; `/update` should be allowed to retry that same tag intentionally because the user asked for it.
 
 ## Risks & Open Questions
