@@ -63,14 +63,31 @@ fn split_frontmatter(raw: &str) -> Result<(&str, &str), String> {
         return Err("no frontmatter delimiter".into());
     }
     let rest = &raw[3..];
-    let rest = rest.strip_prefix('\n').unwrap_or(rest);
-    let Some(end) = rest.find("\n---") else {
+    let rest = if let Some(stripped) = rest.strip_prefix("\r\n") {
+        stripped
+    } else {
+        rest.strip_prefix('\n').unwrap_or(rest)
+    };
+    let Some((front, body)) = split_closing(rest) else {
         return Err("unterminated frontmatter".into());
     };
-    let front = &rest[..end];
-    let body = &rest[end + 4..];
-    let body = body.strip_prefix('\n').unwrap_or(body);
     Ok((front, body))
+}
+
+fn split_closing(after_open: &str) -> Option<(&str, &str)> {
+    for (idx, _) in after_open.match_indices("\n---") {
+        let after = &after_open[idx + 4..];
+        if after.is_empty() || after.starts_with('\n') || after.starts_with("\r\n") {
+            let yaml = &after_open[..idx];
+            let body_start = if let Some(stripped) = after.strip_prefix("\r\n") {
+                stripped
+            } else {
+                after.strip_prefix('\n').unwrap_or(after)
+            };
+            return Some((yaml, body_start));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -124,5 +141,32 @@ mod tests {
         .unwrap_err();
 
         assert!(err.contains("missing required field: name"));
+    }
+
+    #[test]
+    fn only_accepts_standalone_closing_delimiter() {
+        let err = parse(
+            "---\nname: rust-engineer\ndescription: |\n  --- not a delimiter\nBody",
+            "rust-engineer",
+            SkillLocation::Claude,
+            Path::new("SKILL.md"),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("unterminated frontmatter"));
+    }
+
+    #[test]
+    fn supports_crlf_delimiters() {
+        let result = parse(
+            "---\r\nname: rust-engineer\r\ndescription: Rust skill\r\n---\r\nBody",
+            "rust-engineer",
+            SkillLocation::Claude,
+            Path::new("SKILL.md"),
+        )
+        .expect("parse");
+
+        assert_eq!(result.spec.name, "rust-engineer");
+        assert_eq!(result.spec.description, "Rust skill");
     }
 }
