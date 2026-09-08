@@ -18,6 +18,7 @@ pub struct ConnectPickerScreen {
     candidates: Vec<(ProviderId, String)>,
     filtered: Vec<usize>,
     query: String,
+    active_provider_id: Option<ProviderId>,
     cursor: usize,
 }
 
@@ -28,6 +29,7 @@ impl ConnectPickerScreen {
             candidates: vec![],
             filtered: vec![],
             query: String::new(),
+            active_provider_id: None,
             cursor: 0,
         }
     }
@@ -37,12 +39,28 @@ impl ConnectPickerScreen {
     /// picker. `ConnectPlugin` accumulates candidates via
     /// [`Plugin::on_event`] on [`otto_plugin::HostEvent::ProviderRegistered`].
     pub fn with_candidates(candidates: Vec<(ProviderId, String)>) -> Self {
+        Self::with_candidates_and_active(candidates, None)
+    }
+
+    pub fn with_candidates_and_active(
+        candidates: Vec<(ProviderId, String)>,
+        active_provider_id: Option<ProviderId>,
+    ) -> Self {
         let filtered = (0..candidates.len()).collect();
+        let cursor = active_provider_id
+            .as_ref()
+            .and_then(|active| {
+                candidates
+                    .iter()
+                    .position(|(candidate_id, _)| candidate_id == active)
+            })
+            .unwrap_or(0);
         Self {
             candidates,
             filtered,
             query: String::new(),
-            cursor: 0,
+            active_provider_id,
+            cursor,
         }
     }
 
@@ -59,7 +77,7 @@ impl ConnectPickerScreen {
             .collect();
 
         if self.query.is_empty() {
-            self.cursor = 0;
+            self.reset_cursor_for_active();
             return;
         }
 
@@ -75,6 +93,18 @@ impl ConnectPickerScreen {
         }
 
         self.cursor = 0;
+    }
+
+    fn reset_cursor_for_active(&mut self) {
+        self.cursor = self
+            .active_provider_id
+            .as_ref()
+            .and_then(|active| {
+                self.filtered
+                    .iter()
+                    .position(|candidate_idx| &self.candidates[*candidate_idx].0 == active)
+            })
+            .unwrap_or(0);
     }
 
     fn selected_candidate(&self) -> Option<&(ProviderId, String)> {
@@ -426,5 +456,35 @@ mod tests {
         );
         let second = s.on_key(key(KeyCodePortable::Esc)).await.unwrap();
         assert!(matches!(second.as_slice(), [Effect::CloseScreen]));
+    }
+
+    #[tokio::test]
+    async fn clearing_query_restores_active_provider() {
+        let mut s = ConnectPickerScreen::with_candidates_and_active(
+            vec![
+                (ProviderId::new("anthropic").unwrap(), "Anthropic".into()),
+                (ProviderId::new("openai").unwrap(), "OpenAI".into()),
+            ],
+            Some(ProviderId::new("openai").unwrap()),
+        );
+
+        assert_eq!(
+            s.selected_candidate().map(|(id, _)| id.as_str()),
+            Some("openai")
+        );
+
+        s.on_key(key(KeyCodePortable::Char('n'))).await.unwrap();
+        s.on_key(key(KeyCodePortable::Char('t'))).await.unwrap();
+        assert_eq!(
+            s.selected_candidate().map(|(id, _)| id.as_str()),
+            Some("anthropic")
+        );
+
+        s.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        s.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        assert_eq!(
+            s.selected_candidate().map(|(id, _)| id.as_str()),
+            Some("openai")
+        );
     }
 }
