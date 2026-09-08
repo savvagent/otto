@@ -14,7 +14,6 @@ const EXPECTED_VENDORED_WIT: &[(&str, u64)] = &[
 
 fn main() {
     println!("cargo::rerun-if-changed=wit");
-    println!("cargo::rerun-if-changed=../otto-plugin-wit/wit");
 
     let manifest_dir = PathBuf::from(
         std::env::var("CARGO_MANIFEST_DIR")
@@ -36,6 +35,9 @@ fn main() {
     let canonical_exists = canonical_dir
         .try_exists()
         .expect("checking canonical WIT directory should succeed");
+    if canonical_exists {
+        println!("cargo::rerun-if-changed=../otto-plugin-wit/wit");
+    }
     let vendored_files = collect_wit_files(&vendored_dir)
         .map_err(|error| {
             format!(
