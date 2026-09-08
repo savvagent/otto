@@ -46,6 +46,24 @@ const HINT: &str = "press any key to continue";
 
 const LOGO_WIDTH: u16 = 43;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplashLineKind {
+    Blank,
+    Logo,
+    Tagline,
+    SandboxOn,
+    SandboxOff,
+    SandboxError,
+    Hint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SplashContentLine {
+    pub text: String,
+    pub kind: SplashLineKind,
+    pub centered: bool,
+}
+
 /// What the splash shows for the sandbox indicator. Derived once at startup
 /// (and refreshed on `/connect`) so the splash never re-reads disk per frame.
 #[derive(Debug, Clone)]
@@ -97,59 +115,99 @@ impl SandboxSplashState {
 
 pub fn render(frame: &mut Frame, area: Rect, sandbox: &SandboxSplashState) {
     frame.render_widget(Clear, area);
-
-    let logo_style = Style::default()
-        .fg(Color::LightBlue)
-        .add_modifier(Modifier::BOLD);
-    let tagline_style = Style::default().fg(Color::LightBlue);
-    let hint_style = Style::default()
-        .fg(Color::DarkGray)
-        .add_modifier(Modifier::ITALIC);
-
-    let mut lines: Vec<Line<'static>> = LOGO
-        .iter()
-        .map(|row| Line::from(Span::styled(row.to_string(), logo_style)))
+    let lines: Vec<Line<'static>> = shared_content(sandbox)
+        .into_iter()
+        .map(|content| {
+            let line = Line::from(Span::styled(content.text, ratatui_style(content.kind)));
+            if content.centered {
+                line.centered()
+            } else {
+                line
+            }
+        })
         .collect();
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(TAGLINE, tagline_style)).centered());
-    lines.push(Line::from(""));
-
-    let (sandbox_text, sandbox_style) = sandbox_line(sandbox);
-    lines.push(Line::from(Span::styled(sandbox_text, sandbox_style)).centered());
-    lines.push(Line::from(""));
-
-    lines.push(
-        Line::from(Span::styled(
-            format!("{HINT} · v{}", env!("CARGO_PKG_VERSION")),
-            hint_style,
-        ))
-        .centered(),
-    );
 
     let total_h = lines.len() as u16;
     let rect = center_rect(LOGO_WIDTH, total_h, area);
     frame.render_widget(Paragraph::new(lines), rect);
 }
 
-/// Map a [`SandboxSplashState`] to the centered line text + style. Extracted
-/// so unit tests can assert text and color without spinning up a Frame.
-fn sandbox_line(state: &SandboxSplashState) -> (String, Style) {
+/// Shared splash content for startup rendering and slash-screen consumers.
+pub(crate) fn shared_content(state: &SandboxSplashState) -> Vec<SplashContentLine> {
+    let (sandbox_text, sandbox_kind) = sandbox_line(state);
+    let mut lines: Vec<SplashContentLine> = LOGO
+        .iter()
+        .map(|row| SplashContentLine {
+            text: (*row).to_string(),
+            kind: SplashLineKind::Logo,
+            centered: true,
+        })
+        .collect();
+    lines.push(SplashContentLine {
+        text: String::new(),
+        kind: SplashLineKind::Blank,
+        centered: false,
+    });
+    lines.push(SplashContentLine {
+        text: TAGLINE.to_string(),
+        kind: SplashLineKind::Tagline,
+        centered: true,
+    });
+    lines.push(SplashContentLine {
+        text: String::new(),
+        kind: SplashLineKind::Blank,
+        centered: false,
+    });
+    lines.push(SplashContentLine {
+        text: sandbox_text,
+        kind: sandbox_kind,
+        centered: true,
+    });
+    lines.push(SplashContentLine {
+        text: String::new(),
+        kind: SplashLineKind::Blank,
+        centered: false,
+    });
+    lines.push(SplashContentLine {
+        text: format!("{HINT} · v{}", env!("CARGO_PKG_VERSION")),
+        kind: SplashLineKind::Hint,
+        centered: true,
+    });
+    lines
+}
+
+/// Map a [`SandboxSplashState`] to the shared sandbox line's text + semantic
+/// style so both renderers can stay in sync without duplicating content logic.
+fn sandbox_line(state: &SandboxSplashState) -> (String, SplashLineKind) {
     match state {
         SandboxSplashState::OnDefault => (
             "sandbox: on (use /sandbox off to disable)".to_string(),
-            Style::default().fg(Color::Green),
+            SplashLineKind::SandboxOn,
         ),
-        SandboxSplashState::OnExplicit => {
-            ("sandbox: on".to_string(), Style::default().fg(Color::Green))
-        }
-        SandboxSplashState::OffExplicit => (
-            "sandbox: off".to_string(),
-            Style::default().fg(Color::Yellow),
-        ),
+        SandboxSplashState::OnExplicit => ("sandbox: on".to_string(), SplashLineKind::SandboxOn),
+        SandboxSplashState::OffExplicit => ("sandbox: off".to_string(), SplashLineKind::SandboxOff),
         SandboxSplashState::ParseError { detail } => (
             format!("sandbox: defaults — {detail}"),
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            SplashLineKind::SandboxError,
         ),
+    }
+}
+
+fn ratatui_style(kind: SplashLineKind) -> Style {
+    match kind {
+        SplashLineKind::Blank => Style::default(),
+        SplashLineKind::Logo => Style::default()
+            .fg(Color::LightBlue)
+            .add_modifier(Modifier::BOLD),
+        SplashLineKind::Tagline => Style::default().fg(Color::LightBlue),
+        SplashLineKind::SandboxOn => Style::default().fg(Color::Green),
+        SplashLineKind::SandboxOff => Style::default().fg(Color::Yellow),
+        SplashLineKind::SandboxError => {
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        }
+        SplashLineKind::Hint => Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
     }
 }
 
@@ -242,9 +300,9 @@ mod tests {
             }
             other => panic!("expected ParseError, got {other:?}"),
         }
-        let (_text, style) = sandbox_line(&state);
+        let (_text, kind) = sandbox_line(&state);
         assert_eq!(
-            style.fg,
+            ratatui_style(kind).fg,
             Some(Color::Red),
             "parse-error state must be rendered red"
         );
@@ -297,5 +355,44 @@ mod tests {
         for row in LOGO {
             assert_eq!(row.chars().count(), usize::from(LOGO_WIDTH));
         }
+    }
+
+    #[test]
+    fn shared_content_includes_inline_hint_and_sandbox_line() {
+        let lines = shared_content(&SandboxSplashState::OnDefault);
+
+        assert!(
+            lines.iter().any(
+                |line| line.text == "sandbox: on (use /sandbox off to disable)"
+                    && line.kind == SplashLineKind::SandboxOn
+                    && line.centered
+            ),
+            "shared splash content must include the centered sandbox line"
+        );
+        assert!(
+            lines.iter().any(|line| line.text
+                == format!("press any key to continue · v{}", env!("CARGO_PKG_VERSION"))
+                && line.kind == SplashLineKind::Hint
+                && line.centered),
+            "shared splash content must include the centered versioned hint"
+        );
+    }
+
+    #[test]
+    fn shared_content_marks_logo_rows_centered_for_frontend_parity() {
+        let lines = shared_content(&SandboxSplashState::OnDefault);
+        let logo_rows = lines
+            .iter()
+            .filter(|line| line.kind == SplashLineKind::Logo)
+            .collect::<Vec<_>>();
+
+        assert!(
+            !logo_rows.is_empty(),
+            "shared splash content should include logo rows"
+        );
+        assert!(
+            logo_rows.iter().all(|line| line.centered),
+            "shared splash logo rows must stay centered for startup and /splash parity"
+        );
     }
 }

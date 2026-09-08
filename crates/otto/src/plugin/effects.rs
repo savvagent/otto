@@ -623,7 +623,26 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
     // `palette`, and `connect.picker`; future screens with the same shape
     // (e.g. a hooks inspector) should follow the same pattern rather than
     // smuggling state through ScreenArgs.
-    let (screen, layout) = if id == "plugins.manager" {
+    let (screen, layout) = if id == "splash" {
+        let layout = {
+            let plugin = handle.lock().await;
+            let manifest = plugin.manifest();
+            manifest
+                .contributions
+                .screens
+                .iter()
+                .find(|s| s.id == id)
+                .ok_or_else(|| format!("plugin {} doesn't declare screen {id}", pid.as_str()))?
+                .layout
+                .clone()
+        };
+        let screen: Box<dyn otto_plugin::Screen> = Box::new(
+            crate::plugin::builtin::splash::screen::SplashScreen::with_sandbox(
+                app.splash_sandbox.clone(),
+            ),
+        );
+        (screen, layout)
+    } else if id == "plugins.manager" {
         let layout = {
             let plugin = handle.lock().await;
             let manifest = plugin.manifest();
@@ -1073,11 +1092,55 @@ fn apply_open_url(app: &mut App, url: String, target: UrlTarget) {
 mod tests {
     use super::*;
     use crate::test_helpers::{HOME_LOCK, HomeGuard};
+    use crate::{plugin::builtin::splash::SplashPlugin, splash::SandboxSplashState};
     use otto_plugin::StyledLine;
     use std::path::PathBuf;
 
     fn fresh_app() -> crate::app::App {
         crate::app::App::new("test-model".into(), PathBuf::from("/tmp"), "en".to_string())
+    }
+
+    #[tokio::test]
+    async fn open_screen_splash_uses_current_app_sandbox_state() {
+        use crate::plugin::manifests::Indexes;
+        use crate::plugin::registry::{BuiltinSet, PluginRegistry};
+
+        let mut app = {
+            let _lock = HOME_LOCK.lock().unwrap();
+            let _home = HomeGuard::new();
+            fresh_app()
+        };
+        app.splash_sandbox = SandboxSplashState::OffExplicit;
+
+        let registry = PluginRegistry::new(BuiltinSet {
+            plugins: vec![Box::new(SplashPlugin::new())],
+            providers: vec![],
+            hook_entries: vec![],
+        });
+        let indexes = Indexes::build(&registry).await.expect("indexes build");
+        app.install_plugin_runtime(registry, indexes);
+
+        open_screen(&mut app, "splash", otto_plugin::ScreenArgs::None)
+            .await
+            .expect("open splash screen");
+
+        let (screen, _) = app.screen_stack.top().expect("splash screen pushed");
+        let text = screen
+            .render(otto_plugin::Region {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 24,
+            })
+            .into_iter()
+            .flat_map(|line| line.spans.into_iter().map(|span| span.text))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(
+            text.contains("sandbox: off"),
+            "splash screen should render the live app sandbox state, got: {text}"
+        );
     }
 
     /// RunSlash at depth >= MAX_DISPATCH_DEPTH must return a depth-limit error

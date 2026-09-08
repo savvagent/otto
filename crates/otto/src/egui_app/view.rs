@@ -19,6 +19,12 @@ use crate::egui_app::convert::styled_line_to_job;
 use crate::egui_app::screen::modal_geometry;
 use crate::palette::Palette;
 
+#[derive(Debug, Clone)]
+struct OverlayLine {
+    line: StyledLine,
+    centered: bool,
+}
+
 /// Paint the whole window: header, footer/tips, prompt, and the conversation
 /// log. Bottom panels stack in add order (last-added sits highest above the
 /// central panel), so we add the prompt first (lowest) then the footer above
@@ -68,7 +74,7 @@ fn paint_screen_overlay(state: &mut OttoApp, ctx: &egui::Context, palette: &Pale
         };
         let geom = modal_geometry(avail, layout, glyph_w, glyph_h);
         let id = screen.id();
-        let lines = screen.render(geom.region);
+        let lines = overlay_lines(screen, &id, layout, geom.region, &state.app.splash_sandbox);
         let tips = screen.tips();
         (layout.clone(), id, lines, tips, geom)
     };
@@ -111,8 +117,30 @@ fn paint_screen_overlay(state: &mut OttoApp, ctx: &egui::Context, palette: &Pale
                 ui.label(egui::RichText::new(t).strong());
                 ui.separator();
             }
-            for line in &lines {
-                ui.label(styled_line_to_job(line, palette, FONT_SIZE));
+            if matches!(layout, ScreenLayout::Fullscreen { .. }) && id == "splash" {
+                let top_pad_rows = geom.region.height.saturating_sub(lines.len() as u16) / 2;
+                if top_pad_rows > 0 {
+                    ui.add_space(top_pad_rows as f32 * glyph_h);
+                }
+            }
+            for overlay_line in &lines {
+                let job = styled_line_to_job(&overlay_line.line, palette, FONT_SIZE);
+                let splash_label = egui::Label::new(job)
+                    // The shared splash art is laid out as one logical row per
+                    // line. Letting egui wrap those labels would both distort
+                    // the logo and invalidate the splash overlay's row math.
+                    .wrap_mode(if id == "splash" {
+                        egui::TextWrapMode::Extend
+                    } else {
+                        ui.wrap_mode()
+                    });
+                if overlay_line.centered {
+                    ui.horizontal_centered(|ui| {
+                        ui.add(splash_label);
+                    });
+                } else {
+                    ui.add(splash_label);
+                }
             }
             if !tips.is_empty() {
                 ui.separator();
@@ -122,6 +150,33 @@ fn paint_screen_overlay(state: &mut OttoApp, ctx: &egui::Context, palette: &Pale
             }
         });
     });
+}
+
+fn overlay_lines(
+    screen: &dyn otto_plugin::Screen,
+    screen_id: &str,
+    layout: &ScreenLayout,
+    region: otto_plugin::Region,
+    splash_sandbox: &crate::splash::SandboxSplashState,
+) -> Vec<OverlayLine> {
+    if matches!(layout, ScreenLayout::Fullscreen { .. }) && screen_id == "splash" {
+        return crate::plugin::builtin::splash::screen::shared_splash_styled_lines(splash_sandbox)
+            .into_iter()
+            .map(|line| OverlayLine {
+                line: line.line,
+                centered: line.centered,
+            })
+            .collect();
+    }
+
+    screen
+        .render(region)
+        .into_iter()
+        .map(|line| OverlayLine {
+            line,
+            centered: false,
+        })
+        .collect()
 }
 
 // Small helpers to pull two palette slots as Color32 for chrome.
@@ -411,7 +466,44 @@ fn paint_tool(
 
 #[cfg(test)]
 mod tests {
+    use super::overlay_lines;
     use super::palette_trigger;
+    use async_trait::async_trait;
+    use otto_plugin::{
+        Effect, KeyEventPortable, PluginError, Region, Screen, ScreenLayout, StyledLine,
+        StyledSpan, TextMods,
+    };
+
+    fn one_span_line(text: &str) -> StyledLine {
+        StyledLine {
+            spans: vec![StyledSpan {
+                text: text.into(),
+                fg: None,
+                bg: None,
+                modifiers: TextMods::default(),
+            }],
+        }
+    }
+
+    struct FakeScreen {
+        id: String,
+        body: Vec<StyledLine>,
+    }
+
+    #[async_trait]
+    impl Screen for FakeScreen {
+        fn id(&self) -> String {
+            self.id.clone()
+        }
+
+        fn render(&self, _region: Region) -> Vec<StyledLine> {
+            self.body.clone()
+        }
+
+        async fn on_key(&mut self, _key: KeyEventPortable) -> Result<Vec<Effect>, PluginError> {
+            Ok(vec![])
+        }
+    }
 
     #[test]
     fn lone_slash_triggers_palette() {
@@ -430,5 +522,94 @@ mod tests {
         assert!(!palette_trigger("/co"));
         assert!(!palette_trigger("fix bug in a/b"));
         assert!(!palette_trigger(" /"));
+    }
+
+    #[test]
+    fn fullscreen_splash_overlay_uses_shared_splash_content() {
+        let first_logo_row =
+            crate::splash::shared_content(&crate::splash::SandboxSplashState::OnDefault)
+                .into_iter()
+                .find(|line| line.kind == crate::splash::SplashLineKind::Logo)
+                .expect("logo row in shared content")
+                .text;
+        let lines = overlay_lines(
+            &FakeScreen {
+                id: "splash".into(),
+                body: vec![one_span_line("fake splash body")],
+            },
+            "splash",
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            Region {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 30,
+            },
+            &crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = lines
+            .iter()
+            .map(|line| {
+                line.line
+                    .spans
+                    .iter()
+                    .map(|span| span.text.as_str())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>();
+
+        assert!(text.iter().any(|line| line == &first_logo_row));
+        assert!(
+            text.iter()
+                .any(|line| line == "the savvy MCP-native terminal coding agent")
+        );
+        assert!(
+            text.iter()
+                .any(|line| line == "sandbox: on (use /sandbox off to disable)")
+        );
+        assert!(
+            text.iter().any(|line| line
+                == &format!("press any key to continue · v{}", env!("CARGO_PKG_VERSION")))
+        );
+        assert!(
+            !text.iter().any(|line| line == "fake splash body"),
+            "fullscreen splash overlay should ignore plugin-provided body text"
+        );
+        assert!(
+            lines.iter().any(|line| {
+                line.centered
+                    && line
+                        .line
+                        .spans
+                        .iter()
+                        .map(|span| span.text.as_str())
+                        .collect::<String>()
+                        == first_logo_row
+            }),
+            "fullscreen splash overlay should preserve centered logo rows"
+        );
+    }
+
+    #[test]
+    fn fullscreen_non_splash_overlay_keeps_screen_render_output() {
+        let lines = overlay_lines(
+            &FakeScreen {
+                id: "plugins.manager".into(),
+                body: vec![one_span_line("fullscreen body")],
+            },
+            "plugins.manager",
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            Region {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 30,
+            },
+            &crate::splash::SandboxSplashState::OnDefault,
+        );
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].line.spans[0].text, "fullscreen body");
+        assert!(!lines[0].centered);
     }
 }

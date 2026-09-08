@@ -83,6 +83,10 @@ const LOG_SCROLL_STEP: u16 = 10;
 /// physical detent, which adds up fast.
 const MOUSE_WHEEL_SCROLL_STEP: u16 = 3;
 
+fn global_quit_allowed(top_screen_id: Option<&str>) -> bool {
+    top_screen_id != Some("splash")
+}
+
 /// Worker → main-loop messages.
 pub(crate) enum WorkerMsg {
     Event(TurnEvent),
@@ -3616,7 +3620,11 @@ async fn run_app(
         if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
             continue;
         }
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let top_screen_id = app.screen_stack.top_id();
+        if key.code == KeyCode::Char('c')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && global_quit_allowed(top_screen_id)
+        {
             dispatch_failed_turn_end_on_exit(
                 app,
                 &mut current_turn_id,
@@ -3646,6 +3654,7 @@ async fn run_app(
             let portable = crate::plugin::convert::key_event_to_portable(*key);
             if portable.modifiers.ctrl
                 && matches!(portable.code, otto_plugin::KeyCodePortable::Char('d'))
+                && global_quit_allowed(top_screen_id)
             {
                 dispatch_failed_turn_end_on_exit(
                     app,
@@ -4409,6 +4418,17 @@ mod model_validation_tests {
         let e = err(ErrorKind::NotImplemented, "list_models not implemented");
         let outcome = resolve_model_change("anything", Err(&e));
         assert_eq!(outcome, ModelChangeOutcome::Proceed { warning: None });
+    }
+
+    #[test]
+    fn global_quit_allowed_is_false_for_splash_screen() {
+        assert!(!super::global_quit_allowed(Some("splash")));
+    }
+
+    #[test]
+    fn global_quit_allowed_is_true_for_other_contexts() {
+        assert!(super::global_quit_allowed(None));
+        assert!(super::global_quit_allowed(Some("palette")));
     }
 
     #[test]

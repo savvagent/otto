@@ -393,7 +393,22 @@ pub fn render(
 
     // Screen-stack: if any screen is on top, paint it over the home chrome.
     if let Some((top_screen, layout)) = app.screen_stack.top() {
-        paint_screen(frame, area, chunks[4].y, top_screen, layout, palette);
+        let top_screen_id = app
+            .screen_stack
+            .top_id()
+            .expect("top screen id present when top screen exists");
+        paint_screen(
+            frame,
+            area,
+            chunks[4].y,
+            ActiveScreen {
+                id: top_screen_id,
+                screen: top_screen,
+                layout,
+            },
+            palette,
+            &app.splash_sandbox,
+        );
     }
 
     if matches!(app.input_mode, InputMode::SelectingProvider) {
@@ -1206,23 +1221,34 @@ fn bottom_sheet_rect(area: Rect, input_top: u16, height: u16) -> Rect {
 /// would bleed through under any plugin span that only sets `fg` — which
 /// makes upstream themes (Solarized Light, Catppuccin Latte, Tokyo Night
 /// Day, …) look like floating text rather than a popup.
+struct ActiveScreen<'a> {
+    id: &'a str,
+    screen: &'a dyn otto_plugin::Screen,
+    layout: &'a otto_plugin::ScreenLayout,
+}
+
 fn paint_screen(
     f: &mut Frame,
     area: Rect,
     input_top: u16,
-    screen: &dyn otto_plugin::Screen,
-    layout: &otto_plugin::ScreenLayout,
+    active_screen: ActiveScreen<'_>,
     palette: Palette,
+    splash_sandbox: &crate::splash::SandboxSplashState,
 ) {
     use otto_plugin::ScreenLayout;
 
-    match layout {
+    match active_screen.layout {
         ScreenLayout::Fullscreen { .. } => {
+            if active_screen.id == "splash" {
+                crate::splash::render(f, area, splash_sandbox);
+                return;
+            }
             // Full-frame overlay: paint content directly.
             f.render_widget(Clear, area);
             f.buffer_mut().set_style(area, palette.base_style());
             let region = crate::plugin::convert::rect_to_region(area);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
@@ -1231,7 +1257,7 @@ fn paint_screen(
             f.render_widget(para, area);
 
             // Tips row at the very bottom of the frame.
-            let tips = screen.tips();
+            let tips = active_screen.screen.tips();
             if !tips.is_empty() && area.height > 0 {
                 let tips_row = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips
@@ -1277,7 +1303,7 @@ fn paint_screen(
                 ));
 
             // Tips as a bottom title if present.
-            let tips = screen.tips();
+            let tips = active_screen.screen.tips();
             let block = if let Some(tip_line) = tips.into_iter().next() {
                 let tip_text: String = tip_line.spans.iter().map(|s| s.text.as_str()).collect();
                 block.title_bottom(Line::from(tip_text).right_aligned())
@@ -1294,7 +1320,8 @@ fn paint_screen(
             f.render_widget(block, outer);
 
             let region = crate::plugin::convert::rect_to_region(inner);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
@@ -1306,14 +1333,15 @@ fn paint_screen(
             f.render_widget(Clear, sheet);
             f.buffer_mut().set_style(sheet, palette.base_style());
             let region = crate::plugin::convert::rect_to_region(sheet);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
                 .collect();
             f.render_widget(Paragraph::new(lines).style(palette.base_style()), sheet);
 
-            let tips = screen.tips();
+            let tips = active_screen.screen.tips();
             if !tips.is_empty() && sheet.height > 0 {
                 let tips_row = Rect::new(sheet.x, sheet.y + sheet.height - 1, sheet.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips
@@ -1331,7 +1359,8 @@ fn paint_screen(
             f.render_widget(Clear, area);
             f.buffer_mut().set_style(area, palette.base_style());
             let region = crate::plugin::convert::rect_to_region(area);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
@@ -1534,7 +1563,12 @@ mod tests {
     use super::*;
     use crate::app::App;
     use crate::plugin::builtin::themes::catalog::Theme;
-    use otto_plugin::{StyledLine, StyledSpan, TextMods, ThemeColor};
+    use async_trait::async_trait;
+    use otto_plugin::{
+        Effect, KeyEventPortable, PluginError, Region, Screen, ScreenLayout, StyledLine,
+        StyledSpan, TextMods, ThemeColor,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
 
     fn span(text: &str) -> StyledSpan {
@@ -1579,6 +1613,72 @@ mod tests {
 
     fn fresh_app() -> App {
         App::new(String::new(), PathBuf::from("."), "en".to_string())
+    }
+
+    struct FakeScreen {
+        id: String,
+        body: Vec<StyledLine>,
+        tips: Vec<StyledLine>,
+    }
+
+    #[async_trait]
+    impl Screen for FakeScreen {
+        fn id(&self) -> String {
+            self.id.clone()
+        }
+
+        fn render(&self, _region: Region) -> Vec<StyledLine> {
+            self.body.clone()
+        }
+
+        async fn on_key(&mut self, _key: KeyEventPortable) -> Result<Vec<Effect>, PluginError> {
+            Ok(vec![])
+        }
+
+        fn tips(&self) -> Vec<StyledLine> {
+            self.tips.clone()
+        }
+    }
+
+    fn render_paint_screen(
+        screen: &dyn Screen,
+        layout: &ScreenLayout,
+        palette: Palette,
+        splash_sandbox: crate::splash::SandboxSplashState,
+    ) -> Buffer {
+        let screen_id = screen.id();
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|frame| {
+                let area = frame.area();
+                paint_screen(
+                    frame,
+                    area,
+                    area.bottom(),
+                    ActiveScreen {
+                        id: &screen_id,
+                        screen,
+                        layout,
+                    },
+                    palette,
+                    &splash_sandbox,
+                );
+            })
+            .expect("paint_screen draw succeeds");
+        terminal.backend().buffer().clone()
+    }
+
+    fn buffer_text(buffer: &Buffer) -> String {
+        let area = buffer.area();
+        let mut out = String::new();
+        for y in 0..area.height {
+            for x in 0..area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
     }
 
     #[test]
@@ -1691,6 +1791,73 @@ mod tests {
         let empty: Vec<Line<'static>> = vec![];
         let out = compose_footer_ratatui_line([&empty, &empty, &empty], &rsep());
         assert!(out.spans.is_empty());
+    }
+
+    #[test]
+    fn paint_screen_fullscreen_splash_uses_shared_splash_renderer() {
+        let first_logo_row =
+            crate::splash::shared_content(&crate::splash::SandboxSplashState::OnDefault)
+                .into_iter()
+                .find(|line| line.kind == crate::splash::SplashLineKind::Logo)
+                .expect("logo row in shared content")
+                .text;
+        let buffer = render_paint_screen(
+            &FakeScreen {
+                id: "splash".into(),
+                body: vec![one_span_line("fake splash body")],
+                tips: vec![one_span_line("fake splash tips")],
+            },
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            palette(),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = buffer_text(&buffer);
+
+        assert!(
+            text.contains(&first_logo_row),
+            "fullscreen splash screen should render the shared startup logo: {text}"
+        );
+        assert!(
+            text.contains("the savvy MCP-native terminal coding agent"),
+            "fullscreen splash screen should render the shared startup tagline: {text}"
+        );
+        assert!(
+            text.contains("sandbox: on (use /sandbox off to disable)"),
+            "fullscreen splash screen should render the shared sandbox line: {text}"
+        );
+        assert!(
+            text.contains(&format!(
+                "press any key to continue · v{}",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "fullscreen splash screen should render the shared versioned hint: {text}"
+        );
+        assert!(
+            !text.contains("fake splash body") && !text.contains("fake splash tips"),
+            "shared splash render should ignore plugin-provided body/tips text: {text}"
+        );
+    }
+
+    #[test]
+    fn paint_screen_fullscreen_non_splash_keeps_screen_render_output() {
+        let buffer = render_paint_screen(
+            &FakeScreen {
+                id: "plugins.manager".into(),
+                body: vec![one_span_line("fullscreen body")],
+                tips: vec![one_span_line("fullscreen tips")],
+            },
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            palette(),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = buffer_text(&buffer);
+
+        assert!(text.contains("fullscreen body"));
+        assert!(text.contains("fullscreen tips"));
+        assert!(
+            !text.contains("the savvy MCP-native terminal coding agent"),
+            "non-splash fullscreen screens must not be rerouted through splash rendering: {text}"
+        );
     }
 
     #[test]

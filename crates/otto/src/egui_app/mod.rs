@@ -421,6 +421,14 @@ impl OttoApp {
 }
 
 impl OttoApp {
+    fn global_open_picker_allowed(
+        top_screen_id: Option<&str>,
+        input_mode: &crate::app::InputMode,
+    ) -> bool {
+        top_screen_id != Some("splash")
+            && !matches!(input_mode, crate::app::InputMode::Canvas { .. })
+    }
+
     /// One paint pass for the *running* (post-bootstrap) front-end. Driven by
     /// [`GuiApp::update`] once the host half (`bootstrap_host_only`) has
     /// completed off the UI thread and `build_app_with_host` has built the
@@ -445,11 +453,12 @@ impl OttoApp {
         //    pickers are opened via slash commands (see `submit_prompt`); only
         //    the ratatui TUI drives plugin-bound home accelerators.
         let events = ctx.input(|i| i.events.clone());
+        let top_screen_id = self.app.screen_stack.top_id();
         for ev in &events {
             if let Some(k) = convert::egui_event_to_portable(ev) {
                 use otto_plugin::KeyCodePortable as KC;
                 let quit = k.modifiers.ctrl && matches!(k.code, KC::Char('c') | KC::Char('d'));
-                if quit {
+                if quit && Self::global_quit_allowed(top_screen_id) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 // Skip global Ctrl-O while a canvas holds focus — the
@@ -457,7 +466,7 @@ impl OttoApp {
                 // and the two would otherwise both fire.
                 let open_picker = k.modifiers.ctrl
                     && matches!(k.code, KC::Char('o'))
-                    && !matches!(self.app.input_mode, crate::app::InputMode::Canvas { .. });
+                    && Self::global_open_picker_allowed(top_screen_id, &self.app.input_mode);
                 if open_picker {
                     self.file_picker.open();
                 }
@@ -548,6 +557,10 @@ impl OttoApp {
         if self.app.is_loading || !self.app.screen_stack.is_empty() {
             ctx.request_repaint();
         }
+    }
+
+    fn global_quit_allowed(top_screen_id: Option<&str>) -> bool {
+        top_screen_id != Some("splash")
     }
 }
 
@@ -740,4 +753,49 @@ pub fn run() -> eframe::Result {
         native_options,
         Box::new(move |cc| Ok(Box::new(GuiApp::new(cc, rt)))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn global_quit_allowed_is_false_for_splash_screen() {
+        assert!(!super::OttoApp::global_quit_allowed(Some("splash")));
+    }
+
+    #[test]
+    fn global_quit_allowed_is_true_for_other_contexts() {
+        assert!(super::OttoApp::global_quit_allowed(None));
+        assert!(super::OttoApp::global_quit_allowed(Some("palette")));
+    }
+
+    #[test]
+    fn global_open_picker_allowed_is_false_for_splash_screen() {
+        assert!(!super::OttoApp::global_open_picker_allowed(
+            Some("splash"),
+            &crate::app::InputMode::Editing,
+        ));
+    }
+
+    #[test]
+    fn global_open_picker_allowed_is_false_for_canvas_mode() {
+        assert!(!super::OttoApp::global_open_picker_allowed(
+            None,
+            &crate::app::InputMode::Canvas {
+                id: otto_plugin::ContentBlockId(1),
+                element_idx: None,
+            },
+        ));
+    }
+
+    #[test]
+    fn global_open_picker_allowed_is_true_for_other_contexts() {
+        assert!(super::OttoApp::global_open_picker_allowed(
+            None,
+            &crate::app::InputMode::Editing,
+        ));
+        assert!(super::OttoApp::global_open_picker_allowed(
+            Some("palette"),
+            &crate::app::InputMode::SelectingTranscript,
+        ));
+    }
 }
