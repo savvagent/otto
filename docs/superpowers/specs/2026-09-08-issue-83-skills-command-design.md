@@ -79,7 +79,8 @@ The command will rediscover skills when invoked so its output matches the files
 on disk without needing a separate `/reload-skills` command. Results will be
 sorted deterministically (location, then name) and emitted as note lines in the
 same lightweight style `/tools` uses (`crates/otto/src/main.rs:1283-1310`): a
-header with the total count, followed by one line per skill.
+header `skills: <count> discovered` followed by one line per skill in the form
+`- <name> [<location>] — <description>`.
 
 Malformed or incomplete `SKILL.md` files should not crash the command or the
 TUI. Discovery is best-effort: invalid files are skipped with a tracing warning,
