@@ -1495,7 +1495,7 @@ fn build_provider_selector_view(app: &App, provider_count: usize) -> ProviderSel
     let show_query_row = provider_selector_shows_query(provider_count, app.provider_query.as_str());
     let items: Vec<ProviderSelectorItem> = app
         .filtered_providers()
-        .into_iter()
+        .iter()
         .enumerate()
         .map(|(i, spec)| ProviderSelectorItem {
             spec,
@@ -1740,7 +1740,7 @@ mod tests {
         ));
         assert_eq!(
             app.filtered_providers()
-                .into_iter()
+                .iter()
                 .map(|spec| spec.id)
                 .collect::<Vec<_>>(),
             vec!["openai"],

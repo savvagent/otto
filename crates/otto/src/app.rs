@@ -570,6 +570,8 @@ pub struct App {
     pub active_provider_id: Option<&'static str>,
     /// Live filter typed in the provider selector.
     pub provider_query: String,
+    /// Cached provider-selector matches for the current query.
+    provider_matches: Vec<&'static ProviderSpec>,
     /// Cursor in the provider selector's filtered results.
     pub provider_index: usize,
     /// Masked input for the API key (only populated during `EnteringApiKey`).
@@ -971,6 +973,7 @@ impl App {
         let file_explorer = FileExplorerBuilder::build_with_theme(theme)
             .expect("failed to initialize file explorer");
 
+        let provider_matches = effective_providers();
         let mut app = Self {
             input_textarea: make_input_textarea(Vec::<String>::new()),
             pending_prefill: None,
@@ -992,6 +995,7 @@ impl App {
             connected: false,
             active_provider_id: None,
             provider_query: String::new(),
+            provider_matches,
             provider_index: 0,
             api_key_textarea: TextArea::default(),
             pending_provider: None,
@@ -1728,11 +1732,8 @@ impl App {
     /// Providers visible in the `/connect` selector after applying the
     /// current fuzzy query. Empty query returns the full runtime catalog.
     #[allow(dead_code)]
-    pub fn filtered_providers(&self) -> Vec<&'static ProviderSpec> {
-        effective_providers()
-            .into_iter()
-            .filter(|spec| provider_matches_query(spec, &self.provider_query))
-            .collect()
+    pub fn filtered_providers(&self) -> &[&'static ProviderSpec] {
+        &self.provider_matches
     }
 
     /// Update the selector query and keep the cursor inside the filtered
@@ -1742,15 +1743,17 @@ impl App {
     pub fn set_provider_query<S: Into<String>>(&mut self, query: S) {
         let previously_selected = self.selected_provider().map(|spec| spec.id);
         self.provider_query = query.into();
+        self.refresh_provider_matches();
         if self.provider_query.is_empty() {
             self.reset_provider_index_for_active();
             return;
         }
 
-        let filtered = self.filtered_providers();
-        if let Some(idx) =
-            previously_selected.and_then(|id| filtered.iter().position(|spec| spec.id == id))
-        {
+        if let Some(idx) = previously_selected.and_then(|id| {
+            self.filtered_providers()
+                .iter()
+                .position(|spec| spec.id == id)
+        }) {
             self.provider_index = idx;
             return;
         }
@@ -1762,6 +1765,7 @@ impl App {
     #[allow(dead_code)]
     pub fn clear_provider_query(&mut self) {
         self.provider_query.clear();
+        self.refresh_provider_matches();
         self.reset_provider_index_for_active();
     }
 
@@ -1796,11 +1800,21 @@ impl App {
     }
 
     fn reset_provider_index_for_active(&mut self) {
-        let filtered = self.filtered_providers();
         self.provider_index = self
             .active_provider_id
-            .and_then(|id| filtered.iter().position(|spec| spec.id == id))
+            .and_then(|id| {
+                self.filtered_providers()
+                    .iter()
+                    .position(|spec| spec.id == id)
+            })
             .unwrap_or(0);
+    }
+
+    fn refresh_provider_matches(&mut self) {
+        self.provider_matches = effective_providers()
+            .into_iter()
+            .filter(|spec| provider_matches_query(spec, &self.provider_query))
+            .collect();
     }
 
     /// Open the `/connect` provider selector.
@@ -2600,7 +2614,7 @@ mod tests {
 
         assert_eq!(
             app.filtered_providers()
-                .into_iter()
+                .iter()
                 .map(|spec| spec.id)
                 .collect::<Vec<_>>(),
             effective_providers()
@@ -2617,7 +2631,7 @@ mod tests {
         app.set_provider_query("opn");
         assert_eq!(
             app.filtered_providers()
-                .into_iter()
+                .iter()
                 .map(|spec| spec.id)
                 .collect::<Vec<_>>(),
             vec!["openai"],
@@ -2626,7 +2640,7 @@ mod tests {
         app.set_provider_query("cld");
         assert_eq!(
             app.filtered_providers()
-                .into_iter()
+                .iter()
                 .map(|spec| spec.id)
                 .collect::<Vec<_>>(),
             vec!["anthropic"],
