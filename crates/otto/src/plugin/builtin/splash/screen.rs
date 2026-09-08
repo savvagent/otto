@@ -39,13 +39,13 @@ pub(crate) fn shared_splash_styled_lines(sandbox: &SandboxSplashState) -> Vec<Re
             let (fg, modifiers) = match line.kind {
                 SplashLineKind::Blank => (None, TextMods::default()),
                 SplashLineKind::Logo => (
-                    Some(ThemeColor::Accent),
+                    Some(ThemeColor::LightBlue),
                     TextMods {
                         bold: true,
                         ..Default::default()
                     },
                 ),
-                SplashLineKind::Tagline => (Some(ThemeColor::Accent), TextMods::default()),
+                SplashLineKind::Tagline => (Some(ThemeColor::LightBlue), TextMods::default()),
                 SplashLineKind::SandboxOn => (Some(ThemeColor::Green), TextMods::default()),
                 SplashLineKind::SandboxOff => (Some(ThemeColor::Yellow), TextMods::default()),
                 SplashLineKind::SandboxError => (
@@ -56,7 +56,7 @@ pub(crate) fn shared_splash_styled_lines(sandbox: &SandboxSplashState) -> Vec<Re
                     },
                 ),
                 SplashLineKind::Hint => (
-                    Some(ThemeColor::Muted),
+                    Some(ThemeColor::DarkGray),
                     TextMods {
                         italic: true,
                         ..Default::default()
@@ -149,6 +149,38 @@ mod tests {
             "press any key to continue · v{}",
             env!("CARGO_PKG_VERSION")
         )));
+    }
+
+    #[test]
+    fn render_uses_startup_splash_colors_for_logo_and_hint() {
+        let s = SplashScreen::with_sandbox(SandboxSplashState::OnDefault);
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 24,
+        });
+
+        let logo = lines
+            .iter()
+            .find(|line| {
+                line.spans
+                    .first()
+                    .is_some_and(|span| span.text.trim_start().starts_with("███████╗"))
+            })
+            .expect("logo row present");
+        assert_eq!(logo.spans[0].fg, Some(ThemeColor::LightBlue));
+
+        let hint = lines
+            .iter()
+            .find(|line| {
+                line.spans.first().is_some_and(|span| {
+                    span.text.trim()
+                        == format!("press any key to continue · v{}", env!("CARGO_PKG_VERSION"))
+                })
+            })
+            .expect("hint row present");
+        assert_eq!(hint.spans[0].fg, Some(ThemeColor::DarkGray));
     }
 
     #[test]
