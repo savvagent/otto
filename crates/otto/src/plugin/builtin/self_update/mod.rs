@@ -355,6 +355,7 @@ impl Plugin for SelfUpdatePlugin {
             | UpdateState::InstallFailed { .. } => {
                 let effective = publish_live_check_state(
                     &self.state,
+                    &pre_state,
                     check_for_update(
                         env!("CARGO_PKG_VERSION"),
                         self.install_method,
@@ -531,15 +532,35 @@ enum Action {
     Install(semver::Version, semver::Version),
 }
 
-fn publish_live_check_state(state: &Arc<Mutex<UpdateState>>, live: UpdateState) -> UpdateState {
+fn publish_live_check_state(
+    state: &Arc<Mutex<UpdateState>>,
+    pre_state: &UpdateState,
+    live: UpdateState,
+) -> UpdateState {
     let mut guard = state.lock().unwrap();
-    match (&*guard, &live) {
-        (UpdateState::Installing { .. }, _) | (UpdateState::Updated { .. }, _) => guard.clone(),
+    match (&*guard, pre_state, &live) {
+        (UpdateState::Installing { .. }, _, _) | (UpdateState::Updated { .. }, _, _) => {
+            guard.clone()
+        }
+        (
+            UpdateState::InstallFailed {
+                latest: active_failed,
+                ..
+            },
+            UpdateState::InstallFailed {
+                latest: prior_failed,
+                ..
+            },
+            UpdateState::Available { latest: new, .. },
+        ) if active_failed == new && prior_failed == active_failed => {
+            *guard = live.clone();
+            live
+        }
         (
             UpdateState::InstallFailed { latest: failed, .. },
+            _,
             UpdateState::Available { latest: new, .. },
         ) if failed == new => guard.clone(),
-        (UpdateState::InstallFailed { .. }, UpdateState::CheckFailed) => guard.clone(),
         _ => {
             *guard = live.clone();
             live
@@ -1348,6 +1369,30 @@ mod tests {
             installer.invocation_count(),
             1,
             "/update on InstallFailed must re-run the installer"
+        );
+        assert_eq!(effects.len(), 2);
+        assert!(matches!(plugin.state(), UpdateState::Updated { .. }));
+    }
+
+    #[tokio::test]
+    async fn slash_update_retries_same_failed_tag_when_explicitly_requested() {
+        let installer = Arc::new(StubInstaller::ok());
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(FixedFetcher("v99.99.99")),
+            installer.clone(),
+            UpdateState::InstallFailed {
+                current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                latest: Version::parse("99.99.99").unwrap(),
+                error: "previous failure".into(),
+            },
+        );
+
+        let effects = plugin.handle_slash("update", vec![]).await.unwrap();
+
+        assert_eq!(
+            installer.invocation_count(),
+            1,
+            "explicit /update must retry the same failed release"
         );
         assert_eq!(effects.len(), 2);
         assert!(matches!(plugin.state(), UpdateState::Updated { .. }));
