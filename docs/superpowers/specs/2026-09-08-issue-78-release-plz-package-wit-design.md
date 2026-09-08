@@ -27,7 +27,7 @@ Success criteria:
 
 1. **Vendor the WIT tree into `otto-plugin-wasm`.** Add `crates/otto-plugin-wasm/wit/` containing byte-for-byte copies of the canonical `.wit` files from `crates/otto-plugin-wit/wit/`, then change all three `bindgen!` call sites in `crates/otto-plugin-wasm/src/lib.rs` to `path: "wit"`. Because the WIT files now live under the package root, Cargo includes them in the packaged tarball and the macro can still resolve them when the crate is rebuilt in `target/package/...`.
 2. **Keep `otto-plugin-wit` canonical.** Add a small `build.rs` to `otto-plugin-wasm` that compares the local vendored `wit/` directory with the sibling `../otto-plugin-wit/wit/` tree when that sibling exists (normal workspace dev/CI builds). If a file is missing or differs byte-for-byte, fail the build with an actionable message telling the developer to resync the vendored copy. If the sibling path is absent, silently skip the comparison — that is the expected packaged-isolation case this fix is designed for.
-3. **Track WIT files in packaged inputs.** Ensure `crates/otto-plugin-wasm/Cargo.toml` includes the new `build.rs` and any package-include adjustments needed so the vendored `wit/` directory is present during package verification.
+3. **Track WIT files in packaged inputs.** Rely on Cargo's default package contents for `build.rs` and crate-local source files, and only touch `crates/otto-plugin-wasm/Cargo.toml` if validation proves an explicit include list is required. The intended steady state is no manifest change.
 4. **Document the rationale at the bindgen site.** Replace the current comment in `crates/otto-plugin-wasm/src/lib.rs` that justifies the sibling path with one explaining why the crate vendors a copy of the WIT tree: canonical editing still happens in `otto-plugin-wit`, but `otto-plugin-wasm` must be self-contained under `cargo package` sandboxing.
 5. **Validate both paths.** Run the standard workspace build/test/lint suite plus a packaging-focused verification that actually rebuilds the staged package (either via `cargo package --allow-dirty --workspace` or by building the packaged `target/package/otto-plugin-wasm-<version>/` crate in isolation) to prove the missing-sibling failure is gone.
 
@@ -35,7 +35,6 @@ Success criteria:
 
 **In:**
 - `crates/otto-plugin-wasm/src/lib.rs`
-- `crates/otto-plugin-wasm/Cargo.toml`
 - `crates/otto-plugin-wasm/build.rs`
 - `crates/otto-plugin-wasm/wit/*.wit`
 - Validation commands and any directly related documentation/comments needed to explain the packaging constraint

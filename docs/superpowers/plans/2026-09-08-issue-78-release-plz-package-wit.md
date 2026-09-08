@@ -24,7 +24,6 @@
 
 **Modified files**
 - `crates/otto-plugin-wasm/src/lib.rs` — repoint `bindgen!` to crate-local `wit/` and document the vendoring rationale.
-- `crates/otto-plugin-wasm/Cargo.toml` — include any package metadata needed for the new `build.rs`/`wit/` inputs.
 
 ## Task 1: Vendor the WIT tree and enforce sync with the canonical crate
 
@@ -35,11 +34,10 @@
 - Create: `crates/otto-plugin-wasm/wit/plugin-provider.wit`
 - Create: `crates/otto-plugin-wasm/wit/shared.wit`
 - Create: `crates/otto-plugin-wasm/wit/spp.wit`
-- Modify: `crates/otto-plugin-wasm/Cargo.toml`
 
 - [ ] Reproduce the current packaging breakage from the worktree with `cargo package --allow-dirty --workspace`. Expected result: packaging currently fails during `otto-plugin-wasm` verification because the bindgen macro cannot resolve the sibling `../otto-plugin-wit/wit` path inside Cargo's staged package sandbox.
 - [ ] Add `crates/otto-plugin-wasm/wit/` as a byte-for-byte vendored copy of `crates/otto-plugin-wit/wit/`, and add `crates/otto-plugin-wasm/build.rs` that (a) emits `cargo::rerun-if-changed=wit`, (b) watches `../otto-plugin-wit/wit`, and (c) fails with actionable messages when the vendored files are missing or differ while the canonical sibling tree exists. Expected result: a normal workspace build now guards against WIT drift before compilation.
-- [ ] Update `crates/otto-plugin-wasm/Cargo.toml` only if explicit package metadata is needed to keep `build.rs` and `wit/` in the packaged crate contents. Expected result: Cargo includes the vendored WIT tree in package inputs without changing `otto-plugin-wit` dependencies.
+- [ ] Verify whether explicit package metadata is needed to keep `build.rs` and `wit/` in the packaged crate contents. Expected result: Cargo's defaults already include the vendored WIT tree, so `crates/otto-plugin-wasm/Cargo.toml` remains unchanged unless validation disproves that assumption.
 - [ ] Run `cargo check -p otto-plugin-wasm`. Expected result: the crate still builds in the normal workspace with the new build-script guard in place.
 - [ ] Public-interface check: record in the task ledger that the plugin ABI WIT contents and generated Rust surface stay unchanged; only packaging/layout behavior changes.
 - [ ] Host-swap/RwLock check: not applicable — no `crates/otto/src/app.rs` or `crates/otto/src/tui.rs` change.
@@ -50,12 +48,11 @@
 
 **Files:**
 - Modify: `crates/otto-plugin-wasm/src/lib.rs`
-- Modify only if Task 1 validation exposed missing package metadata: `crates/otto-plugin-wasm/Cargo.toml`
 
 - [ ] Change all three `wasmtime::component::bindgen!` call sites in `crates/otto-plugin-wasm/src/lib.rs` from the sibling `../otto-plugin-wit/wit` path to the crate-local `wit` directory, and replace the surrounding comment with the packaging rationale and canonical-source note. Expected result: macro expansion no longer depends on a sibling crate path.
 - [ ] Run `cargo check -p otto-plugin-wasm`. Expected result: the crate still builds from the workspace after the bindgen path change.
 - [ ] Run `cargo package --allow-dirty --workspace`. Expected result: workspace packaging and verification complete successfully, including `otto-plugin-wasm`'s staged verification build; if the command fails in an unrelated crate, capture that output and additionally rebuild the extracted `target/package/otto-plugin-wasm-0.26.1` crate as the issue-specific acceptance proof from the spec.
-- [ ] Inspect the staged package contents with `find target/package/otto-plugin-wasm-0.26.1/wit -maxdepth 1 -type f | sort`. Expected result: all five vendored `.wit` files are present inside Cargo's extracted `otto-plugin-wasm` package sandbox.
+- [ ] Inspect the staged package contents with `find target/package/otto-plugin-wasm-*/wit -maxdepth 1 -type f | sort`. Expected result: all five vendored `.wit` files are present inside Cargo's extracted `otto-plugin-wasm` package sandbox.
 - [ ] Public-interface check: confirm no plugin ABI, SPP, MCP, slash-command, env-var, or on-disk format change was introduced; note in the ledger and PR body that this is a packageability fix only.
 - [ ] Host-swap/RwLock check: not applicable.
 - [ ] ProgressDispatcher check: not applicable.
