@@ -393,15 +393,19 @@ pub fn render(
 
     // Screen-stack: if any screen is on top, paint it over the home chrome.
     if let Some((top_screen, layout)) = app.screen_stack.top() {
+        let top_screen_id = app
+            .screen_stack
+            .top_id()
+            .expect("top screen id present when top screen exists");
         paint_screen(
             frame,
             area,
             chunks[4].y,
-            app.screen_stack
-                .top_id()
-                .expect("top screen id present when top screen exists"),
-            top_screen,
-            layout,
+            ActiveScreen {
+                id: top_screen_id,
+                screen: top_screen,
+                layout,
+            },
             palette,
             &app.splash_sandbox,
         );
@@ -1217,21 +1221,25 @@ fn bottom_sheet_rect(area: Rect, input_top: u16, height: u16) -> Rect {
 /// would bleed through under any plugin span that only sets `fg` — which
 /// makes upstream themes (Solarized Light, Catppuccin Latte, Tokyo Night
 /// Day, …) look like floating text rather than a popup.
+struct ActiveScreen<'a> {
+    id: &'a str,
+    screen: &'a dyn otto_plugin::Screen,
+    layout: &'a otto_plugin::ScreenLayout,
+}
+
 fn paint_screen(
     f: &mut Frame,
     area: Rect,
     input_top: u16,
-    screen_id: &str,
-    screen: &dyn otto_plugin::Screen,
-    layout: &otto_plugin::ScreenLayout,
+    active_screen: ActiveScreen<'_>,
     palette: Palette,
     splash_sandbox: &crate::splash::SandboxSplashState,
 ) {
     use otto_plugin::ScreenLayout;
 
-    match layout {
+    match active_screen.layout {
         ScreenLayout::Fullscreen { .. } => {
-            if screen_id == "splash" {
+            if active_screen.id == "splash" {
                 crate::splash::render(f, area, splash_sandbox);
                 return;
             }
@@ -1239,7 +1247,8 @@ fn paint_screen(
             f.render_widget(Clear, area);
             f.buffer_mut().set_style(area, palette.base_style());
             let region = crate::plugin::convert::rect_to_region(area);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
@@ -1248,7 +1257,7 @@ fn paint_screen(
             f.render_widget(para, area);
 
             // Tips row at the very bottom of the frame.
-            let tips = screen.tips();
+            let tips = active_screen.screen.tips();
             if !tips.is_empty() && area.height > 0 {
                 let tips_row = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips
@@ -1294,7 +1303,7 @@ fn paint_screen(
                 ));
 
             // Tips as a bottom title if present.
-            let tips = screen.tips();
+            let tips = active_screen.screen.tips();
             let block = if let Some(tip_line) = tips.into_iter().next() {
                 let tip_text: String = tip_line.spans.iter().map(|s| s.text.as_str()).collect();
                 block.title_bottom(Line::from(tip_text).right_aligned())
@@ -1311,7 +1320,8 @@ fn paint_screen(
             f.render_widget(block, outer);
 
             let region = crate::plugin::convert::rect_to_region(inner);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
@@ -1323,14 +1333,15 @@ fn paint_screen(
             f.render_widget(Clear, sheet);
             f.buffer_mut().set_style(sheet, palette.base_style());
             let region = crate::plugin::convert::rect_to_region(sheet);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
                 .collect();
             f.render_widget(Paragraph::new(lines).style(palette.base_style()), sheet);
 
-            let tips = screen.tips();
+            let tips = active_screen.screen.tips();
             if !tips.is_empty() && sheet.height > 0 {
                 let tips_row = Rect::new(sheet.x, sheet.y + sheet.height - 1, sheet.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips
@@ -1348,7 +1359,8 @@ fn paint_screen(
             f.render_widget(Clear, area);
             f.buffer_mut().set_style(area, palette.base_style());
             let region = crate::plugin::convert::rect_to_region(area);
-            let lines: Vec<Line<'static>> = screen
+            let lines: Vec<Line<'static>> = active_screen
+                .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
@@ -1644,9 +1656,11 @@ mod tests {
                     frame,
                     area,
                     area.bottom(),
-                    &screen_id,
-                    screen,
-                    layout,
+                    ActiveScreen {
+                        id: &screen_id,
+                        screen,
+                        layout,
+                    },
                     palette,
                     &splash_sandbox,
                 );
