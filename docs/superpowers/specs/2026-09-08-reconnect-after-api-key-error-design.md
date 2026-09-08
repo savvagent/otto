@@ -161,6 +161,49 @@ Ok(Err(e)) => {
 clippy-clean form; this section documents the behavior, not the final
 syntax.)
 
+**Identifying the provider a routed turn actually used.** `app.active_provider_id`
+is *not* a safe stand-in for "the provider this turn ran against": `Host`'s
+router (`crates/otto-host/src/session.rs`, around line 1033) can pick a
+**different** pool entry than the active one for a given turn — an
+`@`-override, modality routing (an image-bearing prompt redirected to a
+vision-capable provider), or a `routing.toml` rule. The router always emits
+`TurnEvent::RouteSelected { provider_id, model_id, reason }` before the
+first `IterationStarted` (`crates/otto-host/src/session.rs:1029-1036`,
+unconditionally, whether or not any routing rule actually redirected
+anything), so the TUI already receives the authoritative per-turn provider
+id — it just isn't retained anywhere today
+(`app.apply_turn_event`'s `RouteSelected` arm, `crates/otto/src/app.rs:1114-1122`,
+only pushes a `RouteBadge` entry and discards `provider_id`).
+
+Add a new local in `run_app`'s event loop, alongside the existing
+`current_turn_id`/`footer_pending_turn_id`/`turn_terminal_event_seen` locals
+(`crates/otto/src/main.rs:3223-3226`):
+
+```rust
+let mut current_turn_provider_id: Option<otto_protocol::ProviderId> = None;
+```
+
+Capture it from `&e` in the `WorkerMsg::Event(e)` arm, in the same spot the
+existing `html_block_stop_id` capture already reads `&e` before
+`app.apply_turn_event(e)` consumes it by value (`crates/otto/src/main.rs`,
+just above the `apply_turn_event` call):
+
+```rust
+if let TurnEvent::RouteSelected { provider_id, .. } = &e {
+    current_turn_provider_id = Some(provider_id.clone());
+}
+```
+
+Reset it to `None` whenever a turn reaches a terminal state — the same
+points that already reset `turn_terminal_event_seen`/`current_turn_id`
+(`TurnComplete`, `Cancelled`, `AbortedAfterGrace`, and the `WorkerMsg::Error`/
+`WorkerMsg::TurnAuthError` arms themselves, after use) — so a stale id from
+a previous turn can never leak into a later one that errors before its own
+`RouteSelected` fires (e.g. `NoActiveProvider`, which the hint's `spec`
+lookup below naturally no-ops on anyway since that `HostError` variant is
+never `Provider`, so it never reaches this branch — but resetting keeps the
+invariant explicit rather than incidental).
+
 In the main loop, add a `WorkerMsg::TurnAuthError { message, provider_display_name }`
 arm that performs the *exact same* turn-bookkeeping the existing
 `WorkerMsg::Error(msg)` arm does (the `is_loading` reset, the synthetic
@@ -168,23 +211,25 @@ arm that performs the *exact same* turn-bookkeeping the existing
 reset — see `crates/otto/src/main.rs:3428-3479`) using `message` in place of
 `msg`, and then additionally:
 
-1. Look up the provider id to interpolate into the hint by matching
-   `app.active_provider_id` against `crate::providers::effective_providers()`
-   (the same catalog `apply_pending_pool_add` already uses). This is more
-   reliable than reverse-matching on `provider_display_name` (display names
-   aren't guaranteed unique across custom/future providers) and is safe here
-   because a single-turn, single-active-provider TUI session means the
-   provider that ran the just-failed turn is still `app.active_provider_id`
-   when the error arrives (no intervening `/connect`/`/use` can execute
-   while a turn is in flight — the event loop is single-threaded and the
-   input handlers that could change `active_provider_id` do not run until
-   this message is drained).
-2. If found and `spec.api_key_required`, push
+1. Look up the provider id to interpolate into the hint via
+   `current_turn_provider_id` (captured above), then match that against
+   `crate::providers::effective_providers()` (the same catalog
+   `apply_pending_pool_add` already uses) to get the `ProviderSpec`. Using
+   the per-turn routed id — not `app.active_provider_id` — is what makes
+   this correct when routing redirected the turn to a non-active provider.
+   `provider_display_name` (from `HostError::Provider::name`) is used only
+   for the hint text's `%{name}`, never for identifying which provider to
+   rekey — display names aren't guaranteed unique across custom/future
+   providers, but the routed `ProviderId` is authoritative.
+2. If `current_turn_provider_id` is `None` (defensive — should not happen
+   given `RouteSelected` fires unconditionally before any provider call, but
+   the field starts `None` and a hostile/future host implementation could
+   theoretically skip it) or the id doesn't resolve to a spec in
+   `effective_providers()`, or `spec.api_key_required` is `false`: skip the
+   hint silently — the "Error: ..." note alone still fires, so no
+   information is lost, just the actionable follow-up. Otherwise push
    `notes.turn-auth-failed-hint` with `id = spec.id, name =
-   provider_display_name`. If not found (custom/removed provider) or
-   `!spec.api_key_required`, skip the hint silently — the "Error: ..." note
-   alone still fires, so no information is lost, just the actionable
-   follow-up.
+   provider_display_name`.
 
 To avoid duplicating the ~50-line turn-bookkeeping block, refactor it into a
 private helper (e.g. `fn record_turn_error(app: &mut App, message: String,
@@ -248,13 +293,13 @@ strings are user-facing text, not a wire or schema contract.
 
 ## Assumptions
 
-- **`app.active_provider_id` at message-drain time still identifies the
-  provider that produced the turn error.** Justified above (single-threaded
-  event loop; no intervening `/connect`/`/use` can run mid-turn). If this
-  assumption is ever violated by a future concurrency change, the hint would
-  point at the wrong provider id — a cosmetic regression, not a crash or
-  data-loss risk, and the existing `Error: ...` note (unaffected) still
-  correctly names the actual provider via `HostError::Provider::name`.
+- **The per-turn routed provider id (`TurnEvent::RouteSelected`), not
+  `app.active_provider_id`, identifies which provider to rekey.** Routing
+  (an `@`-override, modality redirection, or a `routing.toml` rule) can
+  select a different pool entry than the active one for any given turn;
+  `RouteSelected` fires unconditionally before the first
+  `IterationStarted` and is the authoritative source. Justified in Approach
+  §2 above.
 - **Extending `notes.connect-failed` in place (not adding a new key) is
   acceptable** even though it changes existing translated text in 4
   locales. The alternative (a second, always-appended key) would require
@@ -284,7 +329,22 @@ in Problem.
       bare failure message.
 - [ ] The same hint appears when a stored key goes bad and is caught by the
       silent-reconnect path (`apply_pending_pool_add`'s `Rejected`/`Err`
-      arms).
+      arms) **outside of startup** — i.e. when `apply_pending_pool_add` is
+      invoked with `startup: false` (the runtime `/connect`-adjacent call
+      site, whose notes are already shown unconditionally today). The
+      `startup: true` call site's existing quiet-by-default policy
+      (`show_notes = !startup || app.startup_verbose`,
+      `crates/otto/src/main.rs:1889`) is untouched by this change: a
+      rejected key discovered silently at launch still produces no note at
+      all unless `[startup] verbose = true` is set, matching
+      `savvagent/otto#14`'s deliberate quiet-startup design. When it *is*
+      shown (verbose startup, or the non-startup call site), the message
+      picks up the same extended `notes.connect-failed` text automatically.
+- [ ] A turn routed to a non-active provider (via `@`-override, modality
+      redirection, or a `routing.toml` rule) that fails with
+      `ErrorKind::Authentication` shows a hint naming the *routed* provider
+      (from `TurnEvent::RouteSelected`), not whatever `app.active_provider_id`
+      happens to be at the time.
 - [ ] A turn that fails with `ErrorKind::Authentication` (e.g. a revoked key
       caught only at first-prompt time, since `list_models` validation at
       connect time can't catch a key that goes bad *after* a successful
@@ -299,30 +359,34 @@ in Problem.
 
 ## Error Handling & Edge Cases
 
-- **No matching provider spec for `app.active_provider_id`** (e.g. the id
-  was removed from `effective_providers()` between connect and this turn —
-  not currently possible but defensive): skip the hint, log nothing extra
-  (the existing `Error: ...` note already fired); this is a silent no-op,
-  not a panic or unwrap.
-- **`app.active_provider_id` is `None`** (host somehow ran a turn with no
-  active provider recorded client-side — shouldn't happen given
-  `NoActiveProvider` is its own `HostError` variant that never reaches this
-  branch): same silent-skip behavior.
+- **No matching provider spec for `current_turn_provider_id`** (e.g. the id
+  was removed from `effective_providers()` between the turn starting and
+  the error arriving — not currently possible but defensive): skip the
+  hint, log nothing extra (the existing `Error: ...` note already fired);
+  this is a silent no-op, not a panic or unwrap.
+- **`current_turn_provider_id` is `None`** (defensive only —
+  `TurnEvent::RouteSelected` fires unconditionally before any provider call
+  that could produce an `Authentication`-kind `HostError::Provider`, so this
+  should not occur in practice): same silent-skip behavior.
 - **A provider whose `api_key_required` is `false`** (`local`) producing an
   `Authentication`-kind error (unexpected, since Ollama has no auth) is
   handled by the existing `spec.api_key_required` guard — hint is skipped.
+- **A turn routed to a non-active provider that then fails authentication**:
+  correctly handled — see Approach §2's `TurnEvent::RouteSelected` capture;
+  the hint names the routed provider, not the active one.
 - **Two providers connected, the non-active one is the one whose stored key
-  later goes bad**: unaffected by this change — that failure would only
-  surface if/when the user makes it active and runs a turn through it, at
-  which point `app.active_provider_id` correctly names it.
+  later goes bad**: unaffected by this change unless a turn is actually
+  routed to it (via override/modality/`routing.toml`), in which case
+  `current_turn_provider_id` correctly names it per Approach §2.
 
 ## Risks & Open Questions
 
 - The turn-bookkeeping extraction (shared helper for `WorkerMsg::Error` and
   `WorkerMsg::TurnAuthError`) touches a code path with several closure-
   captured `&mut` locals (`footer_pending_turn_id`, `current_turn_id`,
-  `next_turn_id`, `turn_terminal_event_seen`). The plan's Task 2 must get the
-  exact signature right without changing behavior for the existing
+  `next_turn_id`, `turn_terminal_event_seen`, and now
+  `current_turn_provider_id`). The plan's Task 2 must get the exact
+  signature right without changing behavior for the existing
   `WorkerMsg::Error` arm — covered by keeping all existing assertions/tests
   around turn-error `TurnStart`/`TurnEnd` symmetry green.
 - Retranslating `notes.connect-failed` for es/hi/pt without a native
