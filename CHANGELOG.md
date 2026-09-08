@@ -8,6 +8,16 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.26.2 - 2026-09-08
+
+### Fixed
+
+- Failure notes for a rejected/expired provider API key now point at the existing `/connect <id>
+  --rekey` command instead of leaving a dead end: a connect-time rejection caused by a bad key
+  (not a rate limit, permission/quota failure, or a keyless provider) gets a `--rekey` hint, and a
+  turn-time authentication failure gets a companion note naming the actual routed provider (not
+  just whatever provider happens to be "active"). Both the TUI and GUI front-ends are covered. (#81)
+
 ## 0.26.1 - 2026-09-08
 
 ### Fixed
