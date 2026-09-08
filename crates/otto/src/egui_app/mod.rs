@@ -568,6 +568,15 @@ impl OttoApp {
             // `view::paint_prompt`). Reuses the `palette` screen, which
             // `apply_effects::open_screen` self-populates from the slash index.
             if std::mem::take(&mut self.pending_open_palette) {
+                // The palette open invariant — it may only open over an
+                // empty prompt — is enforced on the *egui* prompt buffer
+                // (`self.prompt`), which the palette trigger just cleared.
+                // `App::input_textarea` is the state the effects layer's
+                // palette guard reads, and it only ever reflects the last
+                // `prefill_input` (e.g. a stale "/cmd " from a prior
+                // arg-taking selection), never egui keystrokes. Align it so
+                // the guard sees the empty prompt the trigger guaranteed.
+                self.app.prefill_input(String::new());
                 let effs = vec![otto_plugin::Effect::OpenScreen {
                     id: "palette".into(),
                     args: otto_plugin::ScreenArgs::None,

@@ -659,6 +659,28 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         let screen: Box<dyn otto_plugin::Screen> = Box::new(PluginsManagerScreen::with_rows(rows));
         (screen, layout)
     } else if id == "palette" {
+        // The palette mirrors its selection into the prompt — `open_screen`
+        // seeds the preview below and `PaletteScreen` clears it again on
+        // Esc / empty-result Enter / no-arg Enter — so it owns the draft
+        // from the first frame. It may therefore only open over an empty
+        // prompt: both front-ends already refuse to emit
+        // `OpenScreen { id: "palette" }` while text is present (the TUI
+        // routes `/` to the palette only on an empty prompt; the egui
+        // trigger requires a bare `/` and clears it). This guard keeps a
+        // future plugin/hook-driven open from seizing and destroying a
+        // real draft, and is purely defensive today.
+        if app
+            .input_textarea
+            .lines()
+            .iter()
+            .any(|line| !line.is_empty())
+        {
+            tracing::debug!(
+                "refusing to open the command palette: the prompt is non-empty, \
+                 and the palette would overwrite the draft"
+            );
+            return Ok(());
+        }
         let layout = {
             let plugin = handle.lock().await;
             let manifest = plugin.manifest();
@@ -3112,6 +3134,77 @@ mod tests {
         assert_eq!(
             cleared_first_line, "",
             "prompt preview should be cleared after immediate-run Enter, but got: '{cleared_first_line}'"
+        );
+    }
+
+    /// The palette mirrors its selection into the prompt (and clears it
+    /// again on Esc / empty-result Enter / no-arg Enter), so it may only
+    /// open over an empty prompt. Applying `Effect::OpenScreen { id:
+    /// "palette" }` while the textarea holds a real draft must neither
+    /// overwrite that draft nor push a palette screen — the effects layer
+    /// refuses the open instead of letting the palette seize the user's
+    /// text. Both front-ends already gate their palette opener on an empty
+    /// prompt, so this guards a future plugin/hook-driven open.
+    #[tokio::test]
+    async fn palette_open_is_refused_over_non_empty_prompt() {
+        use crate::plugin::manifests::Indexes;
+        use crate::plugin::register_builtins;
+        use crate::plugin::registry::PluginRegistry;
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
+            Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
+            Arc::new(tokio::sync::RwLock::new(
+                crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
+            )),
+            "test-session".into(),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
+                "/t.json",
+            ))),
+            crate::McpManagerSeed::default(),
+            vec![],
+        );
+        let registry = PluginRegistry::new(set);
+        let indexes = Indexes::build(&registry).await.expect("indexes build");
+
+        let mut app = {
+            let _lock = HOME_LOCK.lock().unwrap();
+            let _home = HomeGuard::new();
+            fresh_app()
+        };
+        app.install_plugin_runtime(registry, indexes);
+
+        // Seed a real draft the way the TUI textarea would hold one.
+        let draft = vec!["my half-written thought".to_string()];
+        app.input_textarea = crate::app::make_input_textarea(draft.clone());
+
+        apply_effects(
+            &mut app,
+            vec![Effect::OpenScreen {
+                id: "palette".into(),
+                args: otto_plugin::ScreenArgs::None,
+            }],
+        )
+        .await
+        .expect("a refused palette open must return Ok, not an error");
+
+        // The draft is untouched — no seed, no staged clear, no screen push.
+        assert_eq!(
+            app.input_textarea.lines(),
+            &draft[..],
+            "palette open over a non-empty prompt must not alter the draft"
+        );
+        assert_eq!(
+            app.take_pending_prefill(),
+            None,
+            "a refused palette open must not stage a PrefillInput"
+        );
+        assert!(
+            app.screen_stack.is_empty(),
+            "a refused palette open must not push a palette screen"
         );
     }
 }
