@@ -113,7 +113,13 @@ impl McpManagerOps for RealMcpManagerOps {
         let Some(mut session) = self.pending_oauth.lock().await.remove(name) else {
             return Ok(crate::mcp_oauth::PollAuthorizationResult::NotStarted);
         };
-        let result = session.poll().await?;
+        let result = match session.poll().await {
+            Ok(result) => result,
+            Err(err) => {
+                session.shutdown().await;
+                return Err(err);
+            }
+        };
         match result {
             crate::mcp_oauth::PollAuthorizationResult::Pending { .. } => {
                 self.pending_oauth

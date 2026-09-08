@@ -163,6 +163,7 @@ pub(crate) async fn build_startup_http_auth(
     resource_url: &str,
     stored: StoredMcpOAuthSecret,
 ) -> Result<HttpAuth, String> {
+    validate_protected_resource_url(resource_url)?;
     stored.validate_for_startup()?;
 
     let mut manager = AuthorizationManager::new(resource_url)
@@ -210,6 +211,12 @@ pub(crate) fn validate_discovered_metadata(
             return Err("authorization server metadata is missing issuer".into());
         }
     }
+    validate_authorization_server_url("authorization server issuer", &stored.issuer)?;
+    validate_authorization_server_url("authorization endpoint", &metadata.authorization_endpoint)?;
+    validate_authorization_server_url("token endpoint", &metadata.token_endpoint)?;
+    if let Some(registration_endpoint) = metadata.registration_endpoint.as_deref() {
+        validate_authorization_server_url("registration endpoint", registration_endpoint)?;
+    }
 
     if let Some(response_types) = metadata.response_types_supported.as_ref()
         && !response_types
@@ -230,6 +237,36 @@ pub(crate) fn validate_discovered_metadata(
             "authorization server metadata is missing code_challenge_methods_supported; refusing OAuth without explicit PKCE S256 support".into(),
         ),
     }
+}
+
+fn validate_authorization_server_url(label: &str, url: &str) -> Result<(), String> {
+    let parsed =
+        reqwest::Url::parse(url).map_err(|err| format!("{label} is not a valid URL: {err}"))?;
+    if parsed.scheme() == "https" {
+        return Ok(());
+    }
+    if parsed.scheme() == "http" && is_loopback_host(parsed.host_str()) {
+        return Ok(());
+    }
+    Err(format!(
+        "{label} must use https (or http loopback for local development): {url}"
+    ))
+}
+
+fn validate_protected_resource_url(url: &str) -> Result<(), String> {
+    validate_authorization_server_url("oauth-protected MCP resource URL", url)
+}
+
+fn is_loopback_host(host: Option<&str>) -> bool {
+    matches!(host, Some("127.0.0.1" | "localhost" | "::1"))
+}
+
+fn authorization_response_iss_required(metadata: &AuthorizationMetadata) -> bool {
+    metadata
+        .additional_fields
+        .get("authorization_response_iss_parameter_supported")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -259,10 +296,11 @@ pub(crate) struct OAuthCallbackParams {
 pub(crate) struct PendingMcpOAuthSession {
     redirect_uri: String,
     expected_issuer: String,
+    require_callback_iss: bool,
     manager: AuthorizationManager,
     callback_rx: oneshot::Receiver<OAuthCallbackParams>,
     shutdown_tx: Option<oneshot::Sender<()>>,
-    listener_task: tokio::task::JoinHandle<()>,
+    listener_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for PendingMcpOAuthSession {
@@ -270,6 +308,7 @@ impl std::fmt::Debug for PendingMcpOAuthSession {
         f.debug_struct("PendingMcpOAuthSession")
             .field("redirect_uri", &self.redirect_uri)
             .field("expected_issuer", &self.expected_issuer)
+            .field("require_callback_iss", &self.require_callback_iss)
             .finish_non_exhaustive()
     }
 }
@@ -278,7 +317,11 @@ impl PendingMcpOAuthSession {
     pub(crate) async fn poll(&mut self) -> Result<PollAuthorizationResult, String> {
         match self.callback_rx.try_recv() {
             Ok(callback) => {
-                let (code, state) = validate_callback_payload(&callback, &self.expected_issuer)?;
+                let (code, state) = validate_callback_payload(
+                    &callback,
+                    &self.expected_issuer,
+                    self.require_callback_iss,
+                )?;
                 self.manager
                     .exchange_code_for_token(&code, &state)
                     .await
@@ -305,8 +348,21 @@ impl PendingMcpOAuthSession {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
         }
-        self.listener_task.abort();
-        let _ = self.listener_task.await;
+        if let Some(listener_task) = self.listener_task.take() {
+            listener_task.abort();
+            let _ = listener_task.await;
+        }
+    }
+}
+
+impl Drop for PendingMcpOAuthSession {
+    fn drop(&mut self) {
+        if let Some(shutdown_tx) = self.shutdown_tx.take() {
+            let _ = shutdown_tx.send(());
+        }
+        if let Some(listener_task) = self.listener_task.take() {
+            listener_task.abort();
+        }
     }
 }
 
@@ -334,6 +390,7 @@ pub(crate) async fn begin_authorization(
     resource_url: &str,
     requested_scopes: &[String],
 ) -> Result<(PendingMcpOAuthSession, BeginAuthorizationResult), String> {
+    validate_protected_resource_url(resource_url)?;
     let mut manager = AuthorizationManager::new(resource_url)
         .await
         .map_err(|err| format!("failed to prepare oauth manager: {err}"))?;
@@ -346,16 +403,19 @@ pub(crate) async fn begin_authorization(
         .clone()
         .ok_or_else(|| "authorization server metadata is missing issuer".to_string())?;
     validate_discovered_metadata(&validation_probe_secret(&issuer), &metadata)?;
+    let require_callback_iss = authorization_response_iss_required(&metadata);
+    manager.set_metadata(metadata.clone());
 
     let existing = load_stored_secret(server_name)?;
-    let requested_scopes = if requested_scopes.is_empty() {
+    let discovered_scopes = manager.select_scopes(None, &[]);
+    let requested_scopes = merge_requested_scopes(
         existing
             .as_ref()
-            .map(|secret| secret.requested_scopes.clone())
-            .unwrap_or_default()
-    } else {
-        requested_scopes.to_vec()
-    };
+            .map(|secret| secret.requested_scopes.as_slice())
+            .unwrap_or(&[]),
+        &discovered_scopes,
+        requested_scopes,
+    );
 
     let reuse_candidate = existing
         .as_ref()
@@ -399,7 +459,6 @@ pub(crate) async fn begin_authorization(
         format!("failed to persist oauth keyring state for `mcp:{server_name}`: {err}")
     })?;
 
-    manager.set_metadata(metadata);
     manager.set_state_store(InMemoryStateStore::new());
     manager.set_credential_store(KeyringOAuthCredentialStore::new(
         server_name,
@@ -421,10 +480,11 @@ pub(crate) async fn begin_authorization(
         PendingMcpOAuthSession {
             redirect_uri: listener.redirect_uri.clone(),
             expected_issuer: issuer,
+            require_callback_iss,
             manager,
             callback_rx: listener.callback_rx,
             shutdown_tx: Some(listener.shutdown_tx),
-            listener_task: listener.task,
+            listener_task: Some(listener.task),
         },
         BeginAuthorizationResult {
             authorization_url,
@@ -441,6 +501,32 @@ struct StartedCallbackListener {
     task: tokio::task::JoinHandle<()>,
 }
 
+impl StartedCallbackListener {
+    async fn shutdown(self) {
+        let _ = self.shutdown_tx.send(());
+        self.task.abort();
+        let _ = self.task.await;
+    }
+}
+
+fn merge_requested_scopes(
+    stored_scopes: &[String],
+    discovered_scopes: &[String],
+    explicit_scopes: &[String],
+) -> Vec<String> {
+    let mut merged = Vec::new();
+    for scope in stored_scopes
+        .iter()
+        .chain(discovered_scopes.iter())
+        .chain(explicit_scopes.iter())
+    {
+        if !scope.trim().is_empty() && !merged.iter().any(|existing| existing == scope) {
+            merged.push(scope.clone());
+        }
+    }
+    merged
+}
+
 async fn build_registered_client(
     server_name: &str,
     registration_endpoint: Option<&str>,
@@ -455,17 +541,24 @@ async fn build_registered_client(
     ),
     String,
 > {
-    let listener = start_callback_listener(None).await?;
-    let redirect_uri = listener.redirect_uri.clone();
     let registration_endpoint = registration_endpoint
         .ok_or_else(|| "dynamic client registration is not supported by this server".to_string())?;
-    let client = perform_dynamic_client_registration(
+    let listener = start_callback_listener(None).await?;
+    let redirect_uri = listener.redirect_uri.clone();
+    let client = match perform_dynamic_client_registration(
         registration_endpoint,
         &format!("Otto MCP ({server_name})"),
         &redirect_uri,
         &requested_scopes,
     )
-    .await?;
+    .await
+    {
+        Ok(client) => client,
+        Err(err) => {
+            listener.shutdown().await;
+            return Err(err);
+        }
+    };
     let mut config = OAuthClientConfig::new(client.client_id.clone(), redirect_uri.clone())
         .with_scopes(requested_scopes.clone());
     if let Some(client_secret) = client.client_secret.clone() {
@@ -491,15 +584,8 @@ async fn build_registered_client(
 pub(crate) fn validate_callback_payload(
     callback: &OAuthCallbackParams,
     expected_issuer: &str,
+    require_iss: bool,
 ) -> Result<(String, String), String> {
-    if callback.iss.as_deref() != Some(expected_issuer) {
-        return Err(match callback.iss.as_deref() {
-            Some(found) => format!(
-                "oauth callback issuer mismatch: expected `{expected_issuer}`, got `{found}`"
-            ),
-            None => "oauth callback was missing `iss`".into(),
-        });
-    }
     if let Some(error) = callback.error.as_deref() {
         return Err(match callback.error_description.as_deref() {
             Some(description) if !description.is_empty() => {
@@ -507,6 +593,17 @@ pub(crate) fn validate_callback_payload(
             }
             _ => format!("oauth authorization failed: {error}"),
         });
+    }
+    match callback.iss.as_deref() {
+        Some(found) if found != expected_issuer => {
+            return Err(format!(
+                "oauth callback issuer mismatch: expected `{expected_issuer}`, got `{found}`"
+            ));
+        }
+        None if require_iss => {
+            return Err("oauth callback was missing `iss`".into());
+        }
+        _ => {}
     }
     let code = callback
         .code
@@ -894,6 +991,22 @@ mod tests {
     }
 
     #[test]
+    fn discovered_metadata_rejects_non_https_remote_endpoints() {
+        let stored = stored_secret("http://evil.example/issuer");
+        let metadata: AuthorizationMetadata = serde_json::from_value(json!({
+            "issuer": "http://evil.example/issuer",
+            "authorization_endpoint": "http://evil.example/issuer/authorize",
+            "token_endpoint": "http://evil.example/issuer/token",
+            "registration_endpoint": "http://evil.example/issuer/register",
+            "response_types_supported": ["code"],
+            "code_challenge_methods_supported": ["S256"],
+        }))
+        .expect("metadata json");
+        let err = validate_discovered_metadata(&stored, &metadata).unwrap_err();
+        assert!(err.contains("must use https"), "err: {err}");
+    }
+
+    #[test]
     fn callback_validation_rejects_issuer_mismatch() {
         let err = validate_callback_payload(
             &OAuthCallbackParams {
@@ -904,9 +1017,45 @@ mod tests {
                 error_description: None,
             },
             "https://issuer.example",
+            true,
         )
         .unwrap_err();
         assert!(err.contains("issuer mismatch"));
+    }
+
+    #[test]
+    fn callback_validation_allows_missing_iss_when_not_required() {
+        let (code, state) = validate_callback_payload(
+            &OAuthCallbackParams {
+                code: Some("code".into()),
+                state: Some("state".into()),
+                iss: None,
+                error: None,
+                error_description: None,
+            },
+            "https://issuer.example",
+            false,
+        )
+        .expect("callback should validate");
+        assert_eq!(code, "code");
+        assert_eq!(state, "state");
+    }
+
+    #[test]
+    fn callback_validation_rejects_missing_iss_when_required() {
+        let err = validate_callback_payload(
+            &OAuthCallbackParams {
+                code: Some("code".into()),
+                state: Some("state".into()),
+                iss: None,
+                error: None,
+                error_description: None,
+            },
+            "https://issuer.example",
+            true,
+        )
+        .unwrap_err();
+        assert!(err.contains("missing `iss`"));
     }
 
     #[test]
@@ -920,6 +1069,7 @@ mod tests {
                 error_description: None,
             },
             "https://issuer.example",
+            true,
         )
         .unwrap_err();
         assert!(err.contains("missing `state`"));
@@ -1014,6 +1164,44 @@ mod tests {
             json["token_response"]["refresh_token"],
             "fresh-refresh-token"
         );
+        let _ = crate::creds::mcp_delete(&server_name);
+    }
+
+    #[tokio::test]
+    async fn begin_authorization_defaults_scopes_from_discovery_when_keyring_is_available() {
+        let server_name = format!(
+            "oauth-scopes-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        if crate::creds::mcp_save(&server_name, "probe").is_err() {
+            return;
+        }
+        let _ = crate::creds::mcp_delete(&server_name);
+
+        let captured = Arc::new(AsyncMutex::new(None));
+        let (addr, handle) = spawn_oauth_server(captured).await;
+        let resource_url = format!("http://127.0.0.1:{}/mcp", addr.port());
+
+        let (pending, begin) = begin_authorization(&server_name, &resource_url, &[])
+            .await
+            .expect("begin authorization");
+        pending.shutdown().await;
+        handle.abort();
+
+        let auth_url = reqwest::Url::parse(&begin.authorization_url).expect("auth url");
+        let scope = auth_url
+            .query_pairs()
+            .find_map(|(key, value)| (key == "scope").then(|| value.into_owned()))
+            .expect("authorization url should carry derived scope");
+        assert_eq!(scope, "mcp.read");
+
+        let stored = load_stored_secret(&server_name)
+            .expect("load secret")
+            .expect("secret saved");
+        assert_eq!(stored.requested_scopes, vec!["mcp.read".to_string()]);
         let _ = crate::creds::mcp_delete(&server_name);
     }
 }

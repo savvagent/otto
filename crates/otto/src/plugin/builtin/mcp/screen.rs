@@ -230,6 +230,22 @@ impl McpManagerScreen {
         self.configured.get(self.cursor)
     }
 
+    fn current_status(&self) -> Option<&ToolServerStatus> {
+        let name = self.current_name()?;
+        self.statuses.iter().find(|status| status.name == name)
+    }
+
+    fn current_oauth_scope_upgrade_hint(&self) -> Vec<String> {
+        let Some(ToolServerStatus {
+            state: ConnectState::Failed { reason },
+            ..
+        }) = self.current_status()
+        else {
+            return vec![];
+        };
+        Self::parse_missing_scope_hint(reason).into_iter().collect()
+    }
+
     fn push_note_effect(text: impl Into<String>) -> Effect {
         Effect::PushNote {
             line: StyledLine::plain(text.into()),
@@ -347,7 +363,11 @@ impl McpManagerScreen {
         }
         let begin = self
             .ops
-            .begin_oauth(&summary.name, &summary.target, &[])
+            .begin_oauth(
+                &summary.name,
+                &summary.target,
+                &self.current_oauth_scope_upgrade_hint(),
+            )
             .await
             .map_err(PluginError::Internal)?;
         self.skip_notes.insert(
@@ -368,6 +388,14 @@ impl McpManagerScreen {
                 target: otto_plugin::UrlTarget::SystemBrowser,
             },
         ])
+    }
+
+    fn parse_missing_scope_hint(reason: &str) -> Option<String> {
+        let marker = "(missing scope: ";
+        let start = reason.find(marker)? + marker.len();
+        let end = reason[start..].find(')')? + start;
+        let scope = reason[start..end].trim();
+        (!scope.is_empty()).then(|| scope.to_string())
     }
 
     async fn check_current_oauth(&mut self) -> Result<Vec<Effect>, PluginError> {
@@ -792,7 +820,7 @@ mod tests {
         SaveSecret(String, String),
         Remove(String),
         DeleteSecret(String),
-        BeginOauth(String, String),
+        BeginOauth(String, String, Vec<String>),
         PollOauth(String),
     }
 
@@ -864,12 +892,13 @@ mod tests {
             &self,
             name: &str,
             url: &str,
-            _requested_scopes: &[String],
+            requested_scopes: &[String],
         ) -> Result<crate::mcp_oauth::BeginAuthorizationResult, String> {
-            self.log
-                .lock()
-                .unwrap()
-                .push(StubOp::BeginOauth(name.to_string(), url.to_string()));
+            self.log.lock().unwrap().push(StubOp::BeginOauth(
+                name.to_string(),
+                url.to_string(),
+                requested_scopes.to_vec(),
+            ));
             self.begin_result.lock().unwrap().clone()
         }
 
@@ -1047,7 +1076,7 @@ mod tests {
 
         let log = ops.log.lock().unwrap().clone();
         assert!(
-            matches!(log[0], StubOp::BeginOauth(ref name, ref url) if name == "remote" && url == "https://example.test/mcp")
+            matches!(log[0], StubOp::BeginOauth(ref name, ref url, ref scopes) if name == "remote" && url == "https://example.test/mcp" && scopes.is_empty())
         );
         assert!(matches!(log[1], StubOp::PollOauth(ref name) if name == "remote"));
 
@@ -1063,5 +1092,45 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(joined.contains("oauth authorized; restart otto to connect"));
+    }
+
+    #[tokio::test]
+    async fn authorize_passes_missing_scope_hint_to_reauthorization() {
+        let ops = Arc::new(StubOps::new(vec![ToolServerStatus {
+            name: "remote".into(),
+            transport: otto_host::TransportKind::Http,
+            state: ConnectState::Failed {
+                reason:
+                    "oauth scope upgrade required for remote (missing scope: mcp.write); open /mcp to re-authorize"
+                        .into(),
+            },
+        }]));
+        let mut screen = McpManagerScreen::new(
+            McpManagerSeed {
+                configured: vec![McpServerSummary {
+                    name: "remote".into(),
+                    transport: "http",
+                    target: "https://example.test/mcp".into(),
+                    auth: McpServerAuthSummary::Oauth,
+                }],
+                skip_notes: vec![],
+            },
+            ops.statuses.lock().unwrap().clone(),
+            ops.clone(),
+        );
+
+        let _ = screen
+            .on_key(key(KeyCodePortable::Char('o')))
+            .await
+            .unwrap();
+
+        let log = ops.log.lock().unwrap().clone();
+        assert!(matches!(
+            log[0],
+            StubOp::BeginOauth(ref name, ref url, ref scopes)
+                if name == "remote"
+                    && url == "https://example.test/mcp"
+                    && scopes == &vec!["mcp.write".to_string()]
+        ));
     }
 }
