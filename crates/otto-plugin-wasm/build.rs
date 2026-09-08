@@ -13,7 +13,34 @@ fn main() {
     let vendored_dir = manifest_dir.join("wit");
     let canonical_dir = manifest_dir.join("../otto-plugin-wit/wit");
 
-    if !canonical_dir.exists() {
+    let vendored_exists = vendored_dir
+        .try_exists()
+        .expect("checking vendored WIT directory should succeed");
+    if !vendored_exists {
+        panic!(
+            "vendored WIT directory `{}` is missing.\nrestore `crates/otto-plugin-wasm/wit/` before building.",
+            vendored_dir.display()
+        );
+    }
+
+    let canonical_exists = canonical_dir
+        .try_exists()
+        .expect("checking canonical WIT directory should succeed");
+    if !canonical_exists {
+        let vendored_files = collect_wit_files(&vendored_dir)
+            .map_err(|error| {
+                format!(
+                    "failed to read vendored WIT dir `{}`: {error}",
+                    vendored_dir.display()
+                )
+            })
+            .unwrap_or_else(|error| panic!("{error}"));
+        if vendored_files.is_empty() {
+            panic!(
+                "vendored WIT directory `{}` does not contain any `.wit` files.\nrestore `crates/otto-plugin-wasm/wit/` before building.",
+                vendored_dir.display()
+            );
+        }
         return;
     }
 
