@@ -1755,10 +1755,7 @@ impl App {
             return;
         }
 
-        self.provider_index = match filtered.len() {
-            0 => 0,
-            len => self.provider_index.min(len - 1),
-        };
+        self.provider_index = 0;
     }
 
     /// Clear the selector query and restore the active provider when visible.
@@ -2654,6 +2651,20 @@ mod tests {
 
         assert_eq!(app.provider_index, 0);
         assert_eq!(app.selected_provider().map(|spec| spec.id), Some("openai"));
+    }
+
+    #[test]
+    fn provider_selector_query_reset_selects_first_match_when_current_selection_drops_out() {
+        let mut app = fresh_app();
+        app.provider_index = 2;
+
+        app.set_provider_query("l");
+
+        assert_eq!(app.provider_index, 0);
+        assert_eq!(
+            app.selected_provider().map(|spec| spec.id),
+            Some("anthropic")
+        );
     }
 
     #[test]
