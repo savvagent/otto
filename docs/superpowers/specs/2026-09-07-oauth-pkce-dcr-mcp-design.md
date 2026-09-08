@@ -331,6 +331,11 @@ user can copy it manually.
   critique round: Otto rediscoveres authorization metadata before constructing `HttpAuth::OAuth`
   and skips invalid/missing OAuth state with actionable startup notes instead of aborting the whole
   host bootstrap.
+- Otto ended up taking ownership of more discovery-policy enforcement than the original draft
+  anticipated: resource-metadata discovery is constrained to the configured MCP origin, discovered
+  authorization endpoints are validated before fetch (including DNS checks for non-loopback
+  cross-origin hosts), and disconnected startup preserves `/mcp` seed/skip-note state without
+  re-running network discovery on the UI thread.
 - The shipped UX keeps insufficient-scope and refresh failures as clear manual reauthorization paths
   surfaced in `/mcp` and startup notes; automatic scope step-up/retry remains out of scope.
 

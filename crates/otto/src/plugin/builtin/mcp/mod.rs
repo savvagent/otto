@@ -97,8 +97,13 @@ impl McpManagerOps for RealMcpManagerOps {
         requested_scopes: &[String],
     ) -> Result<crate::mcp_oauth::BeginAuthorizationResult, String> {
         self.clear_oauth(name).await?;
-        let (session, result) =
-            crate::mcp_oauth::begin_authorization(name, url, requested_scopes).await?;
+        let (session, result) = crate::mcp_oauth::begin_authorization(
+            name,
+            url,
+            requested_scopes,
+            crate::mcp_oauth::default_network_timeout(),
+        )
+        .await?;
         self.pending_oauth
             .lock()
             .await
@@ -137,7 +142,11 @@ impl McpManagerOps for RealMcpManagerOps {
     }
 
     async fn clear_oauth(&self, name: &str) -> Result<(), String> {
-        if let Some(session) = self.pending_oauth.lock().await.remove(name) {
+        let session = {
+            let mut pending = self.pending_oauth.lock().await;
+            pending.remove(name)
+        };
+        if let Some(session) = session {
             session.shutdown().await;
         }
         Ok(())

@@ -368,8 +368,15 @@ impl McpManagerScreen {
                 &summary.target,
                 &self.current_oauth_scope_upgrade_hint(),
             )
-            .await
-            .map_err(PluginError::Internal)?;
+            .await;
+        let begin = match begin {
+            Ok(begin) => begin,
+            Err(err) => {
+                self.skip_notes.insert(summary.name.clone(), err.clone());
+                self.rebuild_rows();
+                return Ok(vec![Self::push_note_effect(err)]);
+            }
+        };
         self.skip_notes.insert(
             summary.name.clone(),
             format!(
@@ -407,11 +414,15 @@ impl McpManagerScreen {
                 "selected server does not use oauth".to_string(),
             )]);
         }
-        let result = self
-            .ops
-            .poll_oauth(&summary.name)
-            .await
-            .map_err(PluginError::Internal)?;
+        let result = self.ops.poll_oauth(&summary.name).await;
+        let result = match result {
+            Ok(result) => result,
+            Err(err) => {
+                self.skip_notes.insert(summary.name.clone(), err.clone());
+                self.rebuild_rows();
+                return Ok(vec![Self::push_note_effect(err)]);
+            }
+        };
         let note = match result {
             crate::mcp_oauth::PollAuthorizationResult::NotStarted => {
                 "oauth authorization has not been started".to_string()

@@ -188,7 +188,11 @@ async fn main() -> Result<()> {
             eprintln!("warning: could not save transcript on exit: {e}");
         }
     }
-    if let Some(host) = host_slot.write().await.take() {
+    let host = {
+        let mut slot = host_slot.write().await;
+        slot.take()
+    };
+    if let Some(host) = host {
         host.shutdown().await;
     }
 
@@ -220,8 +224,8 @@ async fn main() -> Result<()> {
 /// transposed at a decode site.
 #[allow(dead_code)]
 pub(crate) struct HostBoot {
-    /// The started provider-pool host.
-    pub host: Arc<Host>,
+    /// The started provider-pool host, if startup connected successfully.
+    pub host: Option<Arc<Host>>,
     /// Model id to show in the header for the initial active provider.
     pub header_model: String,
     /// `&'static` id of the initial active provider, if one connected.
@@ -263,6 +267,89 @@ pub(crate) struct McpServerSummary {
     pub auth: McpServerAuthSummary,
 }
 
+fn summarize_mcp_server(entry: &config_file::McpServerEntry) -> McpServerSummary {
+    match entry {
+        config_file::McpServerEntry::Stdio { name, command, .. } => McpServerSummary {
+            name: name.clone(),
+            transport: "stdio",
+            target: command.clone(),
+            auth: McpServerAuthSummary::None,
+        },
+        config_file::McpServerEntry::Http {
+            name, url, auth, ..
+        } => McpServerSummary {
+            name: name.clone(),
+            transport: "http",
+            target: url.clone(),
+            auth: match auth {
+                config_file::McpAuthMode::None => McpServerAuthSummary::None,
+                config_file::McpAuthMode::Bearer => McpServerAuthSummary::Bearer,
+                config_file::McpAuthMode::Oauth => McpServerAuthSummary::Oauth,
+            },
+        },
+    }
+}
+
+pub(crate) fn build_disconnected_mcp_manager_seed(
+    config_file: &config_file::ConfigFile,
+) -> McpManagerSeed {
+    let mut skip_notes = Vec::new();
+    let mut seen_names = std::collections::HashSet::new();
+    let mut configured = Vec::new();
+
+    for entry in &config_file.mcp_servers {
+        let summary = summarize_mcp_server(entry);
+        let name = summary.name.clone();
+        configured.push(summary);
+
+        if let Err(reason) = entry.validate(&seen_names) {
+            skip_notes.push((name, reason));
+            continue;
+        }
+        seen_names.insert(name.clone());
+
+        match entry {
+            config_file::McpServerEntry::Stdio { .. }
+            | config_file::McpServerEntry::Http {
+                auth: config_file::McpAuthMode::None,
+                ..
+            } => {}
+            config_file::McpServerEntry::Http {
+                auth: config_file::McpAuthMode::Bearer,
+                ..
+            } => match crate::creds::mcp_load(&name) {
+                Ok(Some(secret)) if !secret.trim().is_empty() => {}
+                Ok(_) => {
+                    skip_notes.push((name, "missing keyring secret for mcp bearer auth".into()))
+                }
+                Err(err) => {
+                    skip_notes.push((name, format!("failed to read keyring secret: {err}")))
+                }
+            },
+            config_file::McpServerEntry::Http {
+                auth: config_file::McpAuthMode::Oauth,
+                ..
+            } => match crate::mcp_oauth::load_stored_secret(&name) {
+                Ok(Some(secret)) => {
+                    if let Err(reason) = secret.validate_for_startup() {
+                        skip_notes.push((name, reason));
+                    }
+                }
+                Ok(None) => skip_notes.push((
+                    name,
+                    "oauth authorization required; open /mcp to authorize".into(),
+                )),
+                Err(err) => skip_notes.push((name, err)),
+            },
+        }
+    }
+
+    McpManagerSeed {
+        configured,
+        skip_notes,
+    }
+}
+
 /// Resolve the bundled tool binaries. Cheap, local, and `Send`.
 pub(crate) fn build_tool_bins() -> ToolBins {
     ToolBins {
@@ -283,7 +370,7 @@ pub(crate) async fn bootstrap_host_only(
     tool_bins: ToolBins,
     config_file: config_file::ConfigFile,
     mcp_server_diagnostics: Vec<String>,
-) -> Option<HostBoot> {
+) -> HostBoot {
     bootstrap_pool_host(
         &project_root,
         &tool_bins,
@@ -319,29 +406,17 @@ pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path
 /// happens here — only local manifest/plugin work — so it is safe to run on
 /// the GUI's UI thread without freezing the window.
 pub(crate) async fn build_app_with_host(
-    initial: Option<HostBoot>,
+    initial: HostBoot,
     project_root: std::path::PathBuf,
     tool_bins: ToolBins,
 ) -> Result<(App, HostSlot, std::path::PathBuf, ToolBins)> {
-    let (header_model, initial_provider, startup_notes, mcp_manager_seed, startup_verbose) =
-        match &initial {
-            Some(boot) => (
-                boot.header_model.clone(),
-                boot.provider_id,
-                boot.startup_notes.clone(),
-                boot.mcp_manager_seed.clone(),
-                boot.startup_verbose,
-            ),
-            None => (
-                "(disconnected)".to_string(),
-                None,
-                Vec::new(),
-                McpManagerSeed::default(),
-                false,
-            ),
-        };
+    let header_model = initial.header_model.clone();
+    let initial_provider = initial.provider_id;
+    let startup_notes = initial.startup_notes.clone();
+    let mcp_manager_seed = initial.mcp_manager_seed.clone();
+    let startup_verbose = initial.startup_verbose;
 
-    let host_slot: HostSlot = Arc::new(RwLock::new(initial.map(|boot| boot.host)));
+    let host_slot: HostSlot = Arc::new(RwLock::new(initial.host));
     let mcp_statuses = if let Some(host) = current_host(&host_slot).await {
         host.tool_server_statuses().await
     } else {
@@ -518,7 +593,7 @@ async fn bootstrap_pool_host(
     tool_bins: &ToolBins,
     config_file: &config_file::ConfigFile,
     mcp_server_diagnostics: Vec<String>,
-) -> Option<HostBoot> {
+) -> HostBoot {
     // Legacy MCP-over-HTTP debug path. When this env var is set the host
     // connects to a remote provider binary instead of using the in-process
     // pool. No pool, no policy, no timeout wrapping.
@@ -527,14 +602,14 @@ async fn bootstrap_pool_host(
         match start_host_remote(url, model.clone(), project_root.to_path_buf(), tool_bins).await {
             Ok(host) => {
                 let notes = host.take_startup_notes();
-                return Some(HostBoot {
-                    host,
+                return HostBoot {
+                    host: Some(host),
                     header_model: model,
                     provider_id: None,
                     startup_notes: notes,
                     mcp_manager_seed: McpManagerSeed::default(),
                     startup_verbose: config_file.startup.verbose,
-                });
+                };
             }
             Err(e) => {
                 eprintln!("warning: OTTO_PROVIDER_URL set but connect failed: {e:#}");
@@ -621,8 +696,14 @@ async fn bootstrap_pool_host(
     try_provider!(ProviderLocalPlugin::new(), "Local (Ollama)", "local");
 
     if providers.is_empty() {
-        // No providers connected — return None so the TUI starts disconnected.
-        return None;
+        return HostBoot {
+            host: None,
+            header_model: "(disconnected)".to_string(),
+            provider_id: None,
+            startup_notes: deferred_notes,
+            mcp_manager_seed: build_disconnected_mcp_manager_seed(config_file),
+            startup_verbose: false,
+        };
     }
 
     // Determine the initial active provider. `Host::start` will connect the
@@ -758,18 +839,25 @@ async fn bootstrap_pool_host(
             deferred_notes.extend(host.take_startup_notes());
             let host_arc = Arc::new(host);
             host_arc.wire_self_arc();
-            Some(HostBoot {
-                host: host_arc,
+            HostBoot {
+                host: Some(host_arc),
                 header_model: initial_model,
                 provider_id: initial_provider_id,
                 startup_notes: deferred_notes,
                 mcp_manager_seed,
                 startup_verbose: config_file.startup.verbose,
-            })
+            }
         }
         Err(e) => {
             eprintln!("warning: pool host start failed: {e:#}");
-            None
+            HostBoot {
+                host: None,
+                header_model: "(disconnected)".to_string(),
+                provider_id: None,
+                startup_notes: deferred_notes,
+                mcp_manager_seed,
+                startup_verbose: false,
+            }
         }
     }
 }
@@ -778,38 +866,18 @@ async fn resolve_configured_mcp_servers(
     config_file: &config_file::ConfigFile,
     deferred_notes: &mut Vec<String>,
 ) -> (Vec<ToolEndpoint>, McpManagerSeed) {
+    let oauth_timeout = crate::mcp_oauth::startup_network_timeout(Duration::from_millis(
+        config_file.startup.connect_timeout_ms,
+    ));
     let mut configured = Vec::new();
     let mut skip_notes = Vec::new();
     let mut seen_names = std::collections::HashSet::new();
     let mut endpoints = Vec::new();
 
     for entry in &config_file.mcp_servers {
-        let (name, transport, target, auth) = match entry {
-            config_file::McpServerEntry::Stdio { name, command, .. } => (
-                name.clone(),
-                "stdio",
-                command.clone(),
-                McpServerAuthSummary::None,
-            ),
-            config_file::McpServerEntry::Http {
-                name, url, auth, ..
-            } => (
-                name.clone(),
-                "http",
-                url.clone(),
-                match auth {
-                    config_file::McpAuthMode::None => McpServerAuthSummary::None,
-                    config_file::McpAuthMode::Bearer => McpServerAuthSummary::Bearer,
-                    config_file::McpAuthMode::Oauth => McpServerAuthSummary::Oauth,
-                },
-            ),
-        };
-        configured.push(McpServerSummary {
-            name: name.clone(),
-            transport,
-            target,
-            auth,
-        });
+        let summary = summarize_mcp_server(entry);
+        let name = summary.name.clone();
+        configured.push(summary);
 
         if let Err(reason) = entry.validate(&seen_names) {
             deferred_notes.push(format!("mcp server `{name}` skipped: {reason}"));
@@ -838,7 +906,7 @@ async fn resolve_configured_mcp_servers(
                 }
             },
             config_file::McpServerEntry::Http { name, url, auth } => {
-                match resolve_mcp_http_auth(name, url, auth).await {
+                match resolve_mcp_http_auth(name, url, auth, oauth_timeout).await {
                     Ok(auth) => ToolEndpoint::Http {
                         name: name.clone(),
                         url: url.clone(),
@@ -888,6 +956,7 @@ async fn resolve_mcp_http_auth(
     server_name: &str,
     url: &str,
     auth: &config_file::McpAuthMode,
+    oauth_timeout: Duration,
 ) -> Result<HttpAuth, String> {
     match auth {
         config_file::McpAuthMode::None => Ok(HttpAuth::None),
@@ -902,7 +971,8 @@ async fn resolve_mcp_http_auth(
         config_file::McpAuthMode::Oauth => match crate::mcp_oauth::load_stored_secret(server_name)?
         {
             Some(stored) => {
-                crate::mcp_oauth::build_startup_http_auth(server_name, url, stored).await
+                crate::mcp_oauth::build_startup_http_auth(server_name, url, stored, oauth_timeout)
+                    .await
             }
             None => Err(format!(
                 "missing oauth keyring state for `mcp:{server_name}`; open /mcp to authorize"
@@ -4421,6 +4491,41 @@ mod mcp_bootstrap_tests {
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("mcp server `remote-oauth-missing` skipped"));
     }
+
+    #[test]
+    fn disconnected_mcp_manager_seed_summarizes_config_with_local_skip_notes() {
+        let config_file = crate::config_file::ConfigFile {
+            startup: Default::default(),
+            migration: Default::default(),
+            mcp_servers: vec![
+                crate::config_file::McpServerEntry::Stdio {
+                    name: "local".into(),
+                    command: "/bin/echo".into(),
+                    args: vec![],
+                    env: HashMap::new(),
+                },
+                crate::config_file::McpServerEntry::Http {
+                    name: "remote".into(),
+                    url: "https://example.test/mcp".into(),
+                    auth: crate::config_file::McpAuthMode::Oauth,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let seed = build_disconnected_mcp_manager_seed(&config_file);
+
+        assert_eq!(seed.configured.len(), 2);
+        assert_eq!(seed.configured[0].name, "local");
+        assert_eq!(seed.configured[0].transport, "stdio");
+        assert_eq!(seed.configured[0].auth, McpServerAuthSummary::None);
+        assert_eq!(seed.configured[1].name, "remote");
+        assert_eq!(seed.configured[1].transport, "http");
+        assert_eq!(seed.configured[1].auth, McpServerAuthSummary::Oauth);
+        assert_eq!(seed.skip_notes.len(), 1);
+        assert_eq!(seed.skip_notes[0].0, "remote");
+        assert!(seed.skip_notes[0].1.contains("open /mcp to authorize"));
+    }
 }
 
 #[cfg(test)]
@@ -4853,10 +4958,20 @@ mod canvas_key_tests {
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("exit.md"), "shadowed exit").unwrap();
 
-            let (app, _host_slot, _project_root, _tool_bins) =
-                build_app_with_host(None, project.path().to_path_buf(), ToolBins::default())
-                    .await
-                    .expect("startup should not fail on a conflicting user /exit command");
+            let (app, _host_slot, _project_root, _tool_bins) = build_app_with_host(
+                HostBoot {
+                    host: None,
+                    header_model: "(disconnected)".into(),
+                    provider_id: None,
+                    startup_notes: Vec::new(),
+                    mcp_manager_seed: McpManagerSeed::default(),
+                    startup_verbose: false,
+                },
+                project.path().to_path_buf(),
+                ToolBins::default(),
+            )
+            .await
+            .expect("startup should not fail on a conflicting user /exit command");
 
             let indexes_handle = app.plugin_indexes.expect("plugin indexes installed");
             let indexes = indexes_handle.read().await;

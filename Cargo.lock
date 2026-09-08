@@ -5309,6 +5309,7 @@ dependencies = [
  "tui-markdown",
  "tui-spinner",
  "tui-textarea-2",
+ "uuid",
  "which",
  "zip 5.1.1",
 ]

@@ -723,7 +723,9 @@ For user-installed MCP servers, prefer config over rebuilding the binary.
    press `c` after the provider redirects back to Otto's loopback callback listener. Otto stores
    the OAuth client registration, token set, and later refreshes in the same `mcp:<server name>`
    keyring slot as a structured JSON blob; bearer-token entries remain raw strings.
-5. Restart otto to apply the change. The `/mcp` screen shows whether startup connected the
+5. Remote HTTP MCP URLs must use `https://` unless they point at local loopback development
+   endpoints (`127.0.0.1`, `localhost`, or `::1`).
+6. Restart otto to apply the change. The `/mcp` screen shows whether startup connected the
    server or skipped it (for example, missing secret, authorization required, issuer mismatch, or
    token refresh failure).
 
@@ -751,7 +753,8 @@ auth = "oauth"
 ```
 
 `env = { ... = "keyring" }` and `auth = "bearer"` mean "load the secret from the keyring account
-`mcp:<server name>` during startup." `auth = "oauth"` means "load the OAuth registration + token
+`mcp:<server name>` during startup." All remote HTTP MCP URLs are fail-closed to HTTPS (loopback
+`http://` is allowed only for local development). `auth = "oauth"` means "load the OAuth registration + token
 state from the same keyring account, rediscover authorization metadata at startup, and connect with
 an OAuth-aware HTTP client." OAuth startup skips are fail-closed: Otto refuses to reuse stored OAuth
 state when the discovered issuer changes or the authorization server does not explicitly advertise

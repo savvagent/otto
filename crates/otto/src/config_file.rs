@@ -384,19 +384,15 @@ impl McpServerEntry {
                     ));
                 }
             }
-            Self::Http { url, auth, .. } => {
-                if matches!(auth, McpAuthMode::Oauth) {
-                    validate_oauth_http_resource_url(url)?;
-                }
-            }
+            Self::Http { url, .. } => validate_http_resource_url(url)?,
         }
         Ok(())
     }
 }
 
-fn validate_oauth_http_resource_url(url: &str) -> Result<(), String> {
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|err| format!("oauth MCP server URL is invalid: {err}"))?;
+fn validate_http_resource_url(url: &str) -> Result<(), String> {
+    let parsed =
+        reqwest::Url::parse(url).map_err(|err| format!("MCP server URL is invalid: {err}"))?;
     if parsed.scheme() == "https" {
         return Ok(());
     }
@@ -406,7 +402,7 @@ fn validate_oauth_http_resource_url(url: &str) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "oauth MCP server URL must use https (or http loopback for local development): {url}"
+        "MCP server URL must use https (or http loopback for local development): {url}"
     ))
 }
 

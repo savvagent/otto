@@ -191,6 +191,11 @@ plan implements it exactly.
 
 - Task 3 and Task 4 landed together in commit `887e020` because the `/mcp` operation surface and
   the screen UX changed in one buildable slice.
+- Final hardening extended beyond the original task breakdown: Otto now preserves disconnected
+  `/mcp` seed/skip-note state without triggering OAuth network discovery during GUI/TUI fallback,
+  constrains discovery URLs before fetching them (including DNS checks for cross-origin auth
+  hosts), and uses per-flow registration instance IDs so stale concurrent OAuth sessions fail
+  loudly instead of silently overwriting or dropping keyring state.
 - The implementation keeps runtime insufficient-scope handling as a manual reauthorization path
   surfaced through startup notes and `/mcp`; automatic scope step-up/retry was intentionally left
   out of scope per the spec.

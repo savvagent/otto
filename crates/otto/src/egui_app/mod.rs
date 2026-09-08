@@ -567,7 +567,7 @@ enum Boot {
     /// `Send` data — no `App`). `project_root`/`tool_bins` are kept on the UI
     /// thread so it can build the `!Send` `App` once the host arrives.
     Pending {
-        rx: tokio::sync::oneshot::Receiver<Option<crate::HostBoot>>,
+        rx: tokio::sync::oneshot::Receiver<crate::HostBoot>,
         project_root: std::path::PathBuf,
         tool_bins: ToolBins,
     },

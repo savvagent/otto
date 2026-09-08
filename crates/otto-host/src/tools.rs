@@ -58,6 +58,13 @@ const TOOL_BASH_MARKER: &str = "tool-bash";
 /// connected tool publishes resources today.
 pub(crate) const READ_RESOURCE_TOOL_NAME: &str = "read_resource";
 
+#[derive(Clone, Copy)]
+enum HttpStatusAuthKind {
+    None,
+    Bearer,
+    Oauth,
+}
+
 /// Per-call override of `tool-bash`'s network access.
 ///
 /// | Variant      | Meaning                                                 |
@@ -776,6 +783,11 @@ impl ToolRegistry {
                     let transport_kind = TransportKind::Http;
                     let handler = ResourceCapturingHandler::new(name.clone(), resource_tx.clone());
                     let deadline = tokio::time::Instant::now() + connect_timeout;
+                    let auth_kind = match auth {
+                        HttpAuth::None => HttpStatusAuthKind::None,
+                        HttpAuth::Bearer { .. } => HttpStatusAuthKind::Bearer,
+                        HttpAuth::OAuth { .. } => HttpStatusAuthKind::Oauth,
+                    };
                     let service_result = match auth {
                         HttpAuth::OAuth { client } => {
                             let config = StreamableHttpClientTransportConfig::with_uri(url.clone());
@@ -804,7 +816,7 @@ impl ToolRegistry {
                                 name: name.clone(),
                                 transport: transport_kind,
                                 state: ConnectState::Failed {
-                                    reason: format_http_init_error(name, &err),
+                                    reason: format_http_init_error(name, auth_kind, &err),
                                 },
                             });
                             continue;
@@ -835,7 +847,7 @@ impl ToolRegistry {
                                 name: name.clone(),
                                 transport: transport_kind,
                                 state: ConnectState::Failed {
-                                    reason: format_http_connect_error(name, &err),
+                                    reason: format_http_connect_error(name, auth_kind, &err),
                                 },
                             });
                             continue;
@@ -1456,29 +1468,43 @@ fn input_schema_value(arc: Arc<rmcp::model::JsonObject>) -> rmcp::model::JsonObj
     Arc::try_unwrap(arc).unwrap_or_else(|a| (*a).clone())
 }
 
-fn format_http_connect_error(name: &str, err: &ServiceError) -> String {
+fn sanitize_remote_status_text(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_control()).collect()
+}
+
+fn format_http_connect_error(
+    name: &str,
+    auth_kind: HttpStatusAuthKind,
+    err: &ServiceError,
+) -> String {
     match streamable_http_error(err) {
-        Some(StreamableHttpError::AuthRequired(AuthRequiredError { .. })) => {
+        Some(StreamableHttpError::AuthRequired(AuthRequiredError { .. }))
+            if matches!(auth_kind, HttpStatusAuthKind::Oauth) =>
+        {
             format!("oauth authorization required for {name}; open /mcp to authorize")
         }
         Some(StreamableHttpError::InsufficientScope(InsufficientScopeError {
             required_scope,
             ..
-        })) => match required_scope.as_deref() {
+        })) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => match required_scope.as_deref() {
             Some(scope) if !scope.is_empty() => format!(
-                "oauth scope upgrade required for {name} (missing scope: {scope}); open /mcp to re-authorize"
+                "oauth scope upgrade required for {name} (missing scope: {}); open /mcp to re-authorize",
+                sanitize_remote_status_text(scope)
             ),
             _ => format!("oauth scope upgrade required for {name}; open /mcp to re-authorize"),
         },
         Some(StreamableHttpError::Auth(
             rmcp::transport::auth::AuthError::AuthorizationRequired,
-        )) => {
+        )) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
             format!("oauth authorization required for {name}; open /mcp to authorize")
         }
         Some(StreamableHttpError::Auth(rmcp::transport::auth::AuthError::TokenRefreshFailed(
             message,
-        ))) => {
-            format!("oauth token refresh failed for {name}: {message}")
+        ))) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+            format!(
+                "oauth token refresh failed for {name}: {}",
+                sanitize_remote_status_text(message)
+            )
         }
         Some(StreamableHttpError::Auth(other)) => {
             format!("init MCP session with {name}: {other}")
@@ -1487,33 +1513,49 @@ fn format_http_connect_error(name: &str, err: &ServiceError) -> String {
     }
 }
 
-fn format_http_init_error(name: &str, err: &rmcp::service::ClientInitializeError) -> String {
+fn format_http_init_error(
+    name: &str,
+    auth_kind: HttpStatusAuthKind,
+    err: &rmcp::service::ClientInitializeError,
+) -> String {
     match err {
         rmcp::service::ClientInitializeError::TransportError { error, .. } => {
             match error
                 .error
                 .downcast_ref::<StreamableHttpError<reqwest::Error>>()
             {
-                Some(StreamableHttpError::AuthRequired(AuthRequiredError { .. })) => {
+                Some(StreamableHttpError::AuthRequired(AuthRequiredError { .. }))
+                    if matches!(auth_kind, HttpStatusAuthKind::Oauth) =>
+                {
                     format!("oauth authorization required for {name}; open /mcp to authorize")
                 }
                 Some(StreamableHttpError::InsufficientScope(InsufficientScopeError {
                     required_scope,
                     ..
-                })) => match required_scope.as_deref() {
-                    Some(scope) if !scope.is_empty() => format!(
-                        "oauth scope upgrade required for {name} (missing scope: {scope}); open /mcp to re-authorize"
-                    ),
-                    _ => format!(
-                        "oauth scope upgrade required for {name}; open /mcp to re-authorize"
-                    ),
-                },
+                })) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+                    match required_scope.as_deref() {
+                        Some(scope) if !scope.is_empty() => format!(
+                            "oauth scope upgrade required for {name} (missing scope: {}); open /mcp to re-authorize",
+                            sanitize_remote_status_text(scope)
+                        ),
+                        _ => format!(
+                            "oauth scope upgrade required for {name}; open /mcp to re-authorize"
+                        ),
+                    }
+                }
                 Some(StreamableHttpError::Auth(
                     rmcp::transport::auth::AuthError::AuthorizationRequired,
-                )) => format!("oauth authorization required for {name}; open /mcp to authorize"),
+                )) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+                    format!("oauth authorization required for {name}; open /mcp to authorize")
+                }
                 Some(StreamableHttpError::Auth(
                     rmcp::transport::auth::AuthError::TokenRefreshFailed(message),
-                )) => format!("oauth token refresh failed for {name}: {message}"),
+                )) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+                    format!(
+                        "oauth token refresh failed for {name}: {}",
+                        sanitize_remote_status_text(message)
+                    )
+                }
                 Some(StreamableHttpError::Auth(other)) => {
                     format!("init MCP session with {name}: {other}")
                 }
@@ -1838,7 +1880,7 @@ mod http_connect_error_tests {
         let err = service_error(StreamableHttpError::AuthRequired(AuthRequiredError::new(
             "auth-required".into(),
         )));
-        let rendered = format_http_connect_error("remote", &err);
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Oauth, &err);
         assert_eq!(
             rendered,
             "oauth authorization required for remote; open /mcp to authorize"
@@ -1850,7 +1892,7 @@ mod http_connect_error_tests {
         let err = service_error(StreamableHttpError::InsufficientScope(
             InsufficientScopeError::new("insufficient-scope".into(), Some("mcp.read".into())),
         ));
-        let rendered = format_http_connect_error("remote", &err);
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Oauth, &err);
         assert_eq!(
             rendered,
             "oauth scope upgrade required for remote (missing scope: mcp.read); open /mcp to re-authorize"
@@ -1864,7 +1906,7 @@ mod http_connect_error_tests {
                 "token endpoint rejected refresh".into(),
             ),
         ));
-        let rendered = format_http_connect_error("remote", &err);
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Oauth, &err);
         assert_eq!(
             rendered,
             "oauth token refresh failed for remote: token endpoint rejected refresh"
@@ -1876,11 +1918,21 @@ mod http_connect_error_tests {
         let err = init_error(StreamableHttpError::AuthRequired(AuthRequiredError::new(
             "auth-required".into(),
         )));
-        let rendered = format_http_init_error("remote", &err);
+        let rendered = format_http_init_error("remote", HttpStatusAuthKind::Oauth, &err);
         assert_eq!(
             rendered,
             "oauth authorization required for remote; open /mcp to authorize"
         );
+    }
+
+    #[test]
+    fn bearer_auth_errors_do_not_get_oauth_guidance() {
+        let err = service_error(StreamableHttpError::AuthRequired(AuthRequiredError::new(
+            "auth-required".into(),
+        )));
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Bearer, &err);
+        assert!(rendered.contains("init MCP session with remote"));
+        assert!(!rendered.contains("open /mcp to authorize"));
     }
 }
 
