@@ -1768,6 +1768,19 @@ impl App {
         self.reset_provider_index_for_active();
     }
 
+    /// Delete the last typed query character, preserving the same
+    /// clear-to-active/first behavior as other empty-query resets.
+    #[allow(dead_code)]
+    pub fn pop_provider_query(&mut self) {
+        if self.provider_query.is_empty() {
+            return;
+        }
+
+        let mut query = self.provider_query.clone();
+        query.pop();
+        self.set_provider_query(query);
+    }
+
     /// Keep the filtered cursor in range. Empty filtered lists park the index
     /// at 0 so later query edits restart from the first visible match.
     #[allow(dead_code)]

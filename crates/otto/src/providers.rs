@@ -32,7 +32,7 @@ use std::sync::OnceLock;
 /// startup so the `&'static str` shape is uniform across both
 /// populations. Keeping `Copy` lets the rest of the TUI hold `Option<&'static ProviderSpec>`
 /// fields without lifetime gymnastics.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderSpec {
     /// Stable identifier — keyring account name and `/connect` selector key.
     pub id: &'static str,

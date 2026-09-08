@@ -3866,82 +3866,21 @@ async fn run_app(
                     }
                 }
             }
-            InputMode::SelectingProvider => match key.code {
-                KeyCode::Esc if app.provider_query.is_empty() => {
-                    app.input_mode = InputMode::Editing
+            InputMode::SelectingProvider => {
+                if let Some(connect) = handle_provider_selector_key(app, *key, |spec| {
+                    creds::load(spec.id).map_err(|e| format!("{e:#}"))
+                }) {
+                    perform_connect(
+                        connect.spec,
+                        connect.api_key,
+                        &host_slot,
+                        &project_root,
+                        &tool_bins,
+                        app,
+                    )
+                    .await;
                 }
-                KeyCode::Esc => app.clear_provider_query(),
-                KeyCode::Up if app.provider_index > 0 => app.provider_index -= 1,
-                KeyCode::Down if app.provider_index + 1 < app.filtered_providers().len() => {
-                    app.provider_index += 1
-                }
-                KeyCode::Backspace if !app.provider_query.is_empty() => {
-                    let mut query = app.provider_query.clone();
-                    query.pop();
-                    app.set_provider_query(query);
-                }
-                KeyCode::Char(c)
-                    if !key.modifiers.intersects(
-                        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
-                    ) =>
-                {
-                    let mut query = app.provider_query.clone();
-                    query.push(c);
-                    app.set_provider_query(query);
-                }
-                KeyCode::Enter => {
-                    if let Some(spec) = app.selected_provider() {
-                        if !spec.api_key_required {
-                            // Keyless provider — connect immediately without a
-                            // stored or prompted API key.
-                            app.input_mode = InputMode::Editing;
-                            perform_connect(
-                                spec,
-                                String::new(),
-                                &host_slot,
-                                &project_root,
-                                &tool_bins,
-                                app,
-                            )
-                            .await;
-                        } else {
-                            match creds::load(spec.id) {
-                                Ok(Some(key)) => {
-                                    app.input_mode = InputMode::Editing;
-                                    app.push_note(
-                                        rust_i18n::t!(
-                                            "notes.using-stored-key",
-                                            name = spec.display_name
-                                        )
-                                        .to_string(),
-                                    );
-                                    perform_connect(
-                                        spec,
-                                        key,
-                                        &host_slot,
-                                        &project_root,
-                                        &tool_bins,
-                                        app,
-                                    )
-                                    .await;
-                                }
-                                Ok(None) => app.enter_api_key_for(spec, false),
-                                Err(e) => {
-                                    app.push_note(
-                                        rust_i18n::t!(
-                                            "notes.keyring-error",
-                                            err = format!("{e:#}")
-                                        )
-                                        .to_string(),
-                                    );
-                                    app.enter_api_key_for(spec, false);
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            },
+            }
             InputMode::EnteringApiKey => match key.code {
                 KeyCode::Esc => app.cancel_connect(),
                 KeyCode::Enter => match app.take_pending_api_key() {
@@ -4132,6 +4071,89 @@ pub(crate) async fn dispatch_bound_action(app: &mut App, action: otto_plugin::Bo
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PendingProviderConnect {
+    spec: &'static ProviderSpec,
+    api_key: String,
+}
+
+fn submit_selected_provider<F>(app: &mut App, mut load_creds: F) -> Option<PendingProviderConnect>
+where
+    F: FnMut(&'static ProviderSpec) -> Result<Option<String>, String>,
+{
+    let spec = app.selected_provider()?;
+    if !spec.api_key_required {
+        app.input_mode = InputMode::Editing;
+        return Some(PendingProviderConnect {
+            spec,
+            api_key: String::new(),
+        });
+    }
+
+    match load_creds(spec) {
+        Ok(Some(key)) => {
+            app.input_mode = InputMode::Editing;
+            app.push_note(
+                rust_i18n::t!("notes.using-stored-key", name = spec.display_name).to_string(),
+            );
+            Some(PendingProviderConnect { spec, api_key: key })
+        }
+        Ok(None) => {
+            app.enter_api_key_for(spec, false);
+            None
+        }
+        Err(err) => {
+            app.push_note(rust_i18n::t!("notes.keyring-error", err = err).to_string());
+            app.enter_api_key_for(spec, false);
+            None
+        }
+    }
+}
+
+fn handle_provider_selector_key<F>(
+    app: &mut App,
+    key: event::KeyEvent,
+    load_creds: F,
+) -> Option<PendingProviderConnect>
+where
+    F: FnMut(&'static ProviderSpec) -> Result<Option<String>, String>,
+{
+    match key.code {
+        KeyCode::Esc if app.provider_query.is_empty() => {
+            app.input_mode = InputMode::Editing;
+            None
+        }
+        KeyCode::Esc => {
+            app.clear_provider_query();
+            None
+        }
+        KeyCode::Up if app.provider_index > 0 => {
+            app.provider_index -= 1;
+            None
+        }
+        KeyCode::Down if app.provider_index + 1 < app.filtered_providers().len() => {
+            app.provider_index += 1;
+            None
+        }
+        KeyCode::Backspace if !app.provider_query.is_empty() => {
+            app.pop_provider_query();
+            None
+        }
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) =>
+        {
+            let mut query = app.provider_query.clone();
+            query.push(c);
+            app.set_provider_query(query);
+            None
+        }
+        KeyCode::Enter => submit_selected_provider(app, load_creds),
+        _ => None,
+    }
+}
+
 /// On graceful exit, if the user is mid-modal on a bash-network prompt,
 /// resolve it as [`BashNetworkChoice::DenyOnce`] so any worker awaiting
 /// the corresponding `oneshot` doesn't hang while the runtime tears
@@ -4298,6 +4320,164 @@ mod model_validation_tests {
             }
             other => panic!("expected Proceed with warning, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod connect_provider_selector_tests {
+    use super::*;
+    use crate::app::{App, InputMode};
+    use crate::providers::effective_providers;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::path::PathBuf;
+
+    fn fresh_app() -> App {
+        App::new(String::new(), PathBuf::from("."), "en".to_string())
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn connect_provider_selector_typing_backspace_and_escape_edit_query() {
+        let mut app = fresh_app();
+        app.open_provider_selector();
+
+        let first = handle_provider_selector_key(&mut app, key(KeyCode::Char('o')), |_| Ok(None));
+        let second = handle_provider_selector_key(&mut app, key(KeyCode::Char('p')), |_| Ok(None));
+        let backspace =
+            handle_provider_selector_key(&mut app, key(KeyCode::Backspace), |_| Ok(None));
+        let clear = handle_provider_selector_key(&mut app, key(KeyCode::Esc), |_| Ok(None));
+        let dismiss = handle_provider_selector_key(&mut app, key(KeyCode::Esc), |_| Ok(None));
+
+        assert!(first.is_none());
+        assert!(second.is_none());
+        assert!(backspace.is_none());
+        assert!(clear.is_none());
+        assert!(dismiss.is_none());
+        assert!(app.provider_query.is_empty());
+        assert!(matches!(app.input_mode, InputMode::Editing));
+    }
+
+    #[test]
+    fn connect_provider_selector_backspace_to_empty_restores_active_provider() {
+        let mut app = fresh_app();
+        app.open_provider_selector();
+        app.active_provider_id = Some("gemini");
+        app.set_provider_query("open");
+
+        let _ = handle_provider_selector_key(&mut app, key(KeyCode::Backspace), |_| Ok(None));
+        let _ = handle_provider_selector_key(&mut app, key(KeyCode::Backspace), |_| Ok(None));
+        let _ = handle_provider_selector_key(&mut app, key(KeyCode::Backspace), |_| Ok(None));
+        let _ = handle_provider_selector_key(&mut app, key(KeyCode::Backspace), |_| Ok(None));
+
+        assert!(app.provider_query.is_empty());
+        assert_eq!(app.selected_provider().map(|spec| spec.id), Some("gemini"));
+    }
+
+    #[test]
+    fn connect_provider_selector_escape_clears_to_first_provider_without_active_match() {
+        let mut app = fresh_app();
+        app.open_provider_selector();
+        app.active_provider_id = Some("missing-provider");
+        app.provider_index = effective_providers().len().saturating_sub(1);
+        app.set_provider_query("open");
+
+        let _ = handle_provider_selector_key(&mut app, key(KeyCode::Esc), |_| Ok(None));
+
+        assert!(app.provider_query.is_empty());
+        assert_eq!(
+            app.selected_provider().map(|spec| spec.id),
+            effective_providers().first().map(|spec| spec.id),
+        );
+        assert!(matches!(app.input_mode, InputMode::SelectingProvider));
+    }
+
+    #[test]
+    fn connect_provider_selector_enter_keyless_provider_skips_prompt_and_lookup() {
+        let mut app = fresh_app();
+        app.open_provider_selector();
+        app.set_provider_query("local");
+        let mut lookup_calls = 0usize;
+
+        let connect = handle_provider_selector_key(
+            &mut app,
+            key(KeyCode::Enter),
+            |_| -> Result<Option<String>, String> {
+                lookup_calls += 1;
+                Ok(Some("should-not-be-used".into()))
+            },
+        );
+
+        assert_eq!(lookup_calls, 0);
+        assert!(matches!(app.input_mode, InputMode::Editing));
+        assert_eq!(
+            connect,
+            Some(PendingProviderConnect {
+                spec: effective_providers()
+                    .into_iter()
+                    .find(|spec| spec.id == "local")
+                    .expect("local provider should exist"),
+                api_key: String::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn connect_provider_selector_enter_keyed_provider_uses_stored_key_before_prompting() {
+        let mut app = fresh_app();
+        app.open_provider_selector();
+        app.set_provider_query("open");
+        let mut lookup_calls = 0usize;
+
+        let connect = handle_provider_selector_key(
+            &mut app,
+            key(KeyCode::Enter),
+            |_| -> Result<Option<String>, String> {
+                lookup_calls += 1;
+                Ok(Some("stored-key".into()))
+            },
+        );
+
+        assert_eq!(lookup_calls, 1);
+        assert!(matches!(app.input_mode, InputMode::Editing));
+        assert_eq!(
+            connect,
+            Some(PendingProviderConnect {
+                spec: effective_providers()
+                    .into_iter()
+                    .find(|spec| spec.id == "openai")
+                    .expect("openai provider should exist"),
+                api_key: "stored-key".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn connect_provider_selector_enter_keyed_provider_falls_back_to_prompt_without_key() {
+        let mut app = fresh_app();
+        app.open_provider_selector();
+        app.set_provider_query("open");
+
+        let connect = handle_provider_selector_key(&mut app, key(KeyCode::Enter), |_| Ok(None));
+
+        assert!(connect.is_none());
+        assert!(matches!(app.input_mode, InputMode::EnteringApiKey));
+        assert_eq!(app.pending_provider.map(|spec| spec.id), Some("openai"));
+    }
+
+    #[test]
+    fn connect_provider_selector_enter_on_no_match_does_nothing() {
+        let mut app = fresh_app();
+        app.open_provider_selector();
+        app.set_provider_query("zzz");
+
+        let connect = handle_provider_selector_key(&mut app, key(KeyCode::Enter), |_| Ok(None));
+
+        assert!(connect.is_none());
+        assert!(matches!(app.input_mode, InputMode::SelectingProvider));
+        assert!(app.pending_provider.is_none());
     }
 }
 

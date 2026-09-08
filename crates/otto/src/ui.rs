@@ -2,7 +2,9 @@
 
 use crate::app::{App, Entry, InputMode, TranscriptEntry, log_scroll_y};
 use crate::palette::Palette;
-use crate::providers::{PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD, effective_providers};
+use crate::providers::{
+    PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD, ProviderSpec, effective_providers,
+};
 use crate::splash;
 use otto_host::ToolCallStatus;
 use otto_plugin::ContentBlockId;
@@ -397,23 +399,17 @@ pub fn render(
     if matches!(app.input_mode, InputMode::SelectingProvider) {
         let popup = centered_rect(60, 40, area);
         frame.render_widget(Clear, popup);
-        let show_query =
-            provider_selector_shows_query(effective_providers().len(), app.provider_query.as_str());
-        let filtered = app.filtered_providers();
-        let items: Vec<ListItem> = if filtered.is_empty() {
-            vec![ListItem::new(Line::from(vec![
-                Span::styled("No providers match", palette.base_style().fg(palette.muted)),
-                Span::styled(
-                    format!(" {}", app.provider_query),
-                    palette.base_style().fg(palette.accent),
-                ),
-            ]))]
+        let view = build_provider_selector_view(app, effective_providers().len());
+        let items: Vec<ListItem> = if let Some(empty_state) = view.empty_state.as_ref() {
+            vec![ListItem::new(Line::from(vec![Span::styled(
+                empty_state.clone(),
+                palette.base_style().fg(palette.muted),
+            )]))]
         } else {
-            filtered
-                .into_iter()
-                .enumerate()
-                .map(|(i, spec)| {
-                    let style = if i == app.provider_index {
+            view.items
+                .iter()
+                .map(|item| {
+                    let style = if item.is_selected {
                         palette
                             .base_style()
                             .fg(palette.accent)
@@ -421,15 +417,11 @@ pub fn render(
                     } else {
                         palette.base_style()
                     };
-                    let active_marker = if Some(spec.id) == app.active_provider_id {
-                        " (active)"
-                    } else {
-                        ""
-                    };
+                    let active_marker = if item.is_active { " (active)" } else { "" };
                     ListItem::new(Line::from(vec![
-                        Span::styled(format!("{:<22}", spec.display_name), style),
+                        Span::styled(format!("{:<22}", item.spec.display_name), style),
                         Span::styled(
-                            format!(" {}{}", spec.id, active_marker),
+                            format!(" {}{}", item.spec.id, active_marker),
                             palette.base_style().fg(palette.muted),
                         ),
                     ]))
@@ -444,10 +436,10 @@ pub fn render(
                 " Connect to provider ",
                 palette.base_style().fg(palette.fg),
             ))
-            .title_bottom(Line::from(" [↑/↓] move  [Enter] select  [Esc] cancel ").right_aligned());
+            .title_bottom(Line::from(view.help_text).right_aligned());
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
-        let (query_area, list_area) = if show_query {
+        let (query_area, list_area) = if view.show_query_row {
             let sections = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(1), Constraint::Min(1)])
@@ -456,13 +448,8 @@ pub fn render(
         } else {
             (Rect::default(), inner)
         };
-        if show_query {
-            let query_text = if app.provider_query.is_empty() {
-                "type to filter".to_string()
-            } else {
-                app.provider_query.clone()
-            };
-            let query_style = if app.provider_query.is_empty() {
+        if let Some(query_text) = view.query_text.as_ref() {
+            let query_style = if view.query_is_placeholder {
                 palette.base_style().fg(palette.muted)
             } else {
                 palette.base_style().fg(palette.fg)
@@ -470,7 +457,7 @@ pub fn render(
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     Span::styled("Search: ", palette.base_style().fg(palette.muted)),
-                    Span::styled(query_text, query_style),
+                    Span::styled(query_text.clone(), query_style),
                 ]))
                 .style(palette.base_style()),
                 query_area,
@@ -1487,6 +1474,61 @@ fn provider_selector_shows_query(provider_count: usize, provider_query: &str) ->
     !provider_query.is_empty() || provider_count > PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD
 }
 
+#[derive(Debug, Clone)]
+struct ProviderSelectorItem {
+    spec: &'static ProviderSpec,
+    is_selected: bool,
+    is_active: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ProviderSelectorView {
+    show_query_row: bool,
+    query_text: Option<String>,
+    query_is_placeholder: bool,
+    items: Vec<ProviderSelectorItem>,
+    empty_state: Option<String>,
+    help_text: &'static str,
+}
+
+fn build_provider_selector_view(app: &App, provider_count: usize) -> ProviderSelectorView {
+    let show_query_row = provider_selector_shows_query(provider_count, app.provider_query.as_str());
+    let items: Vec<ProviderSelectorItem> = app
+        .filtered_providers()
+        .into_iter()
+        .enumerate()
+        .map(|(i, spec)| ProviderSelectorItem {
+            spec,
+            is_selected: i == app.provider_index,
+            is_active: Some(spec.id) == app.active_provider_id,
+        })
+        .collect();
+    let empty_state = items.is_empty().then(|| {
+        format!(
+            "No providers match `{}`. Keep typing or press Esc to clear.",
+            app.provider_query
+        )
+    });
+    let (query_text, query_is_placeholder) = if show_query_row {
+        if app.provider_query.is_empty() {
+            (Some("type to filter".to_string()), true)
+        } else {
+            (Some(app.provider_query.clone()), false)
+        }
+    } else {
+        (None, false)
+    };
+
+    ProviderSelectorView {
+        show_query_row,
+        query_text,
+        query_is_placeholder,
+        items,
+        empty_state,
+        help_text: " [type] filter  [↑/↓] move  [Enter] select  [Esc] clear/cancel ",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1702,6 +1744,41 @@ mod tests {
                 .map(|spec| spec.id)
                 .collect::<Vec<_>>(),
             vec!["openai"],
+        );
+    }
+
+    #[test]
+    fn connect_provider_selector_short_list_hides_filter_row() {
+        let app = fresh_app();
+
+        let view = build_provider_selector_view(&app, PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD);
+
+        assert!(!view.show_query_row);
+        assert!(view.empty_state.is_none());
+    }
+
+    #[test]
+    fn connect_provider_selector_long_list_shows_discoverable_filter_row() {
+        let app = fresh_app();
+
+        let view =
+            build_provider_selector_view(&app, PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD + 1);
+
+        assert!(view.show_query_row);
+        assert_eq!(view.query_text.as_deref(), Some("type to filter"));
+    }
+
+    #[test]
+    fn connect_provider_selector_no_results_renders_empty_state() {
+        let mut app = fresh_app();
+        app.set_provider_query("zzz");
+
+        let view = build_provider_selector_view(&app, PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD);
+
+        assert!(view.show_query_row);
+        assert_eq!(
+            view.empty_state.as_deref(),
+            Some("No providers match `zzz`. Keep typing or press Esc to clear.")
         );
     }
 
