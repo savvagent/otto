@@ -265,6 +265,15 @@ fn paint_prompt(state: &mut OttoApp, ctx: &egui::Context, interactive: bool) {
     });
 }
 
+/// Whether the prompt editor is shown (and, when interactive, focusable)
+/// while `screen_layout` is the top of the stack.
+///
+/// Today this keys off layout: the palette is the only `BottomSheet`
+/// screen and the only prompt-preview producer, so keeping the prompt
+/// visible-but-disabled under it mirrors the selection the palette feeds
+/// into the prompt. A future bottom-sheet screen that does NOT mirror into
+/// the prompt should revisit this (either hide the prompt or make the
+/// visibility explicit per screen rather than inferred from layout).
 fn prompt_visible_for_screen(screen_layout: Option<&ScreenLayout>) -> bool {
     matches!(screen_layout, None | Some(ScreenLayout::BottomSheet { .. }))
 }
