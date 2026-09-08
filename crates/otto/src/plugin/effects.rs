@@ -692,7 +692,7 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
                 .layout
                 .clone()
         };
-        let candidates = build_connect_candidates();
+        let candidates = build_connect_candidates(&idx).await;
         let active_provider_id = app
             .active_provider_id
             .and_then(|id| otto_plugin::ProviderId::new(id).ok());
@@ -854,12 +854,24 @@ fn format_chord(chord: &otto_plugin::ChordPortable) -> String {
     }
 }
 
-/// Build the `/connect` picker's candidate list from the runtime provider
-/// catalog so built-ins and externally-discovered providers stay aligned
-/// with every other selector in the app.
-fn build_connect_candidates() -> Vec<(otto_plugin::ProviderId, String)> {
+/// Build the `/connect` picker's candidate list from the shared runtime
+/// provider catalog, filtered to providers whose `connect <id>` slash is
+/// currently routable. This keeps the picker order aligned with the rest of
+/// the app without advertising disabled or not-yet-connectable providers.
+async fn build_connect_candidates(
+    indexes: &std::sync::Arc<tokio::sync::RwLock<crate::plugin::manifests::Indexes>>,
+) -> Vec<(otto_plugin::ProviderId, String)> {
+    let routable = {
+        let idx = indexes.read().await;
+        idx.slash
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>()
+    };
+
     crate::providers::effective_providers()
         .into_iter()
+        .filter(|spec| routable.contains(&format!("connect {}", spec.id)))
         .filter_map(|spec| {
             otto_plugin::ProviderId::new(spec.id)
                 .ok()
@@ -2256,7 +2268,12 @@ mod tests {
         );
         let registry = PluginRegistry::new(set);
         let registry = std::sync::Arc::new(tokio::sync::RwLock::new(registry));
-        let candidates = build_connect_candidates();
+        let indexes = {
+            let reg = registry.read().await;
+            Indexes::build(&reg).await.expect("indexes build")
+        };
+        let candidates =
+            build_connect_candidates(&std::sync::Arc::new(tokio::sync::RwLock::new(indexes))).await;
 
         let ids: std::collections::HashSet<String> = candidates
             .iter()

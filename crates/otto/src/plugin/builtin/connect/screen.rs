@@ -236,14 +236,15 @@ impl Screen for ConnectPickerScreen {
                 let Some((pid, _)) = self.selected_candidate().cloned() else {
                     return Ok(vec![]);
                 };
-                let name = if key.modifiers.alt {
-                    format!("connect {} --rekey", pid.as_str())
+                let name = format!("connect {}", pid.as_str());
+                let args = if key.modifiers.alt {
+                    vec!["--rekey".to_string()]
                 } else {
-                    format!("connect {}", pid.as_str())
+                    vec![]
                 };
                 Ok(vec![Effect::Stack(vec![
                     Effect::CloseScreen,
-                    Effect::RunSlash { name, args: vec![] },
+                    Effect::RunSlash { name, args },
                 ])])
             }
             _ => Ok(vec![]),
@@ -326,8 +327,9 @@ mod tests {
             Effect::Stack(children) => {
                 assert!(matches!(children[0], Effect::CloseScreen));
                 match &children[1] {
-                    Effect::RunSlash { name, .. } => {
-                        assert_eq!(name, "connect anthropic --rekey");
+                    Effect::RunSlash { name, args } => {
+                        assert_eq!(name, "connect anthropic");
+                        assert_eq!(args, &["--rekey"]);
                     }
                     _ => panic!(),
                 }
