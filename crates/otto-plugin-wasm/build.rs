@@ -52,9 +52,9 @@ fn main() {
             vendored_dir.display()
         );
     }
-    validate_expected_vendored_tree(&vendored_dir, &vendored_files);
 
     if !canonical_exists {
+        validate_expected_vendored_tree(&vendored_dir, &vendored_files);
         return;
     }
 
