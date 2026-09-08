@@ -8,6 +8,17 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.26.0 - 2026-09-08
+
+### Added
+
+- OAuth 2.1 authorization-code + PKCE support for remote Streamable HTTP MCP servers configured
+  via `[[mcp_servers]]`, including dynamic client registration (DCR), keyring-backed token/state
+  persistence under the existing `mcp:<server name>` namespace, and `/mcp` UX to authorize, check,
+  and clear an OAuth authorization for a server. Discovery and persistence are hardened with
+  endpoint pinning, same-origin protected-resource metadata checks, cross-origin private-host/DNS
+  rejection, redirect-free DCR, sanitized error rendering, and stale/concurrent-flow guards. (#49)
+
 ## 0.25.4 - 2026-09-08
 
 ### Fixed
