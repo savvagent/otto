@@ -44,7 +44,9 @@ View `crates/otto/src/plugin/builtin/provider_common.rs:180-270` (`ProviderBuild
 
 In `provider_common.rs`'s test module, add/extend a test that mocks a `list_models` failure with `ErrorKind::RateLimited` (or `PermissionDenied`) and asserts the returned `DynamicCapsOutcome::Rejected { kind, .. }` has `kind == ErrorKind::RateLimited` (distinct from the existing `Authentication`-kind test). Run `cargo test -p otto provider_common 2>&1 | tail -30` — expect a compile failure (the field doesn't exist yet).
 
-- [ ] **Step 3: Change the enum shapes (green)**
+- [ ] **Step 3: Change the enum shapes and update every downstream pattern (green)**
+
+`otto` is a single binary crate, so `cargo test -p otto`/`cargo build -p otto` compile the whole crate at once — changing `DynamicCapsOutcome`/`ProviderBuildOutcome`'s shape and building/testing before every pattern-match site is updated will fail with unrelated pattern-mismatch errors elsewhere in the crate, not just in `provider_common.rs`. Make all of the following edits together, as one uninterrupted pass, before running any build or test:
 
 In `provider_common.rs`, change:
 
@@ -63,7 +65,7 @@ pub(crate) enum ProviderBuildOutcome {
 
 Update `build_dynamic_caps`'s final arm to `Err(e) => DynamicCapsOutcome::Rejected { reason: e.message.clone(), kind: e.kind }`. Update the 3 existing test call sites' patterns (`DynamicCapsOutcome::Rejected(reason) => ...` → `DynamicCapsOutcome::Rejected { reason, .. } => ...`, `Rejected(_)` → `Rejected { .. }`) — assertions on `reason` content are unchanged.
 
-Run `cargo test -p otto provider_common 2>&1 | tail -30` — expect green (compiles again in isolation; downstream crate-wide errors are expected until Step 4).
+Then, in the same pass, continue to Steps 4 and 5 below (the 5 provider-plugin pass-through sites and the 3 `main.rs` call sites) before attempting a build. Only after all of them are updated, run `cargo test -p otto provider_common 2>&1 | tail -30` (Step 6) — expect green.
 
 - [ ] **Step 4: Update the 5 provider-plugin pass-through sites**
 
@@ -75,9 +77,9 @@ In each of `provider_anthropic/mod.rs`, `provider_deepseek/mod.rs`, `provider_ge
 - `apply_pending_pool_add` (~line 1912): change the pattern to `Ok(ProviderBuildOutcome::Rejected { reason, kind })`, keep existing behavior for now (Task 2 adds the gating logic in this arm's body).
 - `perform_connect` (~line 2689): same pattern-destructure update; keep existing behavior for now (Task 2 adds the gating logic).
 
-- [ ] **Step 6: Build and fix stragglers**
+- [ ] **Step 6: Build and test — first green-build checkpoint**
 
-Run `cargo build --workspace 2>&1 | tail -60`. Fix any remaining pattern mismatches. Run `cargo test --workspace 2>&1 | tail -60` — expect green (no behavior change yet, purely a shape threading).
+Only now, with Steps 3-5 all applied, run `cargo build --workspace 2>&1 | tail -60`. Fix any remaining pattern mismatches. Run `cargo test --workspace 2>&1 | tail -60` — expect green (no behavior change yet, purely a shape threading).
 
 - [ ] **Step 7: Commit**
 
@@ -302,7 +304,7 @@ TurnAuthError {
 1. Add a `current_turn_provider_id: Option<otto_protocol::ProviderId>` field to `OttoApp`'s turn-tracking state (initialized to `None` wherever `current_turn_id`/`next_turn_id` are initialized).
 2. In `handle_worker_msg`'s `WorkerMsg::Event(e)` arm, capture it from `TurnEvent::RouteSelected` identically to Step 5.2 above, before `self.app.apply_turn_event(e)` consumes `e`. Reset it to `None` after any terminal `TurnEvent` (`TurnComplete`, `Cancelled`, `AbortedAfterGrace`) is handled and at the end of both the existing `WorkerMsg::Error` arm and the new `WorkerMsg::TurnAuthError` arm. `OttoApp` has neither `footer_pending_turn_id` nor `turn_terminal_event_seen` — do **not** introduce either into `OttoApp` for this feature; only mirror its existing simpler turn-id bookkeeping.
 3. At the turn-spawn site (~line 411), apply the identical classification from Step 5.5: if the `HostError` is `Provider { error, .. }` with `error.kind == ErrorKind::Authentication`, send `WorkerMsg::TurnAuthError { message, provider_display_name }` instead of `WorkerMsg::Error`.
-4. Add a `WorkerMsg::TurnAuthError { message, provider_display_name }` arm to `handle_worker_msg`, mirroring the existing `WorkerMsg::Error(msg)` arm's bookkeeping shape in this file (its own synthetic-turn-id logic, not `main.rs`'s `record_turn_error`), then call the same `crate::providers::turn_auth_hint(self.app.current_turn_provider_id.as_ref(), &provider_display_name)` and `self.app.push_note(hint)` if `Some`.
+4. Add a `WorkerMsg::TurnAuthError { message, provider_display_name }` arm to `handle_worker_msg`, mirroring the existing `WorkerMsg::Error(msg)` arm's bookkeeping shape in this file (its own synthetic-turn-id logic, not `main.rs`'s `record_turn_error`), then call `crate::providers::turn_auth_hint(self.current_turn_provider_id.as_ref(), &provider_display_name)` — note `current_turn_provider_id` lives on `OttoApp` itself (per Step 6.1), not on the nested `self.app` — and `self.app.push_note(hint)` if `Some`.
 
 - [ ] **Step 7: Build and test — first green-build checkpoint**
 
