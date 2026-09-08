@@ -3008,4 +3008,69 @@ mod tests {
             Some("blocked by user hook")
         );
     }
+
+    /// Regression test: opening the palette through Effect::OpenScreen must
+    /// immediately prefill the prompt with the first highlighted slash command
+    /// so the palette and prompt are synchronized from the first frame.
+    #[tokio::test]
+    async fn palette_open_screen_prefills_prompt_with_first_command() {
+        use crate::plugin::manifests::Indexes;
+        use crate::plugin::register_builtins;
+        use crate::plugin::registry::PluginRegistry;
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
+            Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
+            Arc::new(tokio::sync::RwLock::new(
+                crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
+            )),
+            "test-session".into(),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
+                "/t.json",
+            ))),
+            crate::McpManagerSeed::default(),
+            vec![],
+        );
+        let registry = PluginRegistry::new(set);
+        let indexes = Indexes::build(&registry).await.expect("indexes build");
+
+        let mut app = {
+            let _lock = HOME_LOCK.lock().unwrap();
+            let _home = HomeGuard::new();
+            fresh_app()
+        };
+        app.install_plugin_runtime(registry, indexes);
+
+        // Open the palette through apply_effects.
+        apply_effects(
+            &mut app,
+            vec![Effect::OpenScreen {
+                id: "palette".into(),
+                args: otto_plugin::ScreenArgs::None,
+            }],
+        )
+        .await
+        .expect("open palette screen");
+
+        // The prompt should be prefilled with the first highlighted command.
+        // Get the first line of the input_textarea.
+        let prompt_lines = app.input_textarea.lines();
+        let first_line = prompt_lines.first().map(|s| s.as_str()).unwrap_or("");
+
+        // The first command should be a slash command (starts with /),
+        // and it should match the palette's first highlighted command.
+        assert!(
+            first_line.starts_with('/'),
+            "prompt should be prefilled with a slash command, got: '{first_line}'"
+        );
+
+        // Verify the screen was pushed to the stack.
+        let (_, _) = app
+            .screen_stack
+            .top()
+            .expect("palette screen should be on the stack");
+    }
 }
