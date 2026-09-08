@@ -29,7 +29,7 @@
 - Modify: `crates/otto/src/plugin/builtin/command_palette/screen.rs`
 
 - [ ] Read the current palette behavior in `crates/otto/src/plugin/builtin/command_palette/screen.rs`, especially `filtered`, `render`, and `on_key`, and confirm the prompt preview must come from plugin screen state rather than the legacy `App::palette_filter` helpers.
-- [ ] Add failing tests in `crates/otto/src/plugin/builtin/command_palette/screen.rs` for the prompt-preview helper / emitted effects: initial selected-command preview, typed-filter fallback when there is no match, `Up`/`Down` preview updates, and `Esc` / empty-result `Enter` clearing the preview. Run `cargo test -p otto command_palette::screen -- --nocapture` and expect the new assertions to fail before implementation.
+- [ ] Add failing tests in `crates/otto/src/plugin/builtin/command_palette/screen.rs` for the prompt-preview helper / emitted effects: initial selected-command preview, the empty-command-list `/` fallback, typed-filter fallback when there is no match, `Up`/`Down` preview updates, and `Esc` / empty-result `Enter` clearing the preview. Run `cargo test -p otto command_palette::screen -- --nocapture` and expect the new assertions to fail before implementation.
 - [ ] Implement a small `PaletteScreen` helper that derives the prompt preview text from the current filtered selection, and update `on_key` so `Char`, `Backspace`, `Up`, and `Down` return `Effect::PrefillInput` with the latest preview while preserving existing palette navigation behavior.
 - [ ] Keep immediate execution semantics intact: `Enter` on a no-argument command must still run the slash immediately, but the effect stack must clear the preview deterministically; `Enter` on an argument-taking command must still prefill `/<command> `; `Esc` and the empty-result `Enter` path must close the screen and clear the preview.
 - [ ] Record the public-interface check in code review notes: no SPP wire format, tool schema, plugin ABI surface, slash-command name, env var, or on-disk format changes — this is internal runtime behavior only.
@@ -50,5 +50,6 @@
 - [ ] This task does not touch `crates/otto/src/app.rs` or `crates/otto/src/tui.rs`, so the host-swap `RwLock` rule is unaffected; note that explicitly in review.
 - [ ] This task does not touch any streaming provider path, so the `ProgressDispatcher` forwarder-abort invariant is unaffected; note that explicitly in review.
 - [ ] Run `cargo test -p otto plugin::effects -- --nocapture` and `cargo test -p otto command_palette::screen -- --nocapture` and expect both targeted suites to pass.
+- [ ] Run `cargo clippy --workspace --all-targets` and expect it to stay clean for the modified palette/effects paths.
 - [ ] Run `cargo fmt --all` and commit the task with `git commit -m "otto: seed slash prompt preview on palette open"`.
-- [ ] Release note for Phase 4: after this feature PR merges, cut a dedicated release PR per `RELEASING.md` to ship the fix as v0.26.4; do not bump `Cargo.toml` or `CHANGELOG.md` in this feature branch.
+- [ ] Release note for Phase 4: after this feature PR merges, cut a dedicated release PR per `RELEASING.md` to ship the fix as v0.26.4; that dedicated release PR, not this feature branch, will bump `workspace.package.version`, every internal `workspace.dependencies` version in `Cargo.toml`, and `CHANGELOG.md`.
