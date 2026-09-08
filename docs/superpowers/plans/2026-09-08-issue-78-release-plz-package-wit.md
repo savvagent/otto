@@ -6,7 +6,7 @@
 
 **Tech Stack:** Rust 2024 workspace crates, `wasmtime::component::bindgen!`, Cargo package verification, std `fs`/`path` build-script checks, and existing GitHub Actions packaging constraints.
 
-**Spec:** `docs/superpowers/specs/2026-09-08-issue-78-release-plz-package-wit-design.md` — read it first. This plan implements it exactly.
+**Spec:** `docs/superpowers/specs/2026-09-08-issue-78-release-plz-package-wit-design.md` — committed on this branch; read it first. This plan implements it exactly.
 
 **Release line:** `v0.26.2`
 
@@ -70,6 +70,7 @@
 - [ ] Run `cargo test --workspace`. Expected result: success.
 - [ ] Run `cargo clippy --workspace --all-targets`. Expected result: success.
 - [ ] Run `cargo fmt --all -- --check`. Expected result: success.
+- [ ] Build at least one external plugin example with `cargo build -p plugin-hello-static --target wasm32-wasip2`. Expected result: the example plugin still compiles against the unchanged WIT contract after the packaging fix.
 - [ ] Re-run `cargo package --allow-dirty --workspace` if any validation fix touched packaging inputs after Task 2. Expected result: still succeeds.
 - [ ] Public-interface check: verify the PR summary says `otto-plugin-wasm` now vendors package-local WIT files for Cargo verification while `otto-plugin-wit` remains the canonical contract crate.
 - [ ] Host-swap/RwLock check: verify no task introduced an `.await` while holding an `Arc<RwLock<Option<Arc<Host>>>>` guard.
