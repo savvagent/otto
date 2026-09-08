@@ -61,33 +61,55 @@ boundary by pointing at the existing mechanism, not inventing a new one.
 
 ## Approach
 
-### 1. Make the connect-time rejection note actionable
+### 1. Make the connect-time rejection note actionable — only for a keyed rejection
 
-Change the `notes.connect-failed` locale string (all four locales) from:
+The `--rekey` hint only makes sense for a **credential** rejection on a
+**keyed** provider — `ProviderBuildOutcome::Rejected(reason)` (the key was
+read back and a real request rejected it) on a provider whose
+`spec.api_key_required` is `true`. It does *not* make sense for:
+
+- The generic build `Err(e)` arm at both call sites (`perform_connect`,
+  `apply_pending_pool_add`) — this covers TLS/proxy init failures, fd
+  exhaustion, or any other non-credential build error; telling the user to
+  re-enter a key would not fix those and is actively misleading.
+- `local`/Ollama's `Rejected` case (its `spec.api_key_required` is `false`,
+  `crates/otto/src/providers.rs:90`) — a `list_models` rejection there means
+  "Ollama isn't reachable," not "the key is wrong" (`local` has no key);
+  `--rekey` opens a modal with nothing useful to enter.
+
+So, unlike a pure locale-only change, both call sites need a small,
+mechanical branch added: when `ProviderBuildOutcome::Rejected(reason)` and
+`spec.api_key_required`, use a new locale key; otherwise keep using the
+existing `notes.connect-failed` unchanged. Add:
 
 ```
-Connect to %{id} failed: %{err}
+notes.connect-rejected-keyed = "Connect to %{id} failed: %{err} Run /connect %{id} --rekey to try a different key."
+```
+
+(all four locales), and at each `Ok(ProviderBuildOutcome::Rejected(reason))`
+arm in `perform_connect` and `apply_pending_pool_add`, change:
+
+```rust
+app.push_note(rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string());
 ```
 
 to:
 
-```
-Connect to %{id} failed: %{err} Run /connect %{id} --rekey to try a different key.
+```rust
+let key = if spec.api_key_required {
+    "notes.connect-rejected-keyed"
+} else {
+    "notes.connect-failed"
+};
+app.push_note(rust_i18n::t!(key, id = spec.id, err = reason).to_string());
 ```
 
-No code change is required at the two call sites
-(`perform_connect`, `apply_pending_pool_add`) beyond what's already there —
-they already interpolate `id` and `err` into this same key, so both the
-modal-driven first-connect-with-a-bad-key case and the silent
-stored-key-went-bad case pick up the hint automatically. This intentionally
-does not add a new locale key: it is the same message, extended, so no new
-translation surface beyond retranslating the appended sentence.
-
-Providers with `api_key_required == false` (currently only `local`/Ollama)
-can theoretically reach this code path (a build `Err` unrelated to
-credentials), but `--rekey` is harmless for them too — the modal that opens
-has no credential to lose and the user can immediately `Esc` out; no
-special-casing is needed.
+The generic `Err(e)` arms at both call sites are unchanged — they keep
+using `notes.connect-failed` verbatim, for every provider, since a build
+error there is never known to be credential-shaped. This is a narrow,
+additive branch (one new locale key, one `if` at two existing call sites)
+that does not otherwise touch either function's control flow — no new
+returns, no modal reopen, no change to what gets registered or when.
 
 ### 2. Surface the same hint after a turn-time authentication failure
 
@@ -239,6 +261,43 @@ Future<...>` — exact signature decided during implementation to match
 existing local-variable ownership in `run_app`) called from both the
 `WorkerMsg::Error` and `WorkerMsg::TurnAuthError` arms.
 
+### 3. The GUI front-end (`egui_app`) needs the identical treatment
+
+`crates/otto/src/egui_app/mod.rs` is a second, independent front-end
+(`OttoApp`) sharing the same `pub(crate) WorkerMsg` enum from `main.rs` — its
+`handle_worker_msg` (`crates/otto/src/egui_app/mod.rs:193-316`) is an
+exhaustive `match` over every `WorkerMsg` variant with no wildcard arm, and
+its own turn-spawn site (`crates/otto/src/egui_app/mod.rs`, around line 411)
+independently does `WorkerMsg::Error(e.to_string())` on a `run_turn_streaming`
+error, mirroring `main.rs`'s spawn block byte-for-byte. Adding
+`WorkerMsg::TurnAuthError` without updating this file does not compile
+(non-exhaustive match) — this is not optional follow-on work, it is required
+for step 2 to build at all.
+
+Per the module's own doc comment ("A faithful port of the six `WorkerMsg`
+arms in `run_app`'s ... block — same order, same leaf-helper calls, same
+plugin dispatch"), apply the mirrored change:
+
+- Add the same `current_turn_provider_id: Option<otto_protocol::ProviderId>`
+  field to `OttoApp`'s turn-tracking state (alongside its existing
+  `current_turn_id`/`next_turn_id` fields), captured from `TurnEvent::RouteSelected`
+  in the `WorkerMsg::Event(e)` arm exactly as in `main.rs`.
+- Change the turn-spawn site's error classification identically (the same
+  `HostError::Provider { error.kind: Authentication, .. }` match, emitting
+  `WorkerMsg::TurnAuthError` instead of `WorkerMsg::Error` when it matches).
+- Add a `WorkerMsg::TurnAuthError { message, provider_display_name }` arm to
+  `handle_worker_msg` that mirrors the existing `WorkerMsg::Error(msg)` arm's
+  bookkeeping (already written in that function without the `main.rs`
+  version's synthetic-turn-id `footer_pending_turn_id` concept — `egui_app`
+  doesn't have that field, so mirror its existing simpler shape, not
+  `main.rs`'s), then applies the identical `current_turn_provider_id` →
+  `effective_providers()` → `notes.turn-auth-failed-hint` lookup.
+
+No shared helper is introduced *across* `main.rs` and `egui_app/mod.rs` in
+this change (they are already two independently-maintained "faithful port"
+copies per existing house style in this file) — only *within* each file, per
+Approach §2's `record_turn_error` extraction.
+
 ### Why not just reopen the modal automatically?
 
 Auto-reopening `InputMode::EnteringApiKey` the instant a connect or turn
@@ -262,17 +321,28 @@ strictly additive, low-risk change.
 ## Scope
 
 **In:**
-- `crates/otto/locales/{en,es,hi,pt}.toml` — extend `notes.connect-failed`
-  with the `--rekey` hint; add new key `notes.turn-auth-failed-hint`.
-- `crates/otto/src/main.rs` — new `WorkerMsg::TurnAuthError` variant; the
+- `crates/otto/locales/{en,es,hi,pt}.toml` — add new key
+  `notes.connect-rejected-keyed` (the `--rekey` hint for keyed-provider
+  rejections); add new key `notes.turn-auth-failed-hint`.
+  `notes.connect-failed` itself is unchanged text-wise.
+- `crates/otto/src/main.rs` — the `if spec.api_key_required` locale-key
+  selection at both `Rejected` arms (`perform_connect`,
+  `apply_pending_pool_add`); new `WorkerMsg::TurnAuthError` variant; the
   turn-runner spawn block's error classification; the main loop's new match
   arm; the shared turn-bookkeeping helper extraction.
+- `crates/otto/src/egui_app/mod.rs` — the mirrored `current_turn_provider_id`
+  capture, turn-spawn error classification, and `WorkerMsg::TurnAuthError`
+  arm in `handle_worker_msg` (Approach §3) — required for the crate to
+  compile once `WorkerMsg::TurnAuthError` exists, and for the GUI front-end
+  to get the same fix as the TUI.
 
 **Out:**
 - Auto-reopening the API-key modal on any failure path (see "Why not..."
   above).
-- Changing `perform_connect` or `apply_pending_pool_add`'s control flow
-  beyond the locale-string change — no new branches, no modal reopen.
+- Any control-flow change to `perform_connect` or `apply_pending_pool_add`
+  beyond the one `if spec.api_key_required { ... }` locale-key selection at
+  their existing `Rejected` arms — no new branches, no modal reopen, no
+  change to the generic `Err(e)` arms.
 - Any change to `ErrorKind`, `ProviderBuildOutcome`, `HostError`, or the
   `--rekey` flag's existing implementation — all reused as-is.
 - Deleting or auto-correcting a stored-bad key. The already-documented
@@ -300,20 +370,26 @@ strings are user-facing text, not a wire or schema contract.
   `RouteSelected` fires unconditionally before the first
   `IterationStarted` and is the authoritative source. Justified in Approach
   §2 above.
-- **Extending `notes.connect-failed` in place (not adding a new key) is
-  acceptable** even though it changes existing translated text in 4
-  locales. The alternative (a second, always-appended key) would require
-  every call site to interpolate two strings instead of one for no
-  behavioral difference; keeping one key matches how `notes.connect-already`
-  already inlines its own `--rekey` mention as a single string.
+- **Gating the `--rekey` hint on `spec.api_key_required` at the `Rejected`
+  arms (not appending it to the shared `notes.connect-failed` key
+  unconditionally) is necessary, not just cosmetic.** `notes.connect-failed`
+  is also used for the generic build `Err(e)` arm (host-construction/
+  proxy/TLS failures unrelated to credentials) and would otherwise be
+  reused for `local`/Ollama's keyless `Rejected` case too; a blanket
+  `--rekey` hint on either would be actively misleading. A new key
+  (`notes.connect-rejected-keyed`) selected only when both conditions hold
+  keeps the existing `notes.connect-failed` text accurate for every other
+  case, at the cost of one new locale key across 4 files and a single `if`
+  at each of the two existing `Rejected` arms.
 - **Non-native-speaker translations for es/hi/pt are acceptable for this
   fix**, consistent with how the existing locale files were evidently
   populated (short, literal phrases mirroring the English structure) — a
   native-speaker review pass, if desired, is a follow-up, not a blocker for
   this fix.
-- **`local`/Ollama's connect-failure path picking up the `--rekey` hint
-  is harmless**, per the "Providers with `api_key_required == false`"
-  note in Approach step 1 — no special-casing needed.
+- **`crates/otto/src/egui_app/mod.rs`'s `handle_worker_msg` is an exhaustive
+  match with no wildcard arm**, so it must gain a `WorkerMsg::TurnAuthError`
+  arm in the same change or the crate fails to compile; this is treated as
+  in-scope, required work (Approach §3), not optional GUI parity.
 
 ## Goal & Success Criteria
 
@@ -325,37 +401,48 @@ in Problem.
 
 - [ ] `/connect anthropic` (or gemini/openai/deepseek) with a key rejected
       by `list_models` shows `Connect to anthropic failed: <reason> Run
-      /connect anthropic --rekey to try a different key.` instead of the
-      bare failure message.
-- [ ] The same hint appears when a stored key goes bad and is caught by the
-      silent-reconnect path (`apply_pending_pool_add`'s `Rejected`/`Err`
-      arms) **outside of startup** — i.e. when `apply_pending_pool_add` is
-      invoked with `startup: false` (the runtime `/connect`-adjacent call
-      site, whose notes are already shown unconditionally today). The
-      `startup: true` call site's existing quiet-by-default policy
-      (`show_notes = !startup || app.startup_verbose`,
+      /connect anthropic --rekey to try a different key.` (the new
+      `notes.connect-rejected-keyed` text) instead of the bare failure
+      message. A generic build error (the `Err(e)` arm, any provider) still
+      shows the unchanged `notes.connect-failed` text with no hint.
+- [ ] `local`/Ollama's `Rejected` case (its `spec.api_key_required` is
+      `false`) still shows the unchanged `notes.connect-failed` text with no
+      `--rekey` hint, since re-entering a (nonexistent) key would not fix a
+      connectivity problem.
+- [ ] The same keyed-rejection hint appears when a stored key goes bad and is
+      caught by the silent-reconnect path (`apply_pending_pool_add`'s
+      `Rejected` arm) **outside of startup** — i.e. when
+      `apply_pending_pool_add` is invoked with `startup: false` (the runtime
+      `/connect`-adjacent call site, whose notes are already shown
+      unconditionally today). The `startup: true` call site's existing
+      quiet-by-default policy (`show_notes = !startup || app.startup_verbose`,
       `crates/otto/src/main.rs:1889`) is untouched by this change: a
       rejected key discovered silently at launch still produces no note at
       all unless `[startup] verbose = true` is set, matching
       `savvagent/otto#14`'s deliberate quiet-startup design. When it *is*
       shown (verbose startup, or the non-startup call site), the message
-      picks up the same extended `notes.connect-failed` text automatically.
+      picks up the same new `notes.connect-rejected-keyed` text
+      automatically (subject to the same `spec.api_key_required` gate).
 - [ ] A turn routed to a non-active provider (via `@`-override, modality
       redirection, or a `routing.toml` rule) that fails with
       `ErrorKind::Authentication` shows a hint naming the *routed* provider
       (from `TurnEvent::RouteSelected`), not whatever `app.active_provider_id`
-      happens to be at the time.
+      happens to be at the time. Verified in both `main.rs`'s TUI front-end
+      and `egui_app/mod.rs`'s GUI front-end.
 - [ ] A turn that fails with `ErrorKind::Authentication` (e.g. a revoked key
       caught only at first-prompt time, since `list_models` validation at
       connect time can't catch a key that goes bad *after* a successful
       connect) shows both the existing `Error: <name> rejected the request:
       <message>` note and a new `Run /connect <id> --rekey to enter a
-      different API key for <name>.` note.
+      different API key for <name>.` note, in both front-ends.
 - [ ] A turn failing with any other `ErrorKind` (rate limit, overloaded,
       context length, etc.) shows only the existing `Error: ...` note — no
       new hint, since `--rekey` would not fix those.
-- [ ] `cargo test --workspace` and `cargo clippy --workspace --all-targets`
-      stay green.
+- [ ] `cargo build --workspace` succeeds (i.e. `egui_app/mod.rs`'s
+      `handle_worker_msg` match remains exhaustive after adding
+      `WorkerMsg::TurnAuthError`), `cargo test --workspace` and
+      `cargo clippy --workspace --all-targets` stay green, and
+      `cargo fmt --all --check` passes.
 
 ## Error Handling & Edge Cases
 
@@ -389,6 +476,15 @@ in Problem.
   signature right without changing behavior for the existing
   `WorkerMsg::Error` arm — covered by keeping all existing assertions/tests
   around turn-error `TurnStart`/`TurnEnd` symmetry green.
-- Retranslating `notes.connect-failed` for es/hi/pt without a native
-  speaker is a known, accepted quality gap (see Assumptions) — flagged here
-  for reviewer visibility, not blocking.
+- This change now touches two independently-maintained front-ends
+  (`main.rs`'s TUI and `egui_app/mod.rs`'s GUI) that already duplicate the
+  `WorkerMsg`-handling logic by house style (no shared helper between them
+  today). The plan must implement and test both mirrored changes in lockstep
+  — there is no compiler enforcement that `egui_app`'s classification logic
+  actually matches `main.rs`'s beyond both compiling, so a manual side-by-
+  side diff check during implementation/review is called out explicitly as
+  a required verification step, not just "add an arm."
+- Retranslating for es/hi/pt without a native speaker (new keys
+  `notes.connect-rejected-keyed`, `notes.turn-auth-failed-hint`) is a known,
+  accepted quality gap (see Assumptions) — flagged here for reviewer
+  visibility, not blocking.
