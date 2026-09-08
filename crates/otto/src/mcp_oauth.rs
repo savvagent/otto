@@ -2022,13 +2022,34 @@ mod tests {
         .await
         .expect("callback request");
 
-        let mut result = pending.poll().await.expect("poll");
+        // The keyring probe above only checks availability at the start of
+        // the test; the platform secret store can still become unreachable
+        // partway through this async flow (observed intermittently on GH
+        // Actions macOS runners, which don't always keep a default keychain
+        // unlocked across the whole test binary's lifetime). Treat that the
+        // same way the probe does — as an environment gap to skip over, not
+        // a real test failure — rather than panicking.
+        macro_rules! poll_or_skip {
+            () => {
+                match pending.poll().await {
+                    Ok(result) => result,
+                    Err(e) if crate::creds::is_backend_unavailable_message(&e) => {
+                        pending.shutdown().await;
+                        handle.abort();
+                        return;
+                    }
+                    Err(e) => panic!("poll: {e}"),
+                }
+            };
+        }
+
+        let mut result = poll_or_skip!();
         for _ in 0..20 {
             if !matches!(result, PollAuthorizationResult::Pending { .. }) {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            result = pending.poll().await.expect("poll");
+            result = poll_or_skip!();
         }
 
         pending.shutdown().await;

@@ -199,3 +199,11 @@ plan implements it exactly.
 - The implementation keeps runtime insufficient-scope handling as a manual reauthorization path
   surfaced through startup notes and `/mcp`; automatic scope step-up/retry was intentionally left
   out of scope per the spec.
+- CI follow-up: the `macos-latest` CI job flaked on
+  `mcp_oauth::tests::begin_and_complete_authorization_persists_tokens_when_keyring_is_available`
+  with `Platform secure storage failure: A default keychain could not be found` — the test's
+  keyring-availability probe only runs once at the start, but the platform secret store became
+  unreachable partway through the async OAuth flow on that runner. Fixed by extending
+  `creds::is_backend_unavailable` coverage (new `is_backend_unavailable_message` helper) to the
+  later poll/persist step too, so the test skips on backend-unavailable errors there the same way
+  it already does at the initial probe, instead of panicking.

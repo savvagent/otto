@@ -34,6 +34,22 @@ fn is_backend_unavailable(err: &keyring::Error) -> bool {
     )
 }
 
+/// Same classification as [`is_backend_unavailable`], but applied to an
+/// already-formatted error message rather than a live `keyring::Error`.
+///
+/// Some call sites (e.g. the async OAuth token-persistence flow in
+/// `mcp_oauth`) surface keyring failures as plain `String`s by the time
+/// tests observe them, after crossing an `AuthError` boundary. Those tests
+/// still need to treat "backend unavailable" the same way plain keyring
+/// callers do — as a CI environment gap to skip over, not a real failure —
+/// so this matches on the exact `Display` text `keyring::Error` produces for
+/// `NoStorageAccess`/`PlatformFailure` ("Couldn't access platform secure
+/// storage: ..." / "Platform secure storage failure: ...").
+pub(crate) fn is_backend_unavailable_message(msg: &str) -> bool {
+    msg.contains("Platform secure storage failure:")
+        || msg.contains("Couldn't access platform secure storage:")
+}
+
 /// Persist `api_key` under `provider_id`, overwriting any previous value.
 pub fn save(provider_id: &str, api_key: &str) -> Result<(), keyring::Error> {
     Entry::new(SERVICE, provider_id)?.set_password(api_key)
