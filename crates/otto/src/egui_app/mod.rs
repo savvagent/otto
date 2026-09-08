@@ -111,6 +111,7 @@ pub struct OttoApp {
     // locals. See `translate_turn_event_to_host_event` for the contract.
     next_turn_id: u32,
     current_turn_id: Option<u32>,
+    current_turn_provider_id: Option<otto_protocol::ProviderId>,
     next_tool_call_id: u64,
     last_tool_call_id: Option<u64>,
 
@@ -159,6 +160,7 @@ impl OttoApp {
             render_cache,
             next_turn_id: 0,
             current_turn_id: None,
+            current_turn_provider_id: None,
             next_tool_call_id: 0,
             last_tool_call_id: None,
             prompt: String::new(),
@@ -184,7 +186,7 @@ impl OttoApp {
         &self.render_cache
     }
 
-    /// Handle one worker message. A faithful port of the six `WorkerMsg` arms
+    /// Handle one worker message. A faithful port of the seven `WorkerMsg` arms
     /// in `run_app`'s `while let Ok(msg) = worker_rx.try_recv()` block —
     /// same order, same leaf-helper calls, same plugin dispatch. The only
     /// omission is `update_metrics`-adjacent terminal-specific state (none
@@ -195,6 +197,12 @@ impl OttoApp {
             WorkerMsg::Event(e) => {
                 use otto_host::TurnEvent;
                 let was_complete = matches!(e, TurnEvent::TurnComplete { .. });
+                let was_terminal = matches!(
+                    &e,
+                    TurnEvent::TurnComplete { .. }
+                        | TurnEvent::Cancelled { .. }
+                        | TurnEvent::AbortedAfterGrace { .. }
+                );
                 // Capture the canvas id before apply_turn_event consumes the
                 // event and clears the index from html_block_index_to_id.
                 let html_block_stop_id = if let TurnEvent::HtmlBlockStop { index } = &e {
@@ -202,6 +210,9 @@ impl OttoApp {
                 } else {
                     None
                 };
+                if let TurnEvent::RouteSelected { provider_id, .. } = &e {
+                    self.current_turn_provider_id = Some(provider_id.clone());
+                }
                 let host_event = translate_turn_event_to_host_event(
                     &e,
                     &mut self.next_turn_id,
@@ -253,6 +264,9 @@ impl OttoApp {
                         }
                     }
                 }
+                if was_terminal {
+                    self.current_turn_provider_id = None;
+                }
             }
             WorkerMsg::Error(msg) => {
                 self.app.is_loading = false;
@@ -292,6 +306,54 @@ impl OttoApp {
                 {
                     tracing::warn!(error = %err, "TurnEnd(failure) dispatch failed");
                 }
+                self.current_turn_provider_id = None;
+            }
+            WorkerMsg::TurnAuthError {
+                message,
+                provider_display_name,
+            } => {
+                self.app.is_loading = false;
+                self.app
+                    .entries
+                    .push(Entry::Note(format!("Error: {message}")));
+                self.app.update_metrics();
+                let turn_id = match self.current_turn_id.take() {
+                    Some(id) => id,
+                    None => {
+                        self.next_turn_id = self.next_turn_id.saturating_add(1);
+                        let synthetic = self.next_turn_id;
+                        if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                            &mut self.app,
+                            otto_plugin::HostEvent::TurnStart { turn_id: synthetic },
+                            0,
+                        )
+                        .await
+                        {
+                            tracing::warn!(error = %err, "synthetic TurnStart dispatch failed");
+                        }
+                        synthetic
+                    }
+                };
+                self.last_tool_call_id = None;
+                if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                    &mut self.app,
+                    otto_plugin::HostEvent::TurnEnd {
+                        turn_id,
+                        success: false,
+                    },
+                    0,
+                )
+                .await
+                {
+                    tracing::warn!(error = %err, "TurnEnd(failure) dispatch failed");
+                }
+                if let Some(hint) = crate::providers::turn_auth_hint(
+                    self.current_turn_provider_id.as_ref(),
+                    &provider_display_name,
+                ) {
+                    self.app.push_note(hint);
+                }
+                self.current_turn_provider_id = None;
             }
             WorkerMsg::BashDone => {
                 self.app.is_loading = false;
@@ -408,7 +470,26 @@ impl OttoApp {
             match result {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
-                    let _ = tx.send(WorkerMsg::Error(e.to_string())).await;
+                    let message = e.to_string();
+                    let auth_name = if let otto_host::HostError::Provider { name, error } = &e {
+                        (error.kind == otto_protocol::ErrorKind::Authentication)
+                            .then(|| name.clone())
+                    } else {
+                        None
+                    };
+                    match auth_name {
+                        Some(provider_display_name) => {
+                            let _ = tx
+                                .send(WorkerMsg::TurnAuthError {
+                                    message,
+                                    provider_display_name,
+                                })
+                                .await;
+                        }
+                        None => {
+                            let _ = tx.send(WorkerMsg::Error(message)).await;
+                        }
+                    }
                 }
                 Err(join_err) => {
                     let _ = tx

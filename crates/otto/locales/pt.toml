@@ -69,6 +69,7 @@ theme-persistence-failed      = "tema `%{slug}` aplicado para esta sessão, mas 
 theme-set                     = "tema alterado para `%{slug}`"
 tools-count                   = "%{count} ferramenta(s):"
 tools-entry                   = "  [%{policy}] %{name}%{desc}"
+turn-auth-failed-hint         = "Execute /connect %{id} --rekey para informar uma chave de API diferente para %{name}."
 transcript-saved              = "Transcrição salva em %{path}"
 transcript-save-failed        = "Falha ao salvar (%{path}): %{err}"
 unknown-command               = "Comando desconhecido: %{cmd}"

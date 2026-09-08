@@ -73,6 +73,7 @@ theme-persistence-failed      = "theme `%{slug}` applied for this session, but p
 theme-set                     = "theme set to `%{slug}`"
 tools-count                   = "%{count} tool(s):"
 tools-entry                   = "  [%{policy}] %{name}%{desc}"
+turn-auth-failed-hint         = "Run /connect %{id} --rekey to enter a different API key for %{name}."
 transcript-saved              = "Transcript saved to %{path}"
 transcript-save-failed        = "Save failed (%{path}): %{err}"
 unknown-command               = "Unknown command: %{cmd}"

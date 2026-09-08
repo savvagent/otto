@@ -69,6 +69,7 @@ theme-persistence-failed      = "थीम `%{slug}` इस सत्र के 
 theme-set                     = "थीम `%{slug}` पर सेट की गई"
 tools-count                   = "%{count} टूल:"
 tools-entry                   = "  [%{policy}] %{name}%{desc}"
+turn-auth-failed-hint         = "%{name} के लिए अलग API कुंजी दर्ज करने हेतु /connect %{id} --rekey चलाएं।"
 transcript-saved              = "ट्रांसक्रिप्ट %{path} पर सहेजा गया"
 transcript-save-failed        = "सहेजना विफल (%{path}): %{err}"
 unknown-command               = "अज्ञात कमांड: %{cmd}"

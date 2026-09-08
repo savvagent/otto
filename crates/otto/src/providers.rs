@@ -183,6 +183,35 @@ pub fn effective_providers() -> Vec<&'static ProviderSpec> {
     v
 }
 
+/// Render the `--rekey` hint for a turn-time authentication failure, or
+/// `None` if the routed provider is unknown or doesn't take an API key
+/// (in which case `--rekey` would have nothing useful to do).
+///
+/// `routed_provider_id` should come from the per-turn `TurnEvent::RouteSelected`
+/// capture, not `App::active_provider_id` — routing (`@`-override, modality
+/// redirection, `routing.toml`) can select a different pool entry than the
+/// active one for a given turn.
+pub(crate) fn turn_auth_hint(
+    routed_provider_id: Option<&otto_protocol::ProviderId>,
+    provider_display_name: &str,
+) -> Option<String> {
+    let id = routed_provider_id?;
+    let spec = effective_providers()
+        .into_iter()
+        .find(|spec| spec.id == id.as_str())?;
+    if !spec.api_key_required {
+        return None;
+    }
+    Some(
+        rust_i18n::t!(
+            "notes.turn-auth-failed-hint",
+            id = spec.id,
+            name = provider_display_name
+        )
+        .to_string(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -217,5 +246,23 @@ mod tests {
         assert!(provider_matches_query(openai, "opn"));
         assert!(provider_matches_query(anthropic, "cld"));
         assert!(!provider_matches_query(openai, "zzz"));
+    }
+
+    #[test]
+    fn turn_auth_hint_only_for_known_keyed_providers() {
+        rust_i18n::set_locale("en");
+
+        let gemini_id = otto_protocol::ProviderId::new("gemini").expect("valid provider id");
+        let local_id = otto_protocol::ProviderId::new("local").expect("valid provider id");
+
+        let gemini_hint = turn_auth_hint(Some(&gemini_id), "Gemini");
+        assert!(gemini_hint.is_some());
+        assert!(
+            gemini_hint
+                .as_deref()
+                .is_some_and(|text| text.contains("/connect gemini --rekey"))
+        );
+        assert_eq!(turn_auth_hint(None, "Gemini"), None);
+        assert_eq!(turn_auth_hint(Some(&local_id), "Local"), None);
     }
 }

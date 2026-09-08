@@ -103,6 +103,12 @@ pub(crate) enum WorkerMsg {
     Event(TurnEvent),
     /// Sent if `run_turn_streaming` returned an error.
     Error(String),
+    /// Sent if `run_turn_streaming` returned an authentication error from a
+    /// provider, so the main loop can additionally render a `--rekey` hint.
+    TurnAuthError {
+        message: String,
+        provider_display_name: String,
+    },
     /// Sent when a `/bash` direct-invocation worker finishes (success or
     /// error). The main loop uses this to clear `app.is_loading`, mirroring
     /// the `TurnComplete` path for model-driven turns.
@@ -3062,6 +3068,69 @@ async fn dispatch_failed_turn_end_on_exit(
     }
 }
 
+async fn record_turn_error(
+    app: &mut App,
+    message: String,
+    footer_pending_turn_id: &mut Option<u32>,
+    current_turn_id: &mut Option<u32>,
+    next_turn_id: &mut u32,
+    last_tool_call_id: &mut Option<u64>,
+    turn_terminal_event_seen: &mut bool,
+) {
+    app.is_loading = false;
+    let pending_turn_id = footer_pending_turn_id.take();
+    app.entries.push(Entry::Note(format!("Error: {message}")));
+    app.update_metrics();
+    if !*turn_terminal_event_seen {
+        // A runner error terminates the turn without a
+        // terminal TurnEvent; emit TurnEnd { success: false }
+        // so subscribers see symmetry with successful turns.
+        // If the provider errored before producing
+        // `IterationStarted { iteration: 1 }` (auth fail,
+        // network glitch on first request), `current_turn_id`
+        // is None — synthesize a TurnStart first so
+        // subscribers see a complete `PromptSubmitted ->
+        // TurnStart -> TurnEnd` shape instead of a missing
+        // turn frame for those error modes.
+        let turn_id = match current_turn_id.take() {
+            Some(id) => id,
+            None => {
+                let synthetic = pending_turn_id.unwrap_or_else(|| {
+                    *next_turn_id = next_turn_id.saturating_add(1);
+                    *next_turn_id
+                });
+                *next_turn_id = (*next_turn_id).max(synthetic);
+                if let Err(err) = crate::plugin::effects::dispatch_host_event(
+                    app,
+                    otto_plugin::HostEvent::TurnStart { turn_id: synthetic },
+                    0,
+                )
+                .await
+                {
+                    tracing::warn!(error = %err, "synthetic TurnStart dispatch failed");
+                }
+                synthetic
+            }
+        };
+        // Clear any stale per-turn tool-call state so the
+        // next turn starts clean.
+        *last_tool_call_id = None;
+        if let Err(err) = crate::plugin::effects::dispatch_host_event(
+            app,
+            otto_plugin::HostEvent::TurnEnd {
+                turn_id,
+                success: false,
+            },
+            0,
+        )
+        .await
+        {
+            tracing::warn!(error = %err, "TurnEnd(failure) dispatch failed");
+        }
+    }
+    *turn_terminal_event_seen = false;
+}
+
 /// Attempt to create a [`otto_plugin::ContentRenderer`] for the
 /// `Entry::Canvas` identified by `canvas_id` and register it in
 /// `app.canvas_registry`.
@@ -3249,6 +3318,7 @@ async fn run_app(
     //   payload so we only emit when the value actually moves.
     let mut next_turn_id: u32 = 0;
     let mut current_turn_id: Option<u32> = None;
+    let mut current_turn_provider_id: Option<otto_protocol::ProviderId> = None;
     let mut footer_pending_turn_id: Option<u32> = None;
     let mut turn_terminal_event_seen = false;
     let mut next_tool_call_id: u64 = 0;
@@ -3354,6 +3424,7 @@ async fn run_app(
                             | TurnEvent::AbortedAfterGrace { .. }
                     ) {
                         turn_terminal_event_seen = true;
+                        current_turn_provider_id = None;
                     }
                     // Capture the canvas id before apply_turn_event consumes
                     // the event and removes the index from html_block_index_to_id.
@@ -3362,6 +3433,9 @@ async fn run_app(
                     } else {
                         None
                     };
+                    if let TurnEvent::RouteSelected { provider_id, .. } = &e {
+                        current_turn_provider_id = Some(provider_id.clone());
+                    }
                     // Translate the streaming TurnEvent before
                     // `apply_turn_event` (which consumes `e` by value)
                     // so the translator and the App mutation each get
@@ -3453,60 +3527,39 @@ async fn run_app(
                     }
                 }
                 WorkerMsg::Error(msg) => {
-                    app.is_loading = false;
-                    let pending_turn_id = footer_pending_turn_id.take();
-                    app.entries.push(Entry::Note(format!("Error: {msg}")));
-                    app.update_metrics();
-                    if !turn_terminal_event_seen {
-                        // A runner error terminates the turn without a
-                        // terminal TurnEvent; emit TurnEnd { success: false }
-                        // so subscribers see symmetry with successful turns.
-                        // If the provider errored before producing
-                        // `IterationStarted { iteration: 1 }` (auth fail,
-                        // network glitch on first request), `current_turn_id`
-                        // is None — synthesize a TurnStart first so
-                        // subscribers see a complete `PromptSubmitted ->
-                        // TurnStart -> TurnEnd` shape instead of a missing
-                        // turn frame for those error modes.
-                        let turn_id = match current_turn_id.take() {
-                            Some(id) => id,
-                            None => {
-                                let synthetic = pending_turn_id.unwrap_or_else(|| {
-                                    next_turn_id = next_turn_id.saturating_add(1);
-                                    next_turn_id
-                                });
-                                next_turn_id = next_turn_id.max(synthetic);
-                                if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                                    app,
-                                    otto_plugin::HostEvent::TurnStart { turn_id: synthetic },
-                                    0,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(error = %err,
-                                        "synthetic TurnStart dispatch failed");
-                                }
-                                synthetic
-                            }
-                        };
-                        // Clear any stale per-turn tool-call state so the
-                        // next turn starts clean.
-                        last_tool_call_id = None;
-                        if let Err(err) = crate::plugin::effects::dispatch_host_event(
-                            app,
-                            otto_plugin::HostEvent::TurnEnd {
-                                turn_id,
-                                success: false,
-                            },
-                            0,
-                        )
-                        .await
-                        {
-                            tracing::warn!(error = %err,
-                                "TurnEnd(failure) dispatch failed");
-                        }
+                    record_turn_error(
+                        app,
+                        msg,
+                        &mut footer_pending_turn_id,
+                        &mut current_turn_id,
+                        &mut next_turn_id,
+                        &mut last_tool_call_id,
+                        &mut turn_terminal_event_seen,
+                    )
+                    .await;
+                    current_turn_provider_id = None;
+                }
+                WorkerMsg::TurnAuthError {
+                    message,
+                    provider_display_name,
+                } => {
+                    record_turn_error(
+                        app,
+                        message,
+                        &mut footer_pending_turn_id,
+                        &mut current_turn_id,
+                        &mut next_turn_id,
+                        &mut last_tool_call_id,
+                        &mut turn_terminal_event_seen,
+                    )
+                    .await;
+                    if let Some(hint) = crate::providers::turn_auth_hint(
+                        current_turn_provider_id.as_ref(),
+                        &provider_display_name,
+                    ) {
+                        app.push_note(hint);
                     }
-                    turn_terminal_event_seen = false;
+                    current_turn_provider_id = None;
                 }
                 WorkerMsg::BashDone => {
                     app.is_loading = false;
@@ -3893,7 +3946,30 @@ async fn run_app(
                                 match result {
                                     Ok(Ok(_)) => {}
                                     Ok(Err(e)) => {
-                                        let _ = tx.send(WorkerMsg::Error(e.to_string())).await;
+                                        let message = e.to_string();
+                                        let auth_name =
+                                            if let otto_host::HostError::Provider { name, error } =
+                                                &e
+                                            {
+                                                (error.kind
+                                                    == otto_protocol::ErrorKind::Authentication)
+                                                    .then(|| name.clone())
+                                            } else {
+                                                None
+                                            };
+                                        match auth_name {
+                                            Some(provider_display_name) => {
+                                                let _ = tx
+                                                    .send(WorkerMsg::TurnAuthError {
+                                                        message,
+                                                        provider_display_name,
+                                                    })
+                                                    .await;
+                                            }
+                                            None => {
+                                                let _ = tx.send(WorkerMsg::Error(message)).await;
+                                            }
+                                        }
                                     }
                                     Err(join_err) => {
                                         let _ = tx
