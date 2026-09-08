@@ -621,12 +621,23 @@ impl OttoApp {
                     *self.render_cache.lock().unwrap() = model;
                 }
             });
+            // Re-sync the prompt from pending_prefill after same-frame effects
+            // processing and before painting, so the egui prompt doesn't lag
+            // behind palette state changes. Block 2's palette-open effects may
+            // have set pending_prefill, which block 3's screen keys may have
+            // updated; paint must see the latest state.
+            if let Some(text) = self.app.take_pending_prefill() {
+                self.prompt = text;
+            }
             view::paint(self, ctx);
             ctx.request_repaint(); // screens are interactive; keep ticking
             return;
         }
 
-        // 4. Paint.
+        // 4. Paint. Re-sync prompt in case block 2 effects set pending_prefill.
+        if let Some(text) = self.app.take_pending_prefill() {
+            self.prompt = text;
+        }
         view::paint(self, ctx);
 
         // 5. Keep repainting while a turn streams so newly-arrived deltas show
