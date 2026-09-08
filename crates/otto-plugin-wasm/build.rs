@@ -2,6 +2,14 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const REQUIRED_WIT_FILES: &[&str] = &[
+    "plugin-interactive.wit",
+    "plugin-provider.wit",
+    "plugin-static.wit",
+    "shared.wit",
+    "spp.wit",
+];
+
 fn main() {
     println!("cargo::rerun-if-changed=wit");
     println!("cargo::rerun-if-changed=../otto-plugin-wit/wit");
@@ -41,6 +49,7 @@ fn main() {
                 vendored_dir.display()
             );
         }
+        validate_required_wit_files(&vendored_dir, &vendored_files);
         return;
     }
 
@@ -99,6 +108,22 @@ fn verify_wit_sync(vendored_dir: &Path, canonical_dir: &Path) -> Result<(), Stri
     }
 
     Ok(())
+}
+
+fn validate_required_wit_files(vendored_dir: &Path, vendored_files: &BTreeSet<PathBuf>) {
+    let missing_files: Vec<_> = REQUIRED_WIT_FILES
+        .iter()
+        .filter(|file| !vendored_files.contains(&PathBuf::from(file)))
+        .copied()
+        .collect();
+
+    if !missing_files.is_empty() {
+        panic!(
+            "vendored WIT directory `{}` is missing required files: {:?}.\nrestore `crates/otto-plugin-wasm/wit/` from `crates/otto-plugin-wit/wit/` before building.",
+            vendored_dir.display(),
+            missing_files,
+        );
+    }
 }
 
 fn collect_wit_files(root: &Path) -> std::io::Result<BTreeSet<PathBuf>> {

@@ -51,8 +51,8 @@ pub use otto_plugin_wit as wit;
 // proc-macro and therefore requires a *string-literal* path at the call
 // site, so `otto-plugin-wasm` vendors the WIT files under its own crate
 // root and points bindgen at that package-local copy. `otto-plugin-wit`
-// remains the canonical human-edited source; `build.rs` keeps this copy
-// byte-for-byte synced during normal workspace builds while still letting
+// remains the canonical human-edited source; `build.rs` verifies this copy
+// stays byte-for-byte synced during normal workspace builds while still letting
 // Cargo's isolated package sandbox compile this crate without a sibling
 // `../otto-plugin-wit/wit` directory.
 //
