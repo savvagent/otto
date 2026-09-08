@@ -384,18 +384,26 @@ impl McpServerEntry {
                     ));
                 }
             }
-            Self::Http {
-                auth: McpAuthMode::Oauth,
-                ..
-            } => {
-                return Err(
-                    "oauth is not yet supported; use auth = \"bearer\" or omit auth".into(),
-                );
-            }
-            Self::Http { .. } => {}
+            Self::Http { url, .. } => validate_http_resource_url(url)?,
         }
         Ok(())
     }
+}
+
+fn validate_http_resource_url(url: &str) -> Result<(), String> {
+    let parsed =
+        reqwest::Url::parse(url).map_err(|err| format!("MCP server URL is invalid: {err}"))?;
+    if parsed.scheme() == "https" {
+        return Ok(());
+    }
+    if parsed.scheme() == "http"
+        && matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "::1"))
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "MCP server URL must use https (or http loopback for local development): {url}"
+    ))
 }
 
 fn mcp_server_entry_label(idx: usize, entry: &toml::Value) -> String {
@@ -1024,7 +1032,7 @@ transport = "bogus"
     }
 
     #[test]
-    fn oauth_is_tolerantly_loaded_but_rejected_by_validate() {
+    fn oauth_is_tolerantly_loaded_and_accepted_by_validate() {
         let entry: McpServerEntry = toml::from_str(
             r#"
 transport = "http"
@@ -1034,8 +1042,24 @@ auth = "oauth"
 "#,
         )
         .unwrap();
+        entry
+            .validate(&HashSet::new())
+            .expect("oauth http entries should validate");
+    }
+
+    #[test]
+    fn oauth_validate_rejects_non_https_non_loopback_urls() {
+        let entry: McpServerEntry = toml::from_str(
+            r#"
+transport = "http"
+name = "remote"
+url = "http://example.test/mcp"
+auth = "oauth"
+"#,
+        )
+        .unwrap();
         let err = entry.validate(&HashSet::new()).unwrap_err();
-        assert!(err.contains("not yet supported"));
+        assert!(err.contains("must use https"), "err: {err}");
     }
 
     #[test]

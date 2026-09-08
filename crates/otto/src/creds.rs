@@ -6,6 +6,15 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use keyring::Entry;
+use serde::{Serialize, de::DeserializeOwned};
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum JsonSecretError {
+    #[error(transparent)]
+    Keyring(#[from] keyring::Error),
+    #[error("stored secret is not valid JSON: {0}")]
+    InvalidJson(#[from] serde_json::Error),
+}
 
 /// Service name we register entries under.
 const SERVICE: &str = "otto";
@@ -23,6 +32,22 @@ fn is_backend_unavailable(err: &keyring::Error) -> bool {
         err,
         keyring::Error::NoStorageAccess(_) | keyring::Error::PlatformFailure(_)
     )
+}
+
+/// Same classification as [`is_backend_unavailable`], but applied to an
+/// already-formatted error message rather than a live `keyring::Error`.
+///
+/// Some call sites (e.g. the async OAuth token-persistence flow in
+/// `mcp_oauth`) surface keyring failures as plain `String`s by the time
+/// tests observe them, after crossing an `AuthError` boundary. Those tests
+/// still need to treat "backend unavailable" the same way plain keyring
+/// callers do — as a CI environment gap to skip over, not a real failure —
+/// so this matches on the exact `Display` text `keyring::Error` produces for
+/// `NoStorageAccess`/`PlatformFailure` ("Couldn't access platform secure
+/// storage: ..." / "Platform secure storage failure: ...").
+pub(crate) fn is_backend_unavailable_message(msg: &str) -> bool {
+    msg.contains("Platform secure storage failure:")
+        || msg.contains("Couldn't access platform secure storage:")
 }
 
 /// Persist `api_key` under `provider_id`, overwriting any previous value.
@@ -74,10 +99,43 @@ pub fn mcp_delete(server_name: &str) -> Result<(), keyring::Error> {
     delete(&format!("{MCP_PREFIX}{server_name}"))
 }
 
+pub(crate) fn encode_json_secret<T: Serialize>(value: &T) -> Result<String, serde_json::Error> {
+    serde_json::to_string(value)
+}
+
+pub(crate) fn decode_json_secret<T: DeserializeOwned>(raw: &str) -> Result<T, serde_json::Error> {
+    serde_json::from_str(raw)
+}
+
+pub(crate) fn mcp_save_json<T: Serialize>(
+    server_name: &str,
+    value: &T,
+) -> Result<(), JsonSecretError> {
+    let raw = encode_json_secret(value)?;
+    mcp_save(server_name, &raw)?;
+    Ok(())
+}
+
+pub(crate) fn mcp_load_json<T: DeserializeOwned>(
+    server_name: &str,
+) -> Result<Option<T>, JsonSecretError> {
+    let Some(raw) = mcp_load(server_name)? else {
+        return Ok(None);
+    };
+    Ok(Some(decode_json_secret(&raw)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::{Deserialize, Serialize};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+    struct TestJsonSecret {
+        issuer: String,
+        scopes: Vec<String>,
+    }
 
     fn unique_account(prefix: &str) -> String {
         let stamp = SystemTime::now()
@@ -91,6 +149,23 @@ mod tests {
     fn delete_nonexistent_account_is_ok() {
         let account = unique_account("missing");
         assert!(delete(&account).is_ok());
+    }
+
+    #[test]
+    fn json_secret_helpers_round_trip() {
+        let secret = TestJsonSecret {
+            issuer: "https://issuer.example".into(),
+            scopes: vec!["mcp.read".into()],
+        };
+        let raw = encode_json_secret(&secret).expect("serialize");
+        let decoded: TestJsonSecret = decode_json_secret(&raw).expect("deserialize");
+        assert_eq!(decoded, secret);
+    }
+
+    #[test]
+    fn json_secret_decode_rejects_raw_bearer_secret() {
+        let err = decode_json_secret::<TestJsonSecret>("plain-bearer-token").unwrap_err();
+        assert!(err.is_syntax() || err.is_data());
     }
 
     #[test]

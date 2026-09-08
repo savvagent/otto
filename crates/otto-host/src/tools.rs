@@ -35,7 +35,10 @@ use rmcp::{
     service::{NotificationContext, RunningService, ServiceError},
     transport::{
         StreamableHttpClientTransport, TokioChildProcess,
-        streamable_http_client::StreamableHttpClientTransportConfig,
+        streamable_http_client::{
+            AuthRequiredError, InsufficientScopeError, StreamableHttpClientTransportConfig,
+            StreamableHttpError,
+        },
     },
 };
 use serde_json::Value;
@@ -54,6 +57,13 @@ const TOOL_BASH_MARKER: &str = "tool-bash";
 /// Always present in `ToolRegistry::defs`, regardless of whether any
 /// connected tool publishes resources today.
 pub(crate) const READ_RESOURCE_TOOL_NAME: &str = "read_resource";
+
+#[derive(Clone, Copy)]
+enum HttpStatusAuthKind {
+    None,
+    Bearer,
+    Oauth,
+}
 
 /// Per-call override of `tool-bash`'s network access.
 ///
@@ -771,46 +781,57 @@ impl ToolRegistry {
                 }
                 ToolEndpoint::Http { name, url, auth } => {
                     let transport_kind = TransportKind::Http;
-                    let config = match auth {
-                        HttpAuth::None => {
-                            StreamableHttpClientTransportConfig::with_uri(url.clone())
-                        }
-                        HttpAuth::Bearer { token } => {
-                            StreamableHttpClientTransportConfig::with_uri(url.clone())
-                                .auth_header(token.clone())
-                        }
-                    };
-                    let transport_client = StreamableHttpClientTransport::from_config(config);
                     let handler = ResourceCapturingHandler::new(name.clone(), resource_tx.clone());
                     let deadline = tokio::time::Instant::now() + connect_timeout;
-                    let service =
-                        match tokio::time::timeout_at(deadline, handler.serve(transport_client))
-                            .await
-                        {
-                            Ok(Ok(service)) => service,
-                            Ok(Err(err)) => {
-                                statuses.push(ToolServerStatus {
-                                    name: name.clone(),
-                                    transport: transport_kind,
-                                    state: ConnectState::Failed {
-                                        reason: format!("init MCP session with {name}: {err}"),
-                                    },
-                                });
-                                continue;
-                            }
-                            Err(_) => {
-                                statuses.push(ToolServerStatus {
-                                    name: name.clone(),
-                                    transport: transport_kind,
-                                    state: ConnectState::Failed {
-                                        reason: format!(
-                                            "connect timed out while initializing {name}"
-                                        ),
-                                    },
-                                });
-                                continue;
-                            }
-                        };
+                    let auth_kind = match auth {
+                        HttpAuth::None => HttpStatusAuthKind::None,
+                        HttpAuth::Bearer { .. } => HttpStatusAuthKind::Bearer,
+                        HttpAuth::OAuth { .. } => HttpStatusAuthKind::Oauth,
+                    };
+                    let service_result = match auth {
+                        HttpAuth::OAuth { client } => {
+                            let config = StreamableHttpClientTransportConfig::with_uri(url.clone());
+                            let transport_client =
+                                StreamableHttpClientTransport::with_client(client.clone(), config);
+                            tokio::time::timeout_at(deadline, handler.serve(transport_client)).await
+                        }
+                        HttpAuth::None => {
+                            let config = StreamableHttpClientTransportConfig::with_uri(url.clone());
+                            let transport_client =
+                                StreamableHttpClientTransport::from_config(config);
+                            tokio::time::timeout_at(deadline, handler.serve(transport_client)).await
+                        }
+                        HttpAuth::Bearer { token } => {
+                            let config = StreamableHttpClientTransportConfig::with_uri(url.clone())
+                                .auth_header(token.clone());
+                            let transport_client =
+                                StreamableHttpClientTransport::from_config(config);
+                            tokio::time::timeout_at(deadline, handler.serve(transport_client)).await
+                        }
+                    };
+                    let service = match service_result {
+                        Ok(Ok(service)) => service,
+                        Ok(Err(err)) => {
+                            statuses.push(ToolServerStatus {
+                                name: name.clone(),
+                                transport: transport_kind,
+                                state: ConnectState::Failed {
+                                    reason: format_http_init_error(name, auth_kind, &err),
+                                },
+                            });
+                            continue;
+                        }
+                        Err(_) => {
+                            statuses.push(ToolServerStatus {
+                                name: name.clone(),
+                                transport: transport_kind,
+                                state: ConnectState::Failed {
+                                    reason: format!("connect timed out while initializing {name}"),
+                                },
+                            });
+                            continue;
+                        }
+                    };
                     let tools = match tokio::time::timeout_at(deadline, service.list_all_tools())
                         .await
                     {
@@ -826,7 +847,7 @@ impl ToolRegistry {
                                 name: name.clone(),
                                 transport: transport_kind,
                                 state: ConnectState::Failed {
-                                    reason: format!("list_tools on {name}: {err}"),
+                                    reason: format_http_connect_error(name, auth_kind, &err),
                                 },
                             });
                             continue;
@@ -1447,6 +1468,113 @@ fn input_schema_value(arc: Arc<rmcp::model::JsonObject>) -> rmcp::model::JsonObj
     Arc::try_unwrap(arc).unwrap_or_else(|a| (*a).clone())
 }
 
+fn sanitize_remote_status_text(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_control()).collect()
+}
+
+fn format_http_connect_error(
+    name: &str,
+    auth_kind: HttpStatusAuthKind,
+    err: &ServiceError,
+) -> String {
+    match streamable_http_error(err) {
+        Some(StreamableHttpError::AuthRequired(AuthRequiredError { .. }))
+            if matches!(auth_kind, HttpStatusAuthKind::Oauth) =>
+        {
+            format!("oauth authorization required for {name}; open /mcp to authorize")
+        }
+        Some(StreamableHttpError::InsufficientScope(InsufficientScopeError {
+            required_scope,
+            ..
+        })) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => match required_scope.as_deref() {
+            Some(scope) if !scope.is_empty() => format!(
+                "oauth scope upgrade required for {name} (missing scope: {}); open /mcp to re-authorize",
+                sanitize_remote_status_text(scope)
+            ),
+            _ => format!("oauth scope upgrade required for {name}; open /mcp to re-authorize"),
+        },
+        Some(StreamableHttpError::Auth(
+            rmcp::transport::auth::AuthError::AuthorizationRequired,
+        )) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+            format!("oauth authorization required for {name}; open /mcp to authorize")
+        }
+        Some(StreamableHttpError::Auth(rmcp::transport::auth::AuthError::TokenRefreshFailed(
+            message,
+        ))) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+            format!(
+                "oauth token refresh failed for {name}: {}",
+                sanitize_remote_status_text(message)
+            )
+        }
+        Some(StreamableHttpError::Auth(other)) => {
+            format!("init MCP session with {name}: {other}")
+        }
+        _ => format!("init MCP session with {name}: {err}"),
+    }
+}
+
+fn format_http_init_error(
+    name: &str,
+    auth_kind: HttpStatusAuthKind,
+    err: &rmcp::service::ClientInitializeError,
+) -> String {
+    match err {
+        rmcp::service::ClientInitializeError::TransportError { error, .. } => {
+            match error
+                .error
+                .downcast_ref::<StreamableHttpError<reqwest::Error>>()
+            {
+                Some(StreamableHttpError::AuthRequired(AuthRequiredError { .. }))
+                    if matches!(auth_kind, HttpStatusAuthKind::Oauth) =>
+                {
+                    format!("oauth authorization required for {name}; open /mcp to authorize")
+                }
+                Some(StreamableHttpError::InsufficientScope(InsufficientScopeError {
+                    required_scope,
+                    ..
+                })) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+                    match required_scope.as_deref() {
+                        Some(scope) if !scope.is_empty() => format!(
+                            "oauth scope upgrade required for {name} (missing scope: {}); open /mcp to re-authorize",
+                            sanitize_remote_status_text(scope)
+                        ),
+                        _ => format!(
+                            "oauth scope upgrade required for {name}; open /mcp to re-authorize"
+                        ),
+                    }
+                }
+                Some(StreamableHttpError::Auth(
+                    rmcp::transport::auth::AuthError::AuthorizationRequired,
+                )) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+                    format!("oauth authorization required for {name}; open /mcp to authorize")
+                }
+                Some(StreamableHttpError::Auth(
+                    rmcp::transport::auth::AuthError::TokenRefreshFailed(message),
+                )) if matches!(auth_kind, HttpStatusAuthKind::Oauth) => {
+                    format!(
+                        "oauth token refresh failed for {name}: {}",
+                        sanitize_remote_status_text(message)
+                    )
+                }
+                Some(StreamableHttpError::Auth(other)) => {
+                    format!("init MCP session with {name}: {other}")
+                }
+                _ => format!("init MCP session with {name}: {err}"),
+            }
+        }
+        _ => format!("init MCP session with {name}: {err}"),
+    }
+}
+
+fn streamable_http_error(err: &ServiceError) -> Option<&StreamableHttpError<reqwest::Error>> {
+    match err {
+        ServiceError::TransportSend(dynamic) => dynamic
+            .error
+            .downcast_ref::<StreamableHttpError<reqwest::Error>>(),
+        _ => None,
+    }
+}
+
 fn discriminant(v: &Value) -> &'static str {
     match v {
         Value::Null => "null",
@@ -1727,7 +1855,90 @@ mod lazy_bash_tests {
 }
 
 #[cfg(test)]
+mod http_connect_error_tests {
+    use super::*;
+    use rmcp::transport::DynamicTransportError;
+
+    fn service_error(err: StreamableHttpError<reqwest::Error>) -> ServiceError {
+        ServiceError::TransportSend(DynamicTransportError::from_parts(
+            "streamable-http",
+            std::any::TypeId::of::<StreamableHttpClientTransport<reqwest::Client>>(),
+            Box::new(err),
+        ))
+    }
+
+    fn init_error(
+        err: StreamableHttpError<reqwest::Error>,
+    ) -> rmcp::service::ClientInitializeError {
+        rmcp::service::ClientInitializeError::transport::<
+            StreamableHttpClientTransport<reqwest::Client>,
+        >(err, "initialize")
+    }
+
+    #[test]
+    fn auth_required_error_gets_actionable_message() {
+        let err = service_error(StreamableHttpError::AuthRequired(AuthRequiredError::new(
+            "auth-required".into(),
+        )));
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Oauth, &err);
+        assert_eq!(
+            rendered,
+            "oauth authorization required for remote; open /mcp to authorize"
+        );
+    }
+
+    #[test]
+    fn insufficient_scope_error_names_missing_scope() {
+        let err = service_error(StreamableHttpError::InsufficientScope(
+            InsufficientScopeError::new("insufficient-scope".into(), Some("mcp.read".into())),
+        ));
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Oauth, &err);
+        assert_eq!(
+            rendered,
+            "oauth scope upgrade required for remote (missing scope: mcp.read); open /mcp to re-authorize"
+        );
+    }
+
+    #[test]
+    fn refresh_failure_is_preserved() {
+        let err = service_error(StreamableHttpError::Auth(
+            rmcp::transport::auth::AuthError::TokenRefreshFailed(
+                "token endpoint rejected refresh".into(),
+            ),
+        ));
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Oauth, &err);
+        assert_eq!(
+            rendered,
+            "oauth token refresh failed for remote: token endpoint rejected refresh"
+        );
+    }
+
+    #[test]
+    fn init_auth_required_error_gets_actionable_message() {
+        let err = init_error(StreamableHttpError::AuthRequired(AuthRequiredError::new(
+            "auth-required".into(),
+        )));
+        let rendered = format_http_init_error("remote", HttpStatusAuthKind::Oauth, &err);
+        assert_eq!(
+            rendered,
+            "oauth authorization required for remote; open /mcp to authorize"
+        );
+    }
+
+    #[test]
+    fn bearer_auth_errors_do_not_get_oauth_guidance() {
+        let err = service_error(StreamableHttpError::AuthRequired(AuthRequiredError::new(
+            "auth-required".into(),
+        )));
+        let rendered = format_http_connect_error("remote", HttpStatusAuthKind::Bearer, &err);
+        assert!(rendered.contains("init MCP session with remote"));
+        assert!(!rendered.contains("open /mcp to authorize"));
+    }
+}
+
+#[cfg(test)]
 mod resource_handler_tests {
+
     use super::*;
     use rmcp::model::ResourceUpdatedNotificationParam;
     use tokio::sync::mpsc;

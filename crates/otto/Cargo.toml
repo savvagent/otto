@@ -102,6 +102,8 @@ tui-textarea.workspace = true
 ratatui-explorer.workspace = true
 keyring.workspace = true
 reqwest.workspace = true
+axum = { workspace = true, features = ["query"] }
+rmcp.workspace = true
 self_update.workspace = true
 semver.workspace = true
 # user-defined slash commands
@@ -116,6 +118,7 @@ zip.workspace = true
 sha2.workspace = true
 hex.workspace = true
 which.workspace = true
+uuid.workspace = true
 # `/plugins install` stages downloaded plugin.toml + plugin.wasm in a temp
 # dir before the trust modal moves it into `~/.otto/plugins/<id>/`.
 tempfile = "3"
