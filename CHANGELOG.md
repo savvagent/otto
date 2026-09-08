@@ -8,6 +8,16 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.26.3 - 2026-09-08
+
+### Fixed
+
+- `otto-plugin-wasm`'s `wasmtime::component::bindgen!` macros no longer reference a sibling
+  `../otto-plugin-wit/wit` path, which made the crate fail to compile whenever Cargo verified it
+  in isolation (e.g. `cargo package --workspace`, as run by the `release-plz` automation). The
+  crate now vendors its own copy of the `.wit` files, kept in sync with `otto-plugin-wit`'s
+  canonical copy via a build-script check during normal workspace builds. (#78)
+
 ## 0.26.2 - 2026-09-08
 
 ### Fixed
