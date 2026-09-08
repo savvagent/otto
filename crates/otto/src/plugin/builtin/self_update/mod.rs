@@ -695,14 +695,16 @@ async fn run_check_once(
     // release) but only installs when the live tag differs from `failed`.
     // This avoids hammering a known-broken release while still recovering
     // automatically once a new release lands.
-    if matches!(
-        state.lock().map(|g| g.clone()),
-        Ok(UpdateState::Disabled | UpdateState::Installing { .. } | UpdateState::Updated { .. })
-    ) {
-        return;
-    }
+    let effective_pre_state = match state.lock().map(|g| g.clone()) {
+        Ok(UpdateState::Disabled | UpdateState::Installing { .. } | UpdateState::Updated { .. }) => {
+            return;
+        }
+        Ok(current @ UpdateState::InstallFailed { .. }) => current,
+        Ok(_) => pre_state,
+        Err(_) => return,
+    };
 
-    let (publish, pending_install) = match (&pre_state, &result) {
+    let (publish, pending_install) = match (&effective_pre_state, &result) {
         // Same-tag install failure: keep the failure context, do nothing.
         (
             UpdateState::InstallFailed { latest: failed, .. },
@@ -2042,6 +2044,59 @@ mod tests {
         assert_eq!(fetcher.invocation_count(), 1);
         assert_eq!(installer.invocation_count(), 0);
         assert!(matches!(*state.lock().unwrap(), UpdateState::Updated { .. }));
+    }
+
+    #[tokio::test]
+    async fn run_check_once_preserves_concurrent_install_failed_for_same_tag() {
+        let fetch_release = Arc::new(tokio::sync::Notify::new());
+        let fetch_parked = Arc::new(tokio::sync::Notify::new());
+        let fetcher = Arc::new(BlockingFetcher::new(
+            "v99.99.99",
+            Arc::clone(&fetch_release),
+            Arc::clone(&fetch_parked),
+        ));
+        let installer = Arc::new(StubInstaller::ok());
+        let state = Arc::new(Mutex::new(UpdateState::Unknown));
+
+        let run_task = {
+            let state = Arc::clone(&state);
+            let fetcher = fetcher.clone() as Arc<dyn ReleasesFetcher>;
+            let installer = installer.clone() as Arc<dyn Installer>;
+            tokio::spawn(async move {
+                run_check_once(
+                    &state,
+                    &fetcher,
+                    &installer,
+                    InstallMethod::Installed,
+                    env!("CARGO_PKG_VERSION"),
+                    None,
+                    false,
+                    UpdateState::Unknown,
+                )
+                .await;
+            })
+        };
+
+        fetch_parked.notified().await;
+        *state.lock().unwrap() = UpdateState::InstallFailed {
+            current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            latest: Version::parse("99.99.99").unwrap(),
+            error: "boom".into(),
+        };
+        fetch_release.notify_one();
+        run_task.await.unwrap();
+
+        assert_eq!(fetcher.invocation_count(), 1);
+        assert_eq!(installer.invocation_count(), 0);
+        match &*state.lock().unwrap() {
+            UpdateState::InstallFailed {
+                latest, error, ..
+            } => {
+                assert_eq!(latest.to_string(), "99.99.99");
+                assert_eq!(error, "boom");
+            }
+            other => panic!("expected InstallFailed state, got {other:?}"),
+        }
     }
 
     #[tokio::test(start_paused = true)]
