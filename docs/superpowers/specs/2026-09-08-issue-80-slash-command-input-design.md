@@ -93,3 +93,4 @@ When a user opens the `/` command palette, the prompt input should live-preview 
 
 - The palette preview uses `PrefillInput`, which also updates the egui pending-prefill bridge. That is desired for parity, but tests should confirm the open/close behavior does not leave stale prompt text behind after immediate-run commands.
 - The palette-specific prompt preview is now coupled to the order in which `open_screen` seeds the prompt and pushes the screen. A regression test should cover the initial open path directly, not only `PaletteScreen::on_key`.
+- Effect ordering matters for prompt cleanup: tests should pin the `CloseScreen`/`PrefillInput`/`RunSlash` sequencing for `Esc`, empty-result `Enter`, and immediate-run `Enter` so stale preview text cannot regress silently.
