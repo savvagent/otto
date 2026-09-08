@@ -3017,6 +3017,7 @@ mod tests {
         use crate::plugin::manifests::Indexes;
         use crate::plugin::register_builtins;
         use crate::plugin::registry::PluginRegistry;
+        use otto_plugin::KeyCodePortable;
         use std::collections::BTreeMap;
         use std::sync::Arc;
 
@@ -3060,17 +3061,57 @@ mod tests {
         let prompt_lines = app.input_textarea.lines();
         let first_line = prompt_lines.first().map(|s| s.as_str()).unwrap_or("");
 
-        // The first command should be a slash command (starts with /),
-        // and it should match the palette's first highlighted command.
-        assert!(
-            first_line.starts_with('/'),
-            "prompt should be prefilled with a slash command, got: '{first_line}'"
+        // Build the expected first command by sorting the slash commands alphabetically.
+        let idx = app.plugin_indexes.as_ref().unwrap().read().await;
+        let mut entries: Vec<String> = idx.slash.keys().cloned().collect();
+        drop(idx);
+        entries.sort();
+
+        let expected_first_command = format!("/{}", entries[0]);
+
+        // The prompt should equal the expected first command, not just start with /.
+        assert_eq!(
+            first_line, expected_first_command,
+            "prompt should equal the first highlighted command, got: '{first_line}' but expected: '{expected_first_command}'"
         );
 
         // Verify the screen was pushed to the stack.
-        let (_, _) = app
+        let screen_ref = app
             .screen_stack
             .top()
             .expect("palette screen should be on the stack");
+        assert_eq!(screen_ref.0.id(), "palette");
+
+        // Now test the immediate-run Enter path: press Enter to execute a no-arg command
+        // and verify that stale preview text is cleared afterward.
+
+        // Simulate pressing Enter on the palette screen.
+        let (screen, _) = app
+            .screen_stack
+            .top_mut()
+            .expect("palette screen should be on the stack");
+
+        let key_event = otto_plugin::KeyEventPortable {
+            code: KeyCodePortable::Enter,
+            modifiers: Default::default(),
+        };
+        let enter_effects = screen
+            .on_key(key_event)
+            .await
+            .expect("screen should handle Enter");
+
+        // Apply the Enter effects (which should include CloseScreen and PrefillInput with empty text).
+        apply_effects(&mut app, enter_effects)
+            .await
+            .expect("apply Enter effects");
+
+        // Verify that the preview text is cleared (the prompt should be empty or only whitespace).
+        let cleared_lines = app.input_textarea.lines();
+        let cleared_first_line = cleared_lines.first().map(|s| s.as_str()).unwrap_or("");
+
+        assert_eq!(
+            cleared_first_line, "",
+            "prompt preview should be cleared after immediate-run Enter, but got: '{cleared_first_line}'"
+        );
     }
 }
