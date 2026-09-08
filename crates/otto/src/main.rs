@@ -87,6 +87,17 @@ fn global_quit_allowed(top_screen_id: Option<&str>) -> bool {
     top_screen_id != Some("splash")
 }
 
+fn connect_rejected_note_key(
+    kind: otto_protocol::ErrorKind,
+    api_key_required: bool,
+) -> &'static str {
+    if api_key_required && kind == otto_protocol::ErrorKind::Authentication {
+        "notes.connect-rejected-keyed"
+    } else {
+        "notes.connect-failed"
+    }
+}
+
 /// Worker → main-loop messages.
 pub(crate) enum WorkerMsg {
     Event(TurnEvent),
@@ -1918,10 +1929,14 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot, 
             // falsely-healthy provider.
             tracing::warn!(provider = %pending.id.as_str(), reason = %reason,
                 "apply_pending_pool_add: provider key rejected");
-            let _ = kind;
             if show_notes {
                 app.push_note(
-                    rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string(),
+                    rust_i18n::t!(
+                        connect_rejected_note_key(kind, spec.api_key_required),
+                        id = spec.id,
+                        err = reason
+                    )
+                    .to_string(),
                 );
             }
             return;
@@ -2699,9 +2714,13 @@ async fn perform_connect(
             // reason instead of the misleading "key not found" message —
             // this is a direct response to a user-initiated /connect, so
             // always shown (not gated by startup.verbose).
-            let _ = kind;
             app.push_note(
-                rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string(),
+                rust_i18n::t!(
+                    connect_rejected_note_key(kind, spec.api_key_required),
+                    id = spec.id,
+                    err = reason
+                )
+                .to_string(),
             );
             return;
         }
@@ -4613,6 +4632,28 @@ mod connect_provider_selector_tests {
         assert!(connect.is_none());
         assert!(matches!(app.input_mode, InputMode::SelectingProvider));
         assert!(app.pending_provider.is_none());
+    }
+}
+
+#[cfg(test)]
+mod connect_rejected_note_key_tests {
+    use super::connect_rejected_note_key;
+    use otto_protocol::ErrorKind;
+
+    #[test]
+    fn keyed_authentication_rejection_uses_rekey_note() {
+        assert_eq!(
+            connect_rejected_note_key(ErrorKind::Authentication, true),
+            "notes.connect-rejected-keyed"
+        );
+    }
+
+    #[test]
+    fn keyed_non_authentication_rejection_uses_generic_note() {
+        assert_eq!(
+            connect_rejected_note_key(ErrorKind::RateLimited, true),
+            "notes.connect-failed"
+        );
     }
 }
 
