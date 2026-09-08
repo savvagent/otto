@@ -353,14 +353,16 @@ impl Plugin for SelfUpdatePlugin {
             | UpdateState::CheckFailed
             | UpdateState::Available { .. }
             | UpdateState::InstallFailed { .. } => {
-                let live = check_for_update(
-                    env!("CARGO_PKG_VERSION"),
-                    self.install_method,
-                    self.fetcher.as_ref(),
-                )
-                .await;
-                publish_slash_check_state(&self.state, &live);
-                match live {
+                let effective = publish_live_check_state(
+                    &self.state,
+                    check_for_update(
+                        env!("CARGO_PKG_VERSION"),
+                        self.install_method,
+                        self.fetcher.as_ref(),
+                    )
+                    .await,
+                );
+                match effective {
                     UpdateState::Available { current, latest } => Action::Install(current, latest),
                     UpdateState::Disabled => {
                         Action::Note(rust_i18n::t!("self-update.note-disabled").to_string())
@@ -460,7 +462,7 @@ impl Plugin for SelfUpdatePlugin {
                     &fetcher,
                     &installer,
                     install_method,
-                    &current_version,
+                    env!("CARGO_PKG_VERSION"),
                     cache_path.as_deref(),
                     is_first_tick,
                     pre_state,
@@ -526,23 +528,14 @@ enum Action {
     Install(semver::Version, semver::Version),
 }
 
-fn publish_slash_check_state(state: &Arc<Mutex<UpdateState>>, live: &UpdateState) {
-    let published = match live {
-        UpdateState::Available { current, latest } => Some(UpdateState::Available {
-            current: current.clone(),
-            latest: latest.clone(),
-        }),
-        UpdateState::Disabled => Some(UpdateState::Disabled),
-        UpdateState::UpToDate => Some(UpdateState::UpToDate),
-        UpdateState::CheckFailed => Some(UpdateState::CheckFailed),
-        UpdateState::Unknown
-        | UpdateState::Installing { .. }
-        | UpdateState::Updated { .. }
-        | UpdateState::InstallFailed { .. } => None,
-    };
-
-    if let Some(next) = published {
-        *state.lock().unwrap() = next;
+fn publish_live_check_state(state: &Arc<Mutex<UpdateState>>, live: UpdateState) -> UpdateState {
+    let mut guard = state.lock().unwrap();
+    match &*guard {
+        UpdateState::Installing { .. } | UpdateState::Updated { .. } => guard.clone(),
+        _ => {
+            *guard = live.clone();
+            live
+        }
     }
 }
 
@@ -702,6 +695,13 @@ async fn run_check_once(
     // release) but only installs when the live tag differs from `failed`.
     // This avoids hammering a known-broken release while still recovering
     // automatically once a new release lands.
+    if matches!(
+        state.lock().map(|g| g.clone()),
+        Ok(UpdateState::Disabled | UpdateState::Installing { .. } | UpdateState::Updated { .. })
+    ) {
+        return;
+    }
+
     let (publish, pending_install) = match (&pre_state, &result) {
         // Same-tag install failure: keep the failure context, do nothing.
         (
@@ -831,6 +831,42 @@ mod tests {
     impl ReleasesFetcher for CountingFetcher {
         async fn latest_tag(&self) -> anyhow::Result<String> {
             self.invocations.fetch_add(1, Ordering::SeqCst);
+            Ok(self.tag.to_string())
+        }
+    }
+
+    struct BlockingFetcher {
+        tag: &'static str,
+        release: Arc<tokio::sync::Notify>,
+        parked: Arc<tokio::sync::Notify>,
+        invocations: AtomicUsize,
+    }
+
+    impl BlockingFetcher {
+        fn new(
+            tag: &'static str,
+            release: Arc<tokio::sync::Notify>,
+            parked: Arc<tokio::sync::Notify>,
+        ) -> Self {
+            Self {
+                tag,
+                release,
+                parked,
+                invocations: AtomicUsize::new(0),
+            }
+        }
+
+        fn invocation_count(&self) -> usize {
+            self.invocations.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl ReleasesFetcher for BlockingFetcher {
+        async fn latest_tag(&self) -> anyhow::Result<String> {
+            self.invocations.fetch_add(1, Ordering::SeqCst);
+            self.parked.notify_one();
+            self.release.notified().await;
             Ok(self.tag.to_string())
         }
     }
@@ -1365,6 +1401,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn slash_update_does_not_clobber_concurrent_installing_state() {
+        let fetch_release = Arc::new(tokio::sync::Notify::new());
+        let fetch_parked = Arc::new(tokio::sync::Notify::new());
+        let fetcher = Arc::new(BlockingFetcher::new(
+            "v99.99.99",
+            Arc::clone(&fetch_release),
+            Arc::clone(&fetch_parked),
+        ));
+        let installer = Arc::new(StubInstaller::ok());
+
+        let shared_state = Arc::new(Mutex::new(UpdateState::Unknown));
+        let mut plugin = {
+            let mut p = locked_plugin_with_state_and_fetcher(
+                fetcher.clone(),
+                installer.clone(),
+                UpdateState::Unknown,
+            );
+            p.state = Arc::clone(&shared_state);
+            p
+        };
+
+        let slash_task = tokio::spawn(async move { plugin.handle_slash("update", vec![]).await });
+
+        fetch_parked.notified().await;
+        *shared_state.lock().unwrap() = UpdateState::Installing {
+            current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            latest: Version::parse("88.0.0").unwrap(),
+        };
+        fetch_release.notify_one();
+
+        let effects = slash_task.await.unwrap().unwrap();
+
+        assert_eq!(fetcher.invocation_count(), 1);
+        assert_eq!(installer.invocation_count(), 0);
+        assert_eq!(effects.len(), 1);
+        assert!(matches!(
+            *shared_state.lock().unwrap(),
+            UpdateState::Installing { .. }
+        ));
+    }
+
+    #[tokio::test]
     async fn slash_update_when_check_failed_returns_check_failed_note() {
         let mut plugin = locked_plugin_with_state_and_fetcher(
             Arc::new(ErrorFetcher("network down")),
@@ -1842,7 +1920,6 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cache_path = tmp.path().join("update-check.json");
         let interval = Duration::from_millis(50);
-
         let release = Arc::new(tokio::sync::Notify::new());
         let parked = Arc::new(tokio::sync::Notify::new());
         let installer = Arc::new(BlockingStubInstaller::new(
@@ -1921,6 +1998,50 @@ mod tests {
             p.state()
         );
         assert_eq!(installer.invocation_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_check_once_does_not_clobber_concurrent_updated_state() {
+        let fetch_release = Arc::new(tokio::sync::Notify::new());
+        let fetch_parked = Arc::new(tokio::sync::Notify::new());
+        let fetcher = Arc::new(BlockingFetcher::new(
+            "v99.99.99",
+            Arc::clone(&fetch_release),
+            Arc::clone(&fetch_parked),
+        ));
+        let installer = Arc::new(StubInstaller::ok());
+        let state = Arc::new(Mutex::new(UpdateState::Unknown));
+
+        let run_task = {
+            let state = Arc::clone(&state);
+            let fetcher = fetcher.clone() as Arc<dyn ReleasesFetcher>;
+            let installer = installer.clone() as Arc<dyn Installer>;
+            tokio::spawn(async move {
+                run_check_once(
+                    &state,
+                    &fetcher,
+                    &installer,
+                    InstallMethod::Installed,
+                    env!("CARGO_PKG_VERSION"),
+                    None,
+                    false,
+                    UpdateState::Unknown,
+                )
+                .await;
+            })
+        };
+
+        fetch_parked.notified().await;
+        *state.lock().unwrap() = UpdateState::Updated {
+            from: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            to: Version::parse("77.0.0").unwrap(),
+        };
+        fetch_release.notify_one();
+        run_task.await.unwrap();
+
+        assert_eq!(fetcher.invocation_count(), 1);
+        assert_eq!(installer.invocation_count(), 0);
+        assert!(matches!(*state.lock().unwrap(), UpdateState::Updated { .. }));
     }
 
     #[tokio::test(start_paused = true)]
