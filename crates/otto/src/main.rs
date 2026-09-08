@@ -4544,36 +4544,6 @@ mod model_validation_tests {
     }
 
     #[test]
-    fn palette_shortcut_requires_empty_prompt() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-        let slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
-        assert!(super::should_route_home_keybinding(
-            &slash,
-            &[String::new()]
-        ));
-        assert!(!super::should_route_home_keybinding(
-            &slash,
-            &[String::from("draft")]
-        ));
-        assert!(!super::should_route_home_keybinding(
-            &slash,
-            &[String::from(""), String::from("still editing")]
-        ));
-    }
-
-    #[test]
-    fn non_palette_keys_still_route_with_prompt_text() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-        let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
-        assert!(super::should_route_home_keybinding(
-            &ctrl_p,
-            &[String::from("draft")]
-        ));
-    }
-
-    #[test]
     fn resolve_network_error_proceeds_with_warning() {
         use crate::test_helpers::HOME_LOCK;
         let _lock = HOME_LOCK.lock().unwrap();
@@ -4589,6 +4559,38 @@ mod model_validation_tests {
             }
             other => panic!("expected Proceed with warning, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod palette_shortcut_tests {
+    use super::should_route_home_keybinding;
+
+    #[test]
+    fn palette_shortcut_requires_empty_prompt() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        assert!(should_route_home_keybinding(&slash, &[String::new()]));
+        assert!(!should_route_home_keybinding(
+            &slash,
+            &[String::from("draft")]
+        ));
+        assert!(!should_route_home_keybinding(
+            &slash,
+            &[String::from(""), String::from("still editing")]
+        ));
+    }
+
+    #[test]
+    fn non_palette_keys_still_route_with_prompt_text() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(should_route_home_keybinding(
+            &ctrl_p,
+            &[String::from("draft")]
+        ));
     }
 }
 
