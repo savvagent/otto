@@ -367,6 +367,9 @@ impl Plugin for SelfUpdatePlugin {
                     UpdateState::Disabled => {
                         Action::Note(rust_i18n::t!("self-update.note-disabled").to_string())
                     }
+                    UpdateState::InstallFailed { error, .. } => Action::Note(
+                        rust_i18n::t!("self-update.note-update-fail", err = error).to_string(),
+                    ),
                     UpdateState::UpToDate => {
                         Action::Note(rust_i18n::t!("self-update.note-no-update").to_string())
                     }
@@ -384,7 +387,7 @@ impl Plugin for SelfUpdatePlugin {
                         rust_i18n::t!("self-update.note-update-ok", latest = to.to_string())
                             .to_string(),
                     ),
-                    UpdateState::Unknown | UpdateState::InstallFailed { .. } => {
+                    UpdateState::Unknown => {
                         Action::Note(rust_i18n::t!("self-update.note-checking").to_string())
                     }
                 }
@@ -530,8 +533,13 @@ enum Action {
 
 fn publish_live_check_state(state: &Arc<Mutex<UpdateState>>, live: UpdateState) -> UpdateState {
     let mut guard = state.lock().unwrap();
-    match &*guard {
-        UpdateState::Installing { .. } | UpdateState::Updated { .. } => guard.clone(),
+    match (&*guard, &live) {
+        (UpdateState::Installing { .. }, _) | (UpdateState::Updated { .. }, _) => guard.clone(),
+        (
+            UpdateState::InstallFailed { latest: failed, .. },
+            UpdateState::Available { latest: new, .. },
+        ) if failed == new => guard.clone(),
+        (UpdateState::InstallFailed { .. }, UpdateState::CheckFailed) => guard.clone(),
         _ => {
             *guard = live.clone();
             live
@@ -1442,6 +1450,54 @@ mod tests {
             *shared_state.lock().unwrap(),
             UpdateState::Installing { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn slash_update_preserves_concurrent_install_failed_for_same_tag() {
+        let fetch_release = Arc::new(tokio::sync::Notify::new());
+        let fetch_parked = Arc::new(tokio::sync::Notify::new());
+        let fetcher = Arc::new(BlockingFetcher::new(
+            "v99.99.99",
+            Arc::clone(&fetch_release),
+            Arc::clone(&fetch_parked),
+        ));
+        let installer = Arc::new(StubInstaller::ok());
+
+        let shared_state = Arc::new(Mutex::new(UpdateState::Unknown));
+        let mut plugin = {
+            let mut p = locked_plugin_with_state_and_fetcher(
+                fetcher.clone(),
+                installer.clone(),
+                UpdateState::Unknown,
+            );
+            p.state = Arc::clone(&shared_state);
+            p
+        };
+
+        let slash_task = tokio::spawn(async move { plugin.handle_slash("update", vec![]).await });
+
+        fetch_parked.notified().await;
+        *shared_state.lock().unwrap() = UpdateState::InstallFailed {
+            current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+            latest: Version::parse("99.99.99").unwrap(),
+            error: "boom".into(),
+        };
+        fetch_release.notify_one();
+
+        let effects = slash_task.await.unwrap().unwrap();
+
+        assert_eq!(fetcher.invocation_count(), 1);
+        assert_eq!(installer.invocation_count(), 0);
+        assert_eq!(effects.len(), 1);
+        match &*shared_state.lock().unwrap() {
+            UpdateState::InstallFailed {
+                latest, error, ..
+            } => {
+                assert_eq!(latest.to_string(), "99.99.99");
+                assert_eq!(error, "boom");
+            }
+            other => panic!("expected InstallFailed state, got {other:?}"),
+        }
     }
 
     #[tokio::test]
