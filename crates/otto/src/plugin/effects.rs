@@ -3104,36 +3104,42 @@ mod tests {
             .expect("palette screen should be on the stack");
         assert_eq!(screen_ref.0.id(), "palette");
 
-        // Now test the immediate-run Enter path: press Enter to execute a no-arg command
-        // and verify that stale preview text is cleared afterward.
-
-        // Simulate pressing Enter on the palette screen.
+        // Now test the close path: press Esc on the top (palette) screen. It
+        // emits CloseScreen + PrefillInput{""}, which must pop the palette AND
+        // clear the seeded preview from the prompt. This doubles as the
+        // app-level Esc-close regression without dispatching a live slash
+        // against the alphabetically-first builtin (which would couple this
+        // test to that builtin being no-arg and dispatching real effects).
         let (screen, _) = app
             .screen_stack
             .top_mut()
             .expect("palette screen should be on the stack");
 
-        let key_event = otto_plugin::KeyEventPortable {
-            code: KeyCodePortable::Enter,
+        let esc_event = otto_plugin::KeyEventPortable {
+            code: KeyCodePortable::Esc,
             modifiers: Default::default(),
         };
-        let enter_effects = screen
-            .on_key(key_event)
+        let esc_effects = screen
+            .on_key(esc_event)
             .await
-            .expect("screen should handle Enter");
+            .expect("screen should handle Esc");
 
-        // Apply the Enter effects (which should include CloseScreen and PrefillInput with empty text).
-        apply_effects(&mut app, enter_effects)
+        // Apply the Esc effects (CloseScreen + PrefillInput with empty text).
+        apply_effects(&mut app, esc_effects)
             .await
-            .expect("apply Enter effects");
+            .expect("apply Esc effects");
 
-        // Verify that the preview text is cleared (the prompt should be empty or only whitespace).
+        // The palette screen is popped and the seeded preview is cleared.
+        assert!(
+            app.screen_stack.is_empty(),
+            "Esc on the palette must pop the palette screen"
+        );
         let cleared_lines = app.input_textarea.lines();
         let cleared_first_line = cleared_lines.first().map(|s| s.as_str()).unwrap_or("");
 
         assert_eq!(
             cleared_first_line, "",
-            "prompt preview should be cleared after immediate-run Enter, but got: '{cleared_first_line}'"
+            "prompt preview should be cleared after Esc, but got: '{cleared_first_line}'"
         );
     }
 
