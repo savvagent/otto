@@ -64,6 +64,7 @@ None. This is an internal TUI/GUI behavior change using existing plugin effects.
 ## Premise corrections
 
 - The current palette is plugin-driven, not the old legacy `App::commands` / `palette_filter` state. The issue should therefore be fixed in the plugin command-palette flow (`command_palette/screen.rs` + `plugin/effects.rs`), not in the legacy helper methods in `app.rs`.
+- This spec is committed in the issue worktree on branch `otto/issue-80-slash-command-input`; the repo-relative path above is the durable reference the plan and PR will cite.
 
 ## Assumptions
 
