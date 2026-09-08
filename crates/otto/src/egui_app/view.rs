@@ -125,12 +125,21 @@ fn paint_screen_overlay(state: &mut OttoApp, ctx: &egui::Context, palette: &Pale
             }
             for overlay_line in &lines {
                 let job = styled_line_to_job(&overlay_line.line, palette, FONT_SIZE);
+                let splash_label = egui::Label::new(job)
+                    // The shared splash art is laid out as one logical row per
+                    // line. Letting egui wrap those labels would both distort
+                    // the logo and invalidate the splash overlay's row math.
+                    .wrap_mode(if id == "splash" {
+                        egui::TextWrapMode::Extend
+                    } else {
+                        ui.wrap_mode()
+                    });
                 if overlay_line.centered {
                     ui.horizontal_centered(|ui| {
-                        ui.label(job);
+                        ui.add(splash_label);
                     });
                 } else {
-                    ui.label(job);
+                    ui.add(splash_label);
                 }
             }
             if !tips.is_empty() {
