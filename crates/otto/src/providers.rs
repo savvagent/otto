@@ -32,7 +32,7 @@ use std::sync::OnceLock;
 /// startup so the `&'static str` shape is uniform across both
 /// populations. Keeping `Copy` lets the rest of the TUI hold `Option<&'static ProviderSpec>`
 /// fields without lifetime gymnastics.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderSpec {
     /// Stable identifier — keyring account name and `/connect` selector key.
     pub id: &'static str,
@@ -102,6 +102,49 @@ pub const PROVIDERS: &[ProviderSpec] = &[
 /// shapes — every reader already goes through [`effective_providers`].
 static EXTERNAL_PROVIDERS: OnceLock<Vec<ProviderSpec>> = OnceLock::new();
 
+/// Provider-count cutoff where the `/connect` modal should show its filter
+/// row even before the user types. At five-or-fewer entries we keep the
+/// existing uncluttered list-only modal; the sixth provider makes search
+/// discoverability worth the extra row.
+#[allow(dead_code)]
+pub const PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD: usize = 5;
+
+/// Case-insensitive subsequence match against a provider's stable id or
+/// display name. Empty queries match every provider so callers can always
+/// derive their visible list from `effective_providers()` through one helper.
+pub(crate) fn provider_matches_query(spec: &ProviderSpec, query: &str) -> bool {
+    provider_label_matches_query(spec.id, spec.display_name, query)
+}
+
+/// Case-insensitive subsequence match against a provider id/display-name pair.
+/// Shared by the legacy `SelectingProvider` modal and the plugin-owned
+/// `connect.picker` screen so `/connect` stays consistent whichever surface
+/// opens it.
+pub(crate) fn provider_label_matches_query(id: &str, display_name: &str, query: &str) -> bool {
+    query.is_empty()
+        || matches_case_insensitive_subsequence(id, query)
+        || matches_case_insensitive_subsequence(display_name, query)
+}
+
+fn matches_case_insensitive_subsequence(haystack: &str, needle: &str) -> bool {
+    let mut needle = needle.chars().flat_map(char::to_lowercase);
+    let mut current = needle.next();
+    if current.is_none() {
+        return true;
+    }
+
+    for hay in haystack.chars().flat_map(char::to_lowercase) {
+        if Some(hay) == current {
+            current = needle.next();
+            if current.is_none() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Install discovered wasm provider specs into the runtime catalog.
 ///
 /// Called once by the TUI bootstrap with the `[exports] provider-id`
@@ -158,5 +201,21 @@ mod tests {
         for (i, spec) in PROVIDERS.iter().enumerate() {
             assert_eq!(eff[i].id, spec.id);
         }
+    }
+
+    #[test]
+    fn provider_matches_query_checks_id_and_display_name() {
+        let openai = PROVIDERS
+            .iter()
+            .find(|spec| spec.id == "openai")
+            .expect("openai provider should exist");
+        let anthropic = PROVIDERS
+            .iter()
+            .find(|spec| spec.id == "anthropic")
+            .expect("anthropic provider should exist");
+
+        assert!(provider_matches_query(openai, "opn"));
+        assert!(provider_matches_query(anthropic, "cld"));
+        assert!(!provider_matches_query(openai, "zzz"));
     }
 }

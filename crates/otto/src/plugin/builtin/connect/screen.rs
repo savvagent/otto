@@ -6,6 +6,8 @@ use otto_plugin::{
     StyledSpan, TextMods, ThemeColor,
 };
 
+use crate::providers::{PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD, provider_label_matches_query};
+
 /// Provider picker screen.
 ///
 /// v0.9 ships an empty fallback list. PR 6 wires registered-provider
@@ -14,6 +16,9 @@ use otto_plugin::{
 #[derive(Debug)]
 pub struct ConnectPickerScreen {
     candidates: Vec<(ProviderId, String)>,
+    filtered: Vec<usize>,
+    query: String,
+    active_provider_id: Option<ProviderId>,
     cursor: usize,
 }
 
@@ -22,6 +27,9 @@ impl ConnectPickerScreen {
     pub fn new() -> Self {
         Self {
             candidates: vec![],
+            filtered: vec![],
+            query: String::new(),
+            active_provider_id: None,
             cursor: 0,
         }
     }
@@ -31,10 +39,83 @@ impl ConnectPickerScreen {
     /// picker. `ConnectPlugin` accumulates candidates via
     /// [`Plugin::on_event`] on [`otto_plugin::HostEvent::ProviderRegistered`].
     pub fn with_candidates(candidates: Vec<(ProviderId, String)>) -> Self {
+        Self::with_candidates_and_active(candidates, None)
+    }
+
+    pub fn with_candidates_and_active(
+        candidates: Vec<(ProviderId, String)>,
+        active_provider_id: Option<ProviderId>,
+    ) -> Self {
+        let filtered = (0..candidates.len()).collect();
+        let cursor = active_provider_id
+            .as_ref()
+            .and_then(|active| {
+                candidates
+                    .iter()
+                    .position(|(candidate_id, _)| candidate_id == active)
+            })
+            .unwrap_or(0);
         Self {
             candidates,
-            cursor: 0,
+            filtered,
+            query: String::new(),
+            active_provider_id,
+            cursor,
         }
+    }
+
+    fn refresh_filtered(&mut self) {
+        let previous = self.selected_candidate().map(|(id, _)| id.clone());
+        self.filtered = self
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, (id, display))| {
+                provider_label_matches_query(id.as_str(), display, &self.query)
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+
+        if self.query.is_empty() {
+            self.reset_cursor_for_active();
+            return;
+        }
+
+        if let Some(previous) = previous {
+            if let Some(idx) = self
+                .filtered
+                .iter()
+                .position(|candidate_idx| self.candidates[*candidate_idx].0 == previous)
+            {
+                self.cursor = idx;
+                return;
+            }
+        }
+
+        self.cursor = 0;
+    }
+
+    fn reset_cursor_for_active(&mut self) {
+        self.cursor = self
+            .active_provider_id
+            .as_ref()
+            .and_then(|active| {
+                self.filtered
+                    .iter()
+                    .position(|candidate_idx| &self.candidates[*candidate_idx].0 == active)
+            })
+            .unwrap_or(0);
+    }
+
+    fn selected_candidate(&self) -> Option<&(ProviderId, String)> {
+        self.filtered
+            .get(self.cursor)
+            .and_then(|idx| self.candidates.get(*idx))
+    }
+
+    fn show_query(&self) -> bool {
+        !self.query.is_empty()
+            || self.candidates.len() > PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD
     }
 }
 
@@ -65,42 +146,105 @@ impl Screen for ConnectPickerScreen {
                 },
             ];
         }
-        self.candidates
-            .iter()
-            .enumerate()
-            .map(|(i, (id, display))| {
-                let marker = if i == self.cursor { "▶ " } else { "  " };
-                StyledLine::plain(format!("{marker}{display}  ({})", id.as_str()))
-            })
-            .collect()
+        let mut lines = Vec::new();
+        if self.show_query() {
+            lines.push(StyledLine {
+                spans: vec![
+                    StyledSpan {
+                        text: "Search: ".into(),
+                        fg: Some(ThemeColor::Muted),
+                        bg: None,
+                        modifiers: TextMods::default(),
+                    },
+                    StyledSpan {
+                        text: if self.query.is_empty() {
+                            "type to filter".into()
+                        } else {
+                            self.query.clone()
+                        },
+                        fg: Some(if self.query.is_empty() {
+                            ThemeColor::Muted
+                        } else {
+                            ThemeColor::Fg
+                        }),
+                        bg: None,
+                        modifiers: TextMods::default(),
+                    },
+                ],
+            });
+        }
+
+        if self.filtered.is_empty() {
+            lines.push(StyledLine::plain(""));
+            lines.push(StyledLine {
+                spans: vec![
+                    StyledSpan {
+                        text: "No providers match".into(),
+                        fg: Some(ThemeColor::Muted),
+                        bg: None,
+                        modifiers: TextMods::default(),
+                    },
+                    StyledSpan {
+                        text: format!(" {}", self.query),
+                        fg: Some(ThemeColor::Accent),
+                        bg: None,
+                        modifiers: TextMods::default(),
+                    },
+                ],
+            });
+            return lines;
+        }
+
+        lines.extend(self.filtered.iter().enumerate().map(|(i, idx)| {
+            let (id, display) = &self.candidates[*idx];
+            let marker = if i == self.cursor { "▶ " } else { "  " };
+            StyledLine::plain(format!("{marker}{display}  ({})", id.as_str()))
+        }));
+        lines
     }
 
     async fn on_key(&mut self, key: KeyEventPortable) -> Result<Vec<Effect>, PluginError> {
         match key.code {
-            KeyCodePortable::Esc => Ok(vec![Effect::CloseScreen]),
+            KeyCodePortable::Esc if self.query.is_empty() => Ok(vec![Effect::CloseScreen]),
+            KeyCodePortable::Esc => {
+                self.query.clear();
+                self.refresh_filtered();
+                Ok(vec![])
+            }
             KeyCodePortable::Up => {
                 self.cursor = self.cursor.saturating_sub(1);
                 Ok(vec![])
             }
             KeyCodePortable::Down => {
-                let max = self.candidates.len().saturating_sub(1);
+                let max = self.filtered.len().saturating_sub(1);
                 if self.cursor < max {
                     self.cursor += 1;
                 }
                 Ok(vec![])
             }
+            KeyCodePortable::Backspace => {
+                self.query.pop();
+                self.refresh_filtered();
+                Ok(vec![])
+            }
+            KeyCodePortable::Char(c) => {
+                self.query.push(c);
+                self.refresh_filtered();
+                Ok(vec![])
+            }
             KeyCodePortable::Enter => {
-                let Some((pid, _)) = self.candidates.get(self.cursor).cloned() else {
-                    return Ok(vec![Effect::CloseScreen]);
+                let Some((pid, _)) = self.selected_candidate().cloned() else {
+                    return Ok(vec![]);
                 };
-                let name = if key.modifiers.alt {
-                    format!("connect {} --rekey", pid.as_str())
+                let name = format!("connect {}", pid.as_str());
+                let args = if key.modifiers.alt {
+                    vec!["--rekey".to_string()]
                 } else {
-                    format!("connect {}", pid.as_str())
+                    vec![]
                 };
                 Ok(vec![Effect::Stack(vec![
                     Effect::CloseScreen,
-                    Effect::RunSlash { name, args: vec![] },
+                    Effect::RunSlash { name, args },
                 ])])
             }
             _ => Ok(vec![]),
@@ -108,9 +252,10 @@ impl Screen for ConnectPickerScreen {
     }
 
     fn tips(&self) -> Vec<StyledLine> {
-        vec![StyledLine::plain(
-            rust_i18n::t!("picker.connect.tips").to_string(),
-        )]
+        vec![StyledLine::plain(format!(
+            "{} · type to filter · Backspace delete · Esc clear/cancel",
+            rust_i18n::t!("picker.connect.tips")
+        ))]
     }
 }
 
@@ -182,13 +327,166 @@ mod tests {
             Effect::Stack(children) => {
                 assert!(matches!(children[0], Effect::CloseScreen));
                 match &children[1] {
-                    Effect::RunSlash { name, .. } => {
-                        assert_eq!(name, "connect anthropic --rekey");
+                    Effect::RunSlash { name, args } => {
+                        assert_eq!(name, "connect anthropic");
+                        assert_eq!(args, &["--rekey"]);
                     }
                     _ => panic!(),
                 }
             }
             _ => panic!(),
         }
+    }
+
+    #[test]
+    fn short_list_hides_query_until_user_types() {
+        let s = ConnectPickerScreen::with_candidates(vec![
+            (ProviderId::new("anthropic").unwrap(), "Anthropic".into()),
+            (ProviderId::new("gemini").unwrap(), "Google Gemini".into()),
+        ]);
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        });
+        let joined = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!joined.contains("Search:"));
+    }
+
+    #[tokio::test]
+    async fn typing_filters_actual_connect_picker() {
+        let mut s = ConnectPickerScreen::with_candidates(vec![
+            (
+                ProviderId::new("anthropic").unwrap(),
+                "Anthropic (Claude)".into(),
+            ),
+            (ProviderId::new("gemini").unwrap(), "Google Gemini".into()),
+            (ProviderId::new("openai").unwrap(), "OpenAI".into()),
+            (ProviderId::new("deepseek").unwrap(), "DeepSeek".into()),
+            (ProviderId::new("local").unwrap(), "Ollama (local)".into()),
+        ]);
+        s.on_key(key(KeyCodePortable::Char('o'))).await.unwrap();
+        s.on_key(key(KeyCodePortable::Char('p'))).await.unwrap();
+        s.on_key(key(KeyCodePortable::Char('n'))).await.unwrap();
+
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        });
+        let joined = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("Search: "), "rendered: {joined}");
+        assert!(joined.contains("opn"), "rendered: {joined}");
+        assert!(joined.contains("OpenAI"), "rendered: {joined}");
+        assert!(!joined.contains("DeepSeek"), "rendered: {joined}");
+    }
+
+    #[tokio::test]
+    async fn enter_uses_filtered_candidate() {
+        let mut s = ConnectPickerScreen::with_candidates(vec![
+            (
+                ProviderId::new("anthropic").unwrap(),
+                "Anthropic (Claude)".into(),
+            ),
+            (ProviderId::new("openai").unwrap(), "OpenAI".into()),
+        ]);
+        s.on_key(key(KeyCodePortable::Char('o'))).await.unwrap();
+        s.on_key(key(KeyCodePortable::Char('p'))).await.unwrap();
+        s.on_key(key(KeyCodePortable::Char('n'))).await.unwrap();
+
+        let effs = s.on_key(key(KeyCodePortable::Enter)).await.unwrap();
+        match &effs[0] {
+            Effect::Stack(children) => match &children[1] {
+                Effect::RunSlash { name, .. } => assert_eq!(name, "connect openai"),
+                other => panic!("expected RunSlash, got {other:?}"),
+            },
+            other => panic!("expected Stack, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn no_match_keeps_picker_open() {
+        let mut s = ConnectPickerScreen::with_candidates(vec![(
+            ProviderId::new("anthropic").unwrap(),
+            "Anthropic".into(),
+        )]);
+        s.on_key(key(KeyCodePortable::Char('z'))).await.unwrap();
+
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        });
+        let joined = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("No providers match"), "rendered: {joined}");
+        assert!(
+            s.on_key(key(KeyCodePortable::Enter))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn escape_clears_query_before_closing() {
+        let mut s = ConnectPickerScreen::with_candidates(vec![(
+            ProviderId::new("anthropic").unwrap(),
+            "Anthropic".into(),
+        )]);
+        s.on_key(key(KeyCodePortable::Char('a'))).await.unwrap();
+
+        assert!(
+            s.on_key(key(KeyCodePortable::Esc))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let second = s.on_key(key(KeyCodePortable::Esc)).await.unwrap();
+        assert!(matches!(second.as_slice(), [Effect::CloseScreen]));
+    }
+
+    #[tokio::test]
+    async fn clearing_query_restores_active_provider() {
+        let mut s = ConnectPickerScreen::with_candidates_and_active(
+            vec![
+                (ProviderId::new("anthropic").unwrap(), "Anthropic".into()),
+                (ProviderId::new("openai").unwrap(), "OpenAI".into()),
+            ],
+            Some(ProviderId::new("openai").unwrap()),
+        );
+
+        assert_eq!(
+            s.selected_candidate().map(|(id, _)| id.as_str()),
+            Some("openai")
+        );
+
+        s.on_key(key(KeyCodePortable::Char('n'))).await.unwrap();
+        s.on_key(key(KeyCodePortable::Char('t'))).await.unwrap();
+        assert_eq!(
+            s.selected_candidate().map(|(id, _)| id.as_str()),
+            Some("anthropic")
+        );
+
+        s.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        s.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        assert_eq!(
+            s.selected_candidate().map(|(id, _)| id.as_str()),
+            Some("openai")
+        );
     }
 }

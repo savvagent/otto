@@ -214,18 +214,20 @@ async fn apply_one(app: &mut App, eff: Effect, depth: u8) -> Result<(), String> 
         Effect::PrefillInput { text } => app.prefill_input(text),
         Effect::Quit => app.request_quit(),
         Effect::PromptApiKey { provider_id } => {
-            // Resolve the id against the static provider catalog; the
-            // legacy `enter_api_key_for` flow needs the static spec for
-            // the env-var placeholder and the keyring write that follows
-            // on submit. Unknown ids fall back to a styled note rather
+            // Resolve the id against the runtime provider catalog; the
+            // selector/API-key flow needs the matched spec for the
+            // env-var placeholder and the keyring write that follows on
+            // submit. Unknown ids fall back to a styled note rather
             // than panicking so plugin authors can't crash the TUI by
-            // emitting `PromptApiKey` for a provider that's not in the
-            // built-in catalog yet.
+            // emitting `PromptApiKey` for an unknown provider id.
             match crate::providers::effective_providers()
                 .into_iter()
-                .position(|p| p.id == provider_id.as_str())
+                .find(|p| p.id == provider_id.as_str())
             {
-                Some(idx) => app.enter_api_key_for(idx),
+                Some(spec) => {
+                    let has_stored = matches!(crate::creds::load(spec.id), Ok(Some(_)));
+                    app.enter_api_key_for(spec, has_stored);
+                }
                 None => app.push_styled_note(otto_plugin::StyledLine::plain(
                     rust_i18n::t!(
                         "notes.prompt-api-key-unknown-provider",
@@ -675,14 +677,9 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         );
         (screen, layout)
     } else if id == "connect.picker" {
-        // Source the picker's candidate list from every enabled provider
-        // plugin's manifest, not from past `HostEvent::ProviderRegistered`
-        // notifications. That event only fires after a provider has
-        // successfully built a client — which for the credentialed
-        // providers (Anthropic/Gemini/OpenAI) happens only *after* the
-        // user has already connected them. Reading from manifests makes
-        // the picker list every provider that *could* be connected, which
-        // is what the picker is for.
+        // Source the picker's candidate list from the same runtime
+        // provider catalog as the rest of the app so built-ins and
+        // discovered external providers appear in one consistent order.
         let layout = {
             let plugin = handle.lock().await;
             let manifest = plugin.manifest();
@@ -695,10 +692,14 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
                 .layout
                 .clone()
         };
-        let candidates = build_connect_candidates(&reg).await;
+        let candidates = build_connect_candidates(&idx).await;
+        let active_provider_id = app
+            .active_provider_id
+            .and_then(|id| otto_plugin::ProviderId::new(id).ok());
         let screen: Box<dyn otto_plugin::Screen> = Box::new(
-            crate::plugin::builtin::connect::screen::ConnectPickerScreen::with_candidates(
+            crate::plugin::builtin::connect::screen::ConnectPickerScreen::with_candidates_and_active(
                 candidates,
+                active_provider_id,
             ),
         );
         (screen, layout)
@@ -853,27 +854,30 @@ fn format_chord(chord: &otto_plugin::ChordPortable) -> String {
     }
 }
 
-/// Build the `/connect` picker's candidate list by walking every enabled
-/// plugin's manifest and collecting its declared providers. Sorted
-/// alphabetically by display name so the picker has a stable ordering
-/// across runs.
+/// Build the `/connect` picker's candidate list from the shared runtime
+/// provider catalog, filtered to providers whose `connect <id>` slash is
+/// currently routable. This keeps the picker order aligned with the rest of
+/// the app without advertising disabled or not-yet-connectable providers.
 async fn build_connect_candidates(
-    reg_handle: &std::sync::Arc<tokio::sync::RwLock<crate::plugin::registry::PluginRegistry>>,
+    indexes: &std::sync::Arc<tokio::sync::RwLock<crate::plugin::manifests::Indexes>>,
 ) -> Vec<(otto_plugin::ProviderId, String)> {
-    let reg = reg_handle.read().await;
-    let mut out: Vec<(otto_plugin::ProviderId, String)> = Vec::new();
-    let ids: Vec<PluginId> = reg.enabled_ids().cloned().collect();
-    for id in ids {
-        let Some(handle) = reg.get(&id) else {
-            continue;
-        };
-        let manifest = handle.lock().await.manifest();
-        for spec in manifest.contributions.providers {
-            out.push((spec.id, spec.display_name));
-        }
-    }
-    out.sort_by(|a, b| a.1.cmp(&b.1));
-    out
+    let routable = {
+        let idx = indexes.read().await;
+        idx.slash
+            .keys()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>()
+    };
+
+    crate::providers::effective_providers()
+        .into_iter()
+        .filter(|spec| routable.contains(&format!("connect {}", spec.id)))
+        .filter_map(|spec| {
+            otto_plugin::ProviderId::new(spec.id)
+                .ok()
+                .map(|id| (id, spec.display_name.to_string()))
+        })
+        .collect()
 }
 
 /// Build one [`PluginRow`] per registered plugin by walking the registry's
@@ -2237,9 +2241,9 @@ mod tests {
     /// Pre-fix, the picker populated from `HostEvent::ProviderRegistered`
     /// — which only fires after a successful credentialed connect, so the
     /// keyless local provider was the only entry a fresh user ever saw.
-    /// Post-fix, `open_screen` builds the candidate list from every
-    /// enabled plugin's `contributions.providers`, so all four built-in
-    /// providers appear regardless of credential state.
+    /// Post-fix, `open_screen` builds the candidate list from the shared
+    /// runtime provider catalog, so every connectable provider appears
+    /// regardless of credential state.
     #[tokio::test]
     async fn connect_picker_lists_all_provider_plugins() {
         use crate::plugin::manifests::Indexes;
@@ -2264,7 +2268,12 @@ mod tests {
         );
         let registry = PluginRegistry::new(set);
         let registry = std::sync::Arc::new(tokio::sync::RwLock::new(registry));
-        let candidates = build_connect_candidates(&registry).await;
+        let indexes = {
+            let reg = registry.read().await;
+            Indexes::build(&reg).await.expect("indexes build")
+        };
+        let candidates =
+            build_connect_candidates(&std::sync::Arc::new(tokio::sync::RwLock::new(indexes))).await;
 
         let ids: std::collections::HashSet<String> = candidates
             .iter()

@@ -194,7 +194,7 @@ use serde_json::Value;
 use tui_textarea::{TextArea, WrapMode};
 
 use crate::prompt_history::PromptHistory;
-use crate::providers::{ProviderSpec, effective_providers};
+use crate::providers::{ProviderSpec, effective_providers, provider_matches_query};
 
 /// Minimum height (rows, including borders) for the main prompt input.
 /// 1 visible content row + 2 border rows.
@@ -568,7 +568,11 @@ pub struct App {
     pub connected: bool,
     /// Provider id currently in use (`anthropic`, `gemini`, …).
     pub active_provider_id: Option<&'static str>,
-    /// Cursor in the provider selector.
+    /// Live filter typed in the provider selector.
+    pub provider_query: String,
+    /// Cached provider-selector matches for the current query.
+    provider_matches: Vec<&'static ProviderSpec>,
+    /// Cursor in the provider selector's filtered results.
     pub provider_index: usize,
     /// Masked input for the API key (only populated during `EnteringApiKey`).
     pub api_key_textarea: TextArea<'static>,
@@ -969,6 +973,7 @@ impl App {
         let file_explorer = FileExplorerBuilder::build_with_theme(theme)
             .expect("failed to initialize file explorer");
 
+        let provider_matches = effective_providers();
         let mut app = Self {
             input_textarea: make_input_textarea(Vec::<String>::new()),
             pending_prefill: None,
@@ -989,6 +994,8 @@ impl App {
             palette_filter: String::new(),
             connected: false,
             active_provider_id: None,
+            provider_query: String::new(),
+            provider_matches,
             provider_index: 0,
             api_key_textarea: TextArea::default(),
             pending_provider: None,
@@ -1722,27 +1729,107 @@ impl App {
         }
     }
 
-    /// Open the `/connect` provider selector.
-    pub fn open_provider_selector(&mut self) {
+    /// Providers visible in the `/connect` selector after applying the
+    /// current fuzzy query. Empty query returns the full runtime catalog.
+    #[allow(dead_code)]
+    pub fn filtered_providers(&self) -> &[&'static ProviderSpec] {
+        &self.provider_matches
+    }
+
+    /// Update the selector query and keep the cursor inside the filtered
+    /// result set. Clearing the query restores the active provider when it is
+    /// visible, or the first provider otherwise.
+    #[allow(dead_code)]
+    pub fn set_provider_query<S: Into<String>>(&mut self, query: S) {
+        let previously_selected = self.selected_provider().map(|spec| spec.id);
+        self.provider_query = query.into();
+        self.refresh_provider_matches();
+        if self.provider_query.is_empty() {
+            self.reset_provider_index_for_active();
+            return;
+        }
+
+        if let Some(idx) = previously_selected.and_then(|id| {
+            self.filtered_providers()
+                .iter()
+                .position(|spec| spec.id == id)
+        }) {
+            self.provider_index = idx;
+            return;
+        }
+
+        self.provider_index = 0;
+    }
+
+    /// Clear the selector query and restore the active provider when visible.
+    #[allow(dead_code)]
+    pub fn clear_provider_query(&mut self) {
+        self.provider_query.clear();
+        self.refresh_provider_matches();
+        self.reset_provider_index_for_active();
+    }
+
+    /// Delete the last typed query character, preserving the same
+    /// clear-to-active/first behavior as other empty-query resets.
+    #[allow(dead_code)]
+    pub fn pop_provider_query(&mut self) {
+        if self.provider_query.is_empty() {
+            return;
+        }
+
+        let mut query = self.provider_query.clone();
+        query.pop();
+        self.set_provider_query(query);
+    }
+
+    /// Keep the filtered cursor in range. Empty filtered lists park the index
+    /// at 0 so later query edits restart from the first visible match.
+    #[allow(dead_code)]
+    pub fn clamp_provider_index(&mut self) {
+        let filtered_len = self.filtered_providers().len();
+        self.provider_index = match filtered_len {
+            0 => 0,
+            len => self.provider_index.min(len - 1),
+        };
+    }
+
+    /// The currently-highlighted provider in the filtered selector view.
+    #[allow(dead_code)]
+    pub fn selected_provider(&self) -> Option<&'static ProviderSpec> {
+        self.filtered_providers().get(self.provider_index).copied()
+    }
+
+    fn reset_provider_index_for_active(&mut self) {
         self.provider_index = self
             .active_provider_id
-            .and_then(|id| effective_providers().into_iter().position(|p| p.id == id))
+            .and_then(|id| {
+                self.filtered_providers()
+                    .iter()
+                    .position(|spec| spec.id == id)
+            })
             .unwrap_or(0);
+    }
+
+    fn refresh_provider_matches(&mut self) {
+        self.provider_matches = effective_providers()
+            .into_iter()
+            .filter(|spec| provider_matches_query(spec, &self.provider_query))
+            .collect();
+    }
+
+    /// Open the `/connect` provider selector.
+    pub fn open_provider_selector(&mut self) {
+        self.clear_provider_query();
         self.input_mode = InputMode::SelectingProvider;
     }
 
-    /// Advance from provider selection to API-key entry, or cancel if `idx` is OOB.
+    /// Enter API-key capture for the already-selected provider.
     ///
     /// The placeholder text reflects whether a credential is already
     /// stored in the keyring: when present, the user can press Enter on
     /// an empty input to reuse it; otherwise the placeholder just hints
     /// at the env-var name.
-    pub fn enter_api_key_for(&mut self, idx: usize) {
-        let Some(spec) = effective_providers().get(idx).copied() else {
-            self.input_mode = InputMode::Editing;
-            return;
-        };
-        let has_stored = matches!(crate::creds::load(spec.id), Ok(Some(_)));
+    pub fn enter_api_key_for(&mut self, spec: &'static ProviderSpec, has_stored: bool) {
         self.pending_provider = Some(spec);
         let mut ta = TextArea::default();
         ta.set_mask_char('●');
@@ -2519,6 +2606,153 @@ mod tests {
         app.palette_push_char('c');
         assert!(app.palette_pop_char());
         assert!(!app.palette_pop_char());
+    }
+
+    #[test]
+    fn provider_selector_empty_query_returns_full_provider_list() {
+        let app = fresh_app();
+
+        assert_eq!(
+            app.filtered_providers()
+                .iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>(),
+            effective_providers()
+                .into_iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn provider_selector_fuzzy_query_matches_provider_id_and_display_name() {
+        let mut app = fresh_app();
+
+        app.set_provider_query("opn");
+        assert_eq!(
+            app.filtered_providers()
+                .iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>(),
+            vec!["openai"],
+        );
+
+        app.set_provider_query("cld");
+        assert_eq!(
+            app.filtered_providers()
+                .iter()
+                .map(|spec| spec.id)
+                .collect::<Vec<_>>(),
+            vec!["anthropic"],
+        );
+    }
+
+    #[test]
+    fn provider_selector_query_with_no_matches_returns_empty_list() {
+        let mut app = fresh_app();
+
+        app.set_provider_query("zzz");
+
+        assert!(app.filtered_providers().is_empty());
+    }
+
+    #[test]
+    fn provider_selector_clamps_cursor_when_filtered_results_shrink() {
+        let mut app = fresh_app();
+
+        app.provider_index = effective_providers().len().saturating_sub(1);
+        app.set_provider_query("open");
+
+        assert_eq!(app.provider_index, 0);
+        assert_eq!(app.selected_provider().map(|spec| spec.id), Some("openai"));
+    }
+
+    #[test]
+    fn provider_selector_query_reset_selects_first_match_when_current_selection_drops_out() {
+        let mut app = fresh_app();
+        app.provider_index = 2;
+
+        app.set_provider_query("l");
+
+        assert_eq!(app.provider_index, 0);
+        assert_eq!(
+            app.selected_provider().map(|spec| spec.id),
+            Some("anthropic")
+        );
+    }
+
+    #[test]
+    fn provider_selector_clearing_query_restores_active_provider_when_visible() {
+        let mut app = fresh_app();
+        app.active_provider_id = Some("gemini");
+        app.provider_index = effective_providers().len().saturating_sub(1);
+
+        app.set_provider_query("open");
+        app.clear_provider_query();
+
+        assert!(app.provider_query.is_empty());
+        assert_eq!(app.selected_provider().map(|spec| spec.id), Some("gemini"));
+    }
+
+    #[test]
+    fn provider_selector_clearing_query_falls_back_to_first_provider_without_active_match() {
+        let mut app = fresh_app();
+        app.active_provider_id = Some("missing-provider");
+        app.provider_index = effective_providers().len().saturating_sub(1);
+
+        app.set_provider_query("open");
+        app.clear_provider_query();
+
+        assert!(app.provider_query.is_empty());
+        assert_eq!(app.provider_index, 0);
+        assert_eq!(
+            app.selected_provider().map(|spec| spec.id),
+            effective_providers().first().map(|spec| spec.id),
+        );
+    }
+
+    #[test]
+    fn provider_selector_opening_resets_stale_query_and_prefers_active_provider() {
+        let mut app = fresh_app();
+        app.active_provider_id = Some("openai");
+        app.provider_query = "stale".into();
+        app.provider_index = effective_providers().len().saturating_sub(1);
+
+        app.open_provider_selector();
+
+        assert!(app.provider_query.is_empty());
+        assert!(matches!(app.input_mode, InputMode::SelectingProvider));
+        assert_eq!(app.selected_provider().map(|spec| spec.id), Some("openai"));
+    }
+
+    #[test]
+    fn provider_selector_api_key_entry_helper_preserves_placeholder_behavior() {
+        use crate::test_helpers::HOME_LOCK;
+        let _lock = HOME_LOCK.lock().unwrap();
+        rust_i18n::set_locale("en");
+
+        let mut app = fresh_app();
+        let spec = effective_providers()
+            .into_iter()
+            .find(|spec| spec.id == "openai")
+            .expect("openai provider should exist");
+
+        app.enter_api_key_for(spec, false);
+        assert_eq!(
+            app.api_key_textarea.placeholder_text(),
+            rust_i18n::t!("prompt.api-key.paste-new", env = spec.api_key_env),
+        );
+
+        app.enter_api_key_for(spec, true);
+        assert_eq!(
+            app.api_key_textarea.placeholder_text(),
+            rust_i18n::t!(
+                "prompt.api-key.use-stored-or-paste-new",
+                env = spec.api_key_env
+            ),
+        );
+
+        rust_i18n::set_locale("en");
     }
 
     #[test]
