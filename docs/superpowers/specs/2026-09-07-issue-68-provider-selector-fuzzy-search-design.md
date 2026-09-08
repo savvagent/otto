@@ -71,7 +71,10 @@ and `crates/otto/src/main.rs`, the implementation must preserve the host-swap
    The rules remain: keyless providers skip prompting; keyed providers reuse a
    stored credential when present; the API-key modal opens only when required and
    no stored credential exists (or keyring lookup errors and the user needs to
-   paste a key).
+   paste a key). The coupled `Effect::PromptApiKey` path in
+   `crates/otto/src/plugin/effects.rs` should route through the same
+   spec-based helper so plugin-driven prompts keep the same placeholder and
+   stored-key semantics.
 6. **Focused tests.** Add unit tests around the new selector-state helpers in
    `app.rs`, rendering tests in `ui.rs` for the search-row/empty-state behavior,
    and an event-loop test in `main.rs` for the Enter-selection gating if that is
@@ -87,6 +90,9 @@ and `crates/otto/src/main.rs`, the implementation must preserve the host-swap
 - `InputMode::SelectingProvider` keyboard handling in `crates/otto/src/main.rs`
 - Small provider-catalog helpers in `crates/otto/src/providers.rs` if useful for
   searchable text or short-list heuristics
+- The coupled `Effect::PromptApiKey` handoff in `crates/otto/src/plugin/effects.rs`
+  when it needs to pass the selected provider spec/stored-key context into the
+  unchanged API-key modal
 - Unit tests covering fuzzy filtering, empty states, and preserved API-key gating
 
 **Out:**
