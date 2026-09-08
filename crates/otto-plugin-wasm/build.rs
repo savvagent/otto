@@ -1,13 +1,13 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const REQUIRED_WIT_FILES: &[&str] = &[
-    "plugin-interactive.wit",
-    "plugin-provider.wit",
-    "plugin-static.wit",
-    "shared.wit",
-    "spp.wit",
+const EXPECTED_VENDORED_WIT: &[(&str, u64)] = &[
+    ("plugin-interactive.wit", 0xc5cec69227c8b970),
+    ("plugin-provider.wit", 0xf62b9a6b8ae413dc),
+    ("plugin-static.wit", 0x0f0960c5e8fc564b),
+    ("shared.wit", 0xa07f91c5fb481db3),
+    ("spp.wit", 0x114f2936ffaac15e),
 ];
 
 fn main() {
@@ -34,22 +34,23 @@ fn main() {
     let canonical_exists = canonical_dir
         .try_exists()
         .expect("checking canonical WIT directory should succeed");
-    if !canonical_exists {
-        let vendored_files = collect_wit_files(&vendored_dir)
-            .map_err(|error| {
-                format!(
-                    "failed to read vendored WIT dir `{}`: {error}",
-                    vendored_dir.display()
-                )
-            })
-            .unwrap_or_else(|error| panic!("{error}"));
-        if vendored_files.is_empty() {
-            panic!(
-                "vendored WIT directory `{}` does not contain any `.wit` files.\nrestore `crates/otto-plugin-wasm/wit/` before building.",
+    let vendored_files = collect_wit_files(&vendored_dir)
+        .map_err(|error| {
+            format!(
+                "failed to read vendored WIT dir `{}`: {error}",
                 vendored_dir.display()
-            );
-        }
-        validate_required_wit_files(&vendored_dir, &vendored_files);
+            )
+        })
+        .unwrap_or_else(|error| panic!("{error}"));
+    if vendored_files.is_empty() {
+        panic!(
+            "vendored WIT directory `{}` does not contain any `.wit` files.\nrestore `crates/otto-plugin-wasm/wit/` before building.",
+            vendored_dir.display()
+        );
+    }
+    validate_expected_vendored_tree(&vendored_dir, &vendored_files);
+
+    if !canonical_exists {
         return;
     }
 
@@ -110,20 +111,50 @@ fn verify_wit_sync(vendored_dir: &Path, canonical_dir: &Path) -> Result<(), Stri
     Ok(())
 }
 
-fn validate_required_wit_files(vendored_dir: &Path, vendored_files: &BTreeSet<PathBuf>) {
-    let missing_files: Vec<_> = REQUIRED_WIT_FILES
+fn validate_expected_vendored_tree(vendored_dir: &Path, vendored_files: &BTreeSet<PathBuf>) {
+    let expected_files: BTreeSet<_> = EXPECTED_VENDORED_WIT
         .iter()
-        .filter(|file| !vendored_files.contains(&PathBuf::from(file)))
-        .copied()
+        .map(|(file, _)| PathBuf::from(file))
         .collect();
-
-    if !missing_files.is_empty() {
+    if vendored_files != &expected_files {
         panic!(
-            "vendored WIT directory `{}` is missing required files: {:?}.\nrestore `crates/otto-plugin-wasm/wit/` from `crates/otto-plugin-wit/wit/` before building.",
+            "vendored WIT directory `{}` does not match the expected file set.\nexpected: {:?}\nactual: {:?}\nresync `crates/otto-plugin-wasm/wit/` from `crates/otto-plugin-wit/wit/` and update `EXPECTED_VENDORED_WIT` if the canonical contract changed.",
             vendored_dir.display(),
-            missing_files,
+            expected_files,
+            vendored_files,
         );
     }
+
+    let expected_digests: BTreeMap<_, _> = EXPECTED_VENDORED_WIT.iter().copied().collect();
+    for relative_path in vendored_files {
+        let path = vendored_dir.join(relative_path);
+        let bytes = fs::read(&path).unwrap_or_else(|error| {
+            panic!(
+                "failed to read vendored WIT file `{}`: {error}",
+                path.display()
+            )
+        });
+        let actual_digest = fnv1a64(&bytes);
+        let expected_digest = expected_digests[relative_path.to_string_lossy().as_ref()];
+
+        if actual_digest != expected_digest {
+            panic!(
+                "vendored WIT file `{}` has digest {:016x}, expected {:016x}.\nresync `crates/otto-plugin-wasm/wit/` from `crates/otto-plugin-wit/wit/` and update `EXPECTED_VENDORED_WIT` if the canonical contract changed.",
+                path.display(),
+                actual_digest,
+                expected_digest,
+            );
+        }
+    }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn collect_wit_files(root: &Path) -> std::io::Result<BTreeSet<PathBuf>> {
