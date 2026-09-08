@@ -353,42 +353,52 @@ impl Plugin for SelfUpdatePlugin {
             | UpdateState::CheckFailed
             | UpdateState::Available { .. }
             | UpdateState::InstallFailed { .. } => {
+                let live = check_for_update(
+                    env!("CARGO_PKG_VERSION"),
+                    self.install_method,
+                    self.fetcher.as_ref(),
+                )
+                .await;
                 let effective = publish_live_check_state(
                     &self.state,
                     &pre_state,
-                    check_for_update(
-                        env!("CARGO_PKG_VERSION"),
-                        self.install_method,
-                        self.fetcher.as_ref(),
-                    )
-                    .await,
+                    live.clone(),
                 );
-                match effective {
-                    UpdateState::Available { current, latest } => Action::Install(current, latest),
-                    UpdateState::Disabled => {
+                match (pre_state, live, effective) {
+                    (_, _, UpdateState::Available { current, latest }) => {
+                        Action::Install(current, latest)
+                    }
+                    (
+                        UpdateState::InstallFailed {
+                            current, latest, ..
+                        },
+                        UpdateState::CheckFailed,
+                        UpdateState::InstallFailed { .. },
+                    ) => Action::Install(current, latest),
+                    (_, _, UpdateState::Disabled) => {
                         Action::Note(rust_i18n::t!("self-update.note-disabled").to_string())
                     }
-                    UpdateState::InstallFailed { error, .. } => Action::Note(
+                    (_, _, UpdateState::InstallFailed { error, .. }) => Action::Note(
                         rust_i18n::t!("self-update.note-update-fail", err = error).to_string(),
                     ),
-                    UpdateState::UpToDate => {
+                    (_, _, UpdateState::UpToDate) => {
                         Action::Note(rust_i18n::t!("self-update.note-no-update").to_string())
                     }
-                    UpdateState::CheckFailed => {
+                    (_, _, UpdateState::CheckFailed) => {
                         Action::Note(rust_i18n::t!("self-update.note-check-failed").to_string())
                     }
-                    UpdateState::Installing { latest, .. } => Action::Note(
+                    (_, _, UpdateState::Installing { latest, .. }) => Action::Note(
                         rust_i18n::t!(
                             "self-update.note-install-in-progress",
                             latest = latest.to_string()
                         )
                         .to_string(),
                     ),
-                    UpdateState::Updated { to, .. } => Action::Note(
+                    (_, _, UpdateState::Updated { to, .. }) => Action::Note(
                         rust_i18n::t!("self-update.note-update-ok", latest = to.to_string())
                             .to_string(),
                     ),
-                    UpdateState::Unknown => {
+                    (_, _, UpdateState::Unknown) => {
                         Action::Note(rust_i18n::t!("self-update.note-checking").to_string())
                     }
                 }
@@ -561,6 +571,7 @@ fn publish_live_check_state(
             _,
             UpdateState::Available { latest: new, .. },
         ) if failed == new => guard.clone(),
+        (UpdateState::InstallFailed { .. }, _, UpdateState::CheckFailed) => guard.clone(),
         _ => {
             *guard = live.clone();
             live
@@ -1560,6 +1571,30 @@ mod tests {
             }
             other => panic!("expected PushNote, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn slash_update_retries_failed_release_when_recheck_fails() {
+        let installer = Arc::new(StubInstaller::ok());
+        let mut plugin = locked_plugin_with_state_and_fetcher(
+            Arc::new(ErrorFetcher("github unavailable")),
+            installer.clone(),
+            UpdateState::InstallFailed {
+                current: Version::parse(env!("CARGO_PKG_VERSION")).unwrap(),
+                latest: Version::parse("99.99.99").unwrap(),
+                error: "previous failure".into(),
+            },
+        );
+
+        let effects = plugin.handle_slash("update", vec![]).await.unwrap();
+
+        assert_eq!(
+            installer.invocation_count(),
+            1,
+            "explicit /update must retry the stored failed release even if recheck fails"
+        );
+        assert_eq!(effects.len(), 2);
+        assert!(matches!(plugin.state(), UpdateState::Updated { .. }));
     }
 
     #[tokio::test]
