@@ -526,6 +526,12 @@ mod tests {
 
     #[test]
     fn fullscreen_splash_overlay_uses_shared_splash_content() {
+        let first_logo_row =
+            crate::splash::shared_content(&crate::splash::SandboxSplashState::OnDefault)
+                .into_iter()
+                .find(|line| line.kind == crate::splash::SplashLineKind::Logo)
+                .expect("logo row in shared content")
+                .text;
         let lines = overlay_lines(
             &FakeScreen {
                 id: "splash".into(),
@@ -552,7 +558,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert!(text.iter().any(|line| line.contains("███████╗")));
+        assert!(text.iter().any(|line| line == &first_logo_row));
         assert!(
             text.iter()
                 .any(|line| line == "the savvy MCP-native terminal coding agent")
@@ -578,7 +584,7 @@ mod tests {
                         .iter()
                         .map(|span| span.text.as_str())
                         .collect::<String>()
-                        .contains("███████╗")
+                        == first_logo_row
             }),
             "fullscreen splash overlay should preserve centered logo rows"
         );

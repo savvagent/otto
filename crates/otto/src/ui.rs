@@ -1781,6 +1781,12 @@ mod tests {
 
     #[test]
     fn paint_screen_fullscreen_splash_uses_shared_splash_renderer() {
+        let first_logo_row =
+            crate::splash::shared_content(&crate::splash::SandboxSplashState::OnDefault)
+                .into_iter()
+                .find(|line| line.kind == crate::splash::SplashLineKind::Logo)
+                .expect("logo row in shared content")
+                .text;
         let buffer = render_paint_screen(
             &FakeScreen {
                 id: "splash".into(),
@@ -1794,7 +1800,7 @@ mod tests {
         let text = buffer_text(&buffer);
 
         assert!(
-            text.contains("███████╗"),
+            text.contains(&first_logo_row),
             "fullscreen splash screen should render the shared startup logo: {text}"
         );
         assert!(

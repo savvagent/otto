@@ -160,13 +160,18 @@ mod tests {
             width: 100,
             height: 24,
         });
+        let first_logo_row = shared_content(&SandboxSplashState::OnDefault)
+            .into_iter()
+            .find(|line| line.kind == SplashLineKind::Logo)
+            .expect("logo row in shared content")
+            .text;
 
         let logo = lines
             .iter()
             .find(|line| {
                 line.spans
                     .first()
-                    .is_some_and(|span| span.text.trim_start().starts_with("███████╗"))
+                    .is_some_and(|span| span.text.ends_with(&first_logo_row))
             })
             .expect("logo row present");
         assert_eq!(logo.spans[0].fg, Some(ThemeColor::LightBlue));
@@ -202,10 +207,15 @@ mod tests {
                     .as_str()
             })
             .collect::<Vec<_>>();
+        let first_logo_row = shared_content(&SandboxSplashState::OnDefault)
+            .into_iter()
+            .find(|line| line.kind == SplashLineKind::Logo)
+            .expect("logo row in shared content")
+            .text;
 
         let logo = rendered
             .iter()
-            .find(|text| text.trim_start().starts_with("███████╗"))
+            .find(|text| text.ends_with(&first_logo_row))
             .expect("logo row present");
         assert!(
             logo.starts_with("           "),
