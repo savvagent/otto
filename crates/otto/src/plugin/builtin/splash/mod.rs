@@ -1,6 +1,7 @@
-//! `internal:splash` — startup HUD + parse-error rendering, exposed as a
-//! Screen. The poll-loop wiring stays in main.rs in PR 3; PR 7 replaces
-//! the poll with on_event(Connect) dispatch from the host.
+//! `internal:splash` — exposes the shared startup splash as a screen opened by
+//! `/splash`. The runtime injects the current cached sandbox state when the
+//! screen opens so slash-triggered splash rendering stays in sync with the
+//! startup overlay.
 
 pub mod screen;
 
