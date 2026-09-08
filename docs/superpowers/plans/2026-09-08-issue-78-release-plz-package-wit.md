@@ -54,7 +54,7 @@
 
 - [ ] Change all three `wasmtime::component::bindgen!` call sites in `crates/otto-plugin-wasm/src/lib.rs` from the sibling `../otto-plugin-wit/wit` path to the crate-local `wit` directory, and replace the surrounding comment with the packaging rationale and canonical-source note. Expected result: macro expansion no longer depends on a sibling crate path.
 - [ ] Run `cargo check -p otto-plugin-wasm`. Expected result: the crate still builds from the workspace after the bindgen path change.
-- [ ] Run `cargo package --allow-dirty --workspace`. Expected result: workspace packaging and verification complete successfully, including `otto-plugin-wasm`'s staged verification build.
+- [ ] Run `cargo package --allow-dirty --workspace`. Expected result: workspace packaging and verification complete successfully, including `otto-plugin-wasm`'s staged verification build; if the command fails in an unrelated crate, capture that output and additionally rebuild the extracted `target/package/otto-plugin-wasm-0.26.1` crate as the issue-specific acceptance proof from the spec.
 - [ ] Inspect the staged package contents with `find target/package/otto-plugin-wasm-0.26.1/wit -maxdepth 1 -type f | sort`. Expected result: all five vendored `.wit` files are present inside Cargo's extracted `otto-plugin-wasm` package sandbox.
 - [ ] Public-interface check: confirm no plugin ABI, SPP, MCP, slash-command, env-var, or on-disk format change was introduced; note in the ledger and PR body that this is a packageability fix only.
 - [ ] Host-swap/RwLock check: not applicable.
@@ -70,7 +70,7 @@
 - [ ] Run `cargo test --workspace`. Expected result: success.
 - [ ] Run `cargo clippy --workspace --all-targets`. Expected result: success.
 - [ ] Run `cargo fmt --all -- --check`. Expected result: success.
-- [ ] Build at least one external plugin example with `cargo build -p plugin-hello-static --target wasm32-wasip2`. Expected result: the example plugin still compiles against the unchanged WIT contract after the packaging fix.
+- [ ] Build at least one external plugin example with `(cd examples/plugin-hello-static && cargo component build --release --target wasm32-unknown-unknown)`. Expected result: the example plugin still compiles against the unchanged WIT contract after the packaging fix.
 - [ ] Re-run `cargo package --allow-dirty --workspace` if any validation fix touched packaging inputs after Task 2. Expected result: still succeeds.
 - [ ] Public-interface check: verify the PR summary says `otto-plugin-wasm` now vendors package-local WIT files for Cargo verification while `otto-plugin-wit` remains the canonical contract crate.
 - [ ] Host-swap/RwLock check: verify no task introduced an `.await` while holding an `Arc<RwLock<Option<Arc<Host>>>>` guard.
