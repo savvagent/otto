@@ -8,6 +8,15 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.26.4 - 2026-09-08
+
+### Fixed
+
+- `provider-deepseek`'s `list_models` now classifies HTTP error responses (401/403/404/413/429/5xx)
+  by status code instead of always reporting a transient network error, so an invalid DeepSeek API
+  key is correctly rejected at connect time and the existing `--rekey` recovery hint (#81) works
+  for DeepSeek.
+
 ## 0.26.3 - 2026-09-08
 
 ### Fixed
