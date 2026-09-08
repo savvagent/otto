@@ -86,6 +86,10 @@ pub mod user_hooks;
 /// with templating expansion.
 pub mod user_slash_commands;
 
+/// `internal:user-skills` — discovers repo-authored skills and exposes
+/// them via `/skills`.
+pub mod user_skills;
+
 /// `internal:tool-bash-summary` — renders one-line summaries for the
 /// `tool-bash` `run` tool.
 pub mod tool_bash_summary;
