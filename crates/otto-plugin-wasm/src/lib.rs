@@ -49,9 +49,12 @@ pub use otto_plugin_wit as wit;
 // `wasmtime::component::bindgen!` expands the `.wit` tree at the given
 // `path:` into Rust types, traits, and a `World` struct. The macro is a
 // proc-macro and therefore requires a *string-literal* path at the call
-// site — it cannot read `otto_plugin_wit::WIT_DIR` even though that
-// would resolve to the same directory. The relative path below resolves
-// from this crate's `src/` to the sibling crate's `wit/` directory.
+// site, so `otto-plugin-wasm` vendors the WIT files under its own crate
+// root and points bindgen at that package-local copy. `otto-plugin-wit`
+// remains the canonical human-edited source; `build.rs` keeps this copy
+// byte-for-byte synced during normal workspace builds while still letting
+// Cargo's isolated package sandbox compile this crate without a sibling
+// `../otto-plugin-wit/wit` directory.
 //
 // Each world gets its own module to keep the three sets of generated
 // types from colliding. `async: true` is required so the generated traits
@@ -61,7 +64,7 @@ pub use otto_plugin_wit as wit;
 #[allow(missing_docs, clippy::needless_lifetimes)]
 pub mod static_world {
     wasmtime::component::bindgen!({
-        path: "../otto-plugin-wit/wit",
+        path: "wit",
         world: "plugin-static",
         async: true,
     });
@@ -77,7 +80,7 @@ pub mod static_world {
 #[allow(missing_docs, clippy::needless_lifetimes)]
 pub mod interactive_world {
     wasmtime::component::bindgen!({
-        path: "../otto-plugin-wit/wit",
+        path: "wit",
         world: "plugin-interactive",
         async: true,
         with: {
@@ -99,7 +102,7 @@ pub mod interactive_world {
 #[allow(missing_docs, clippy::needless_lifetimes)]
 pub mod provider_world {
     wasmtime::component::bindgen!({
-        path: "../otto-plugin-wit/wit",
+        path: "wit",
         world: "plugin-provider",
         async: true,
         with: {
