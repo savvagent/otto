@@ -38,6 +38,12 @@ jobs:
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      # release-plz runs `cargo package`, which builds each crate to verify
+      # its tarball. `savvagent-canvas` pulls in fontconfig via
+      # blitz -> parley -> fontique, so the same system deps ci.yml and
+      # package-linux.yml install are required here too.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev pkg-config
       - name: Run release-plz release-pr
         uses: release-plz/action@v0.5
         with:
@@ -67,6 +73,12 @@ jobs:
           token: ${{ secrets.RELEASE_PLZ_TOKEN }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+      # release-plz runs `cargo package`, which builds each crate to verify
+      # its tarball. `savvagent-canvas` pulls in fontconfig via
+      # blitz -> parley -> fontique, so the same system deps ci.yml and
+      # package-linux.yml install are required here too.
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev pkg-config
       - name: Run release-plz release
         uses: release-plz/action@v0.5
         with:
