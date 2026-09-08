@@ -672,7 +672,12 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
                 .clone()
         };
         let commands = build_palette_commands(&reg, &idx).await;
-        let screen: Box<dyn otto_plugin::Screen> = Box::new(PaletteScreen::with_commands(commands));
+        let screen = PaletteScreen::with_commands(commands);
+        // Seed the prompt preview with the first highlighted command so
+        // the prompt and palette are synchronized from the first frame.
+        let preview = screen.prompt_preview();
+        app.prefill_input(preview);
+        let screen: Box<dyn otto_plugin::Screen> = Box::new(screen);
         (screen, layout)
     } else if id == crate::plugin::builtin::prompt_keybindings::SCREEN_ID {
         // Build the dynamic plugin-contributed section from the live
