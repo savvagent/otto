@@ -28,19 +28,23 @@ pub fn parse(
     let raw_frontmatter: RawFrontmatter = serde_yaml_ng::from_str(frontmatter)
         .map_err(|error| format!("malformed frontmatter: {error}"))?;
 
+    let name = raw_frontmatter
+        .name
+        .ok_or_else(|| "missing required field: name".to_string())?;
+
     let description = raw_frontmatter
         .description
         .ok_or_else(|| "missing required field: description".to_string())?;
 
     let mut warnings = Vec::new();
-    let name = match raw_frontmatter.name {
-        Some(name) if name != directory_slug => {
+    let name = match name {
+        name if name != directory_slug => {
             warnings.push(format!(
                 "frontmatter name `{name}` disagrees with directory slug `{directory_slug}`; directory slug wins"
             ));
             directory_slug.to_string()
         }
-        Some(_) | None => directory_slug.to_string(),
+        _ => directory_slug.to_string(),
     };
 
     Ok(FrontmatterResult {
@@ -107,5 +111,18 @@ mod tests {
                 .iter()
                 .any(|warning| warning.contains("mismatched"))
         );
+    }
+
+    #[test]
+    fn missing_name_fails() {
+        let err = parse(
+            "---\ndescription: Rust skill\n---\nBody",
+            "rust-engineer",
+            SkillLocation::Claude,
+            Path::new("SKILL.md"),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("missing required field: name"));
     }
 }

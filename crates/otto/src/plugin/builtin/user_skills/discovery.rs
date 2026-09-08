@@ -180,4 +180,19 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "rust-engineer");
     }
+
+    #[test]
+    fn missing_name_is_skipped() {
+        let project = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".claude/skills",
+            "rust-engineer",
+            "---\ndescription: Claude shared\n---\nBody",
+        );
+
+        let skills = discover(project.path());
+
+        assert!(skills.is_empty());
+    }
 }
