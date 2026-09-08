@@ -359,11 +359,7 @@ impl Plugin for SelfUpdatePlugin {
                     self.fetcher.as_ref(),
                 )
                 .await;
-                let effective = publish_live_check_state(
-                    &self.state,
-                    &pre_state,
-                    live.clone(),
-                );
+                let effective = publish_live_check_state(&self.state, &pre_state, live.clone());
                 match (pre_state, live, effective) {
                     (_, _, UpdateState::Available { current, latest }) => {
                         Action::Install(current, latest)
@@ -438,7 +434,6 @@ impl Plugin for SelfUpdatePlugin {
         let fetcher = Arc::clone(&self.fetcher);
         let installer = Arc::clone(&self.installer);
         let install_method = self.install_method;
-        let current_version = env!("CARGO_PKG_VERSION").to_string();
         let cache_path_override = self.cache_path_override.clone();
         let periodic_interval = self.periodic_interval;
 
@@ -736,7 +731,9 @@ async fn run_check_once(
     // This avoids hammering a known-broken release while still recovering
     // automatically once a new release lands.
     let effective_pre_state = match state.lock().map(|g| g.clone()) {
-        Ok(UpdateState::Disabled | UpdateState::Installing { .. } | UpdateState::Updated { .. }) => {
+        Ok(
+            UpdateState::Disabled | UpdateState::Installing { .. } | UpdateState::Updated { .. },
+        ) => {
             return;
         }
         Ok(current @ UpdateState::InstallFailed { .. }) => current,
@@ -1546,9 +1543,7 @@ mod tests {
         assert_eq!(installer.invocation_count(), 0);
         assert_eq!(effects.len(), 1);
         match &*shared_state.lock().unwrap() {
-            UpdateState::InstallFailed {
-                latest, error, ..
-            } => {
+            UpdateState::InstallFailed { latest, error, .. } => {
                 assert_eq!(latest.to_string(), "99.99.99");
                 assert_eq!(error, "boom");
             }
@@ -2179,7 +2174,10 @@ mod tests {
 
         assert_eq!(fetcher.invocation_count(), 1);
         assert_eq!(installer.invocation_count(), 0);
-        assert!(matches!(*state.lock().unwrap(), UpdateState::Updated { .. }));
+        assert!(matches!(
+            *state.lock().unwrap(),
+            UpdateState::Updated { .. }
+        ));
     }
 
     #[tokio::test]
@@ -2225,9 +2223,7 @@ mod tests {
         assert_eq!(fetcher.invocation_count(), 1);
         assert_eq!(installer.invocation_count(), 0);
         match &*state.lock().unwrap() {
-            UpdateState::InstallFailed {
-                latest, error, ..
-            } => {
+            UpdateState::InstallFailed { latest, error, .. } => {
                 assert_eq!(latest.to_string(), "99.99.99");
                 assert_eq!(error, "boom");
             }
