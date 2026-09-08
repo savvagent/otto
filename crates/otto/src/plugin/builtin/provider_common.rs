@@ -194,8 +194,12 @@ pub(crate) enum ProviderBuildOutcome {
     /// connection attempt was made and explicitly refused.
     Unavailable,
     /// A key was found but `list_models` rejected it (bad key, no credit,
-    /// rate-limited, org disabled, ...). Carries a human-readable reason.
-    Rejected(String),
+    /// rate-limited, org disabled, ...). Carries a human-readable reason
+    /// plus the originating error kind.
+    Rejected {
+        reason: String,
+        kind: otto_protocol::ErrorKind,
+    },
     /// A working client was built; optional fallback-catalog note.
     Ready(ProviderRegistration, Option<String>),
 }
@@ -207,8 +211,12 @@ pub(crate) enum DynamicCapsOutcome {
     Ready(ProviderCapabilities, Option<String>),
     /// The stored credential was rejected (or rate-limited/quota-exhausted)
     /// by `list_models`; the provider must not be registered. Carries a
-    /// human-readable reason suitable for a user-facing note.
-    Rejected(String),
+    /// human-readable reason suitable for a user-facing note plus the
+    /// originating error kind.
+    Rejected {
+        reason: String,
+        kind: otto_protocol::ErrorKind,
+    },
 }
 
 /// Validate a provider's credentials by calling `list_models` and decide
@@ -265,7 +273,10 @@ pub(crate) async fn build_dynamic_caps(
                 error = %e,
                 "list_models rejected the stored credential"
             );
-            DynamicCapsOutcome::Rejected(e.message.clone())
+            DynamicCapsOutcome::Rejected {
+                reason: e.message.clone(),
+                kind: e.kind,
+            }
         }
     }
 }
@@ -326,7 +337,28 @@ mod build_dynamic_caps_tests {
         };
         let outcome = build_dynamic_caps(&client, static_caps(), "Test Provider").await;
         match outcome {
-            DynamicCapsOutcome::Rejected(reason) => assert!(reason.contains("invalid api key")),
+            DynamicCapsOutcome::Rejected { reason, .. } => {
+                assert!(reason.contains("invalid api key"))
+            }
+            DynamicCapsOutcome::Ready(..) => panic!("expected Rejected, got Ready"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_limited_error_preserves_kind_on_rejection() {
+        let client = FakeClient {
+            result: Err(ProviderError {
+                kind: ErrorKind::RateLimited,
+                message: "too many requests".into(),
+                retry_after_ms: None,
+                provider_code: None,
+            }),
+        };
+        let outcome = build_dynamic_caps(&client, static_caps(), "Test Provider").await;
+        match outcome {
+            DynamicCapsOutcome::Rejected { kind, .. } => {
+                assert_eq!(kind, ErrorKind::RateLimited);
+            }
             DynamicCapsOutcome::Ready(..) => panic!("expected Rejected, got Ready"),
         }
     }
@@ -349,7 +381,7 @@ mod build_dynamic_caps_tests {
             other => panic!(
                 "expected Ready with fallback note, got {}",
                 match other {
-                    DynamicCapsOutcome::Rejected(_) => "Rejected",
+                    DynamicCapsOutcome::Rejected { .. } => "Rejected",
                     DynamicCapsOutcome::Ready(_, None) => "Ready(None)",
                     _ => unreachable!(),
                 }
@@ -389,7 +421,7 @@ mod build_dynamic_caps_tests {
             other => panic!(
                 "expected Ready(_, None), got {}",
                 match other {
-                    DynamicCapsOutcome::Rejected(_) => "Rejected",
+                    DynamicCapsOutcome::Rejected { .. } => "Rejected",
                     DynamicCapsOutcome::Ready(_, Some(_)) => "Ready(Some)",
                     _ => unreachable!(),
                 }
