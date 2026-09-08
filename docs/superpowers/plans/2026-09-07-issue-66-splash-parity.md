@@ -40,6 +40,12 @@ change)
   state / hook wiring if it is no longer used after the shared-render change.
 - `crates/otto/src/plugin/effects.rs` — inject `app.splash_sandbox` into the
   `/splash` screen-open path if screen construction needs app-owned state.
+- `crates/otto/src/egui_app/view.rs` — keep fullscreen egui overlays in sync
+  with the shared splash content, centering, and no-wrap logo rows.
+- `crates/otto/src/egui_app/mod.rs` — keep egui global shortcut precedence
+  aligned with splash any-key dismissal semantics.
+- `crates/otto/src/main.rs` — keep ratatui global quit chords from bypassing
+  the topmost splash screen's own key handling.
 
 ## Task 1: Route `/splash` through the shared splash renderer
 
@@ -47,6 +53,7 @@ change)
 - Modify: `crates/otto/src/ui.rs`
 - Modify: `crates/otto/src/splash.rs`
 - Modify: `crates/otto/src/plugin/effects.rs`
+- Modify: `crates/otto/src/egui_app/view.rs`
 
 - [ ] Add targeted tests in `crates/otto/src/ui.rs` first covering the
       fullscreen splash-screen render path: a fake `"splash"` screen should
@@ -70,6 +77,9 @@ change)
 - [ ] In `crates/otto/src/plugin/effects.rs`, make sure opening `/splash`
       constructs the screen with the current `app.splash_sandbox` rather than a
       fallback/default value.
+- [ ] In `crates/otto/src/egui_app/view.rs`, make fullscreen splash overlays
+      consume the shared splash content with centered, non-wrapping logo rows
+      so egui matches ratatui instead of reflowing the art.
 - [ ] Run `cargo test -p otto --bin otto ui::tests::paint_screen` again and
       expect the new targeted tests to pass.
 - [ ] Public-interface check: record that this task does **not** change the SPP
@@ -89,6 +99,8 @@ change)
 - Modify: `crates/otto/src/plugin/builtin/splash/screen.rs`
 - Modify: `crates/otto/src/plugin/builtin/splash/mod.rs`
 - Modify: `crates/otto/src/splash.rs`
+- Modify: `crates/otto/src/main.rs`
+- Modify: `crates/otto/src/egui_app/mod.rs`
 
 - [ ] Add/adjust tests in `crates/otto/src/plugin/builtin/splash/screen.rs`
       first so `/splash` closes on a representative non-Esc key and no longer
@@ -105,6 +117,10 @@ change)
 - [ ] Remove stale cached connect-status HUD state and unused hook handling from
       `crates/otto/src/plugin/builtin/splash/mod.rs` if no longer needed by the
       shared-render path; keep the existing slash-command surface unchanged.
+- [ ] In `crates/otto/src/main.rs` and `crates/otto/src/egui_app/mod.rs`,
+      make sure frontend-level global shortcuts do not preempt the topmost
+      splash screen, so `/splash` really closes on any key across both
+      frontends.
 - [ ] Run `cargo test -p otto --bin otto plugin::builtin::splash` again and
       expect the splash plugin tests to pass.
 - [ ] Public-interface check: confirm again that the slash command remains

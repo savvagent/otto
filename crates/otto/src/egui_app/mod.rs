@@ -421,6 +421,14 @@ impl OttoApp {
 }
 
 impl OttoApp {
+    fn global_open_picker_allowed(
+        top_screen_id: Option<&str>,
+        input_mode: &crate::app::InputMode,
+    ) -> bool {
+        top_screen_id != Some("splash")
+            && !matches!(input_mode, crate::app::InputMode::Canvas { .. })
+    }
+
     /// One paint pass for the *running* (post-bootstrap) front-end. Driven by
     /// [`GuiApp::update`] once the host half (`bootstrap_host_only`) has
     /// completed off the UI thread and `build_app_with_host` has built the
@@ -458,7 +466,10 @@ impl OttoApp {
                 // and the two would otherwise both fire.
                 let open_picker = k.modifiers.ctrl
                     && matches!(k.code, KC::Char('o'))
-                    && !matches!(self.app.input_mode, crate::app::InputMode::Canvas { .. });
+                    && Self::global_open_picker_allowed(
+                        top_screen_id.as_deref(),
+                        &self.app.input_mode,
+                    );
                 if open_picker {
                     self.file_picker.open();
                 }
@@ -758,5 +769,36 @@ mod tests {
     fn global_quit_allowed_is_true_for_other_contexts() {
         assert!(super::OttoApp::global_quit_allowed(None));
         assert!(super::OttoApp::global_quit_allowed(Some("palette")));
+    }
+
+    #[test]
+    fn global_open_picker_allowed_is_false_for_splash_screen() {
+        assert!(!super::OttoApp::global_open_picker_allowed(
+            Some("splash"),
+            &crate::app::InputMode::Editing,
+        ));
+    }
+
+    #[test]
+    fn global_open_picker_allowed_is_false_for_canvas_mode() {
+        assert!(!super::OttoApp::global_open_picker_allowed(
+            None,
+            &crate::app::InputMode::Canvas {
+                id: otto_plugin::ContentBlockId(1),
+                element_idx: None,
+            },
+        ));
+    }
+
+    #[test]
+    fn global_open_picker_allowed_is_true_for_other_contexts() {
+        assert!(super::OttoApp::global_open_picker_allowed(
+            None,
+            &crate::app::InputMode::Editing,
+        ));
+        assert!(super::OttoApp::global_open_picker_allowed(
+            Some("palette"),
+            &crate::app::InputMode::SelectingTranscript,
+        ));
     }
 }
