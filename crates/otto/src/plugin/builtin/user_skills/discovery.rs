@@ -4,21 +4,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::plugin::builtin::user_skills::frontmatter::parse;
-use crate::plugin::builtin::user_skills::spec::SkillLocation;
-use crate::plugin::builtin::user_skills::spec::SkillSpec;
+use crate::plugin::builtin::user_skills::spec::{DiscoveryResult, SkillLocation, SkillSpec};
 
-pub fn discover(project_root: &Path) -> Vec<SkillSpec> {
+pub fn discover(project_root: &Path) -> DiscoveryResult {
     let mut skills = Vec::new();
+    let mut warnings = Vec::new();
 
     for (location, relative_root) in [
         (SkillLocation::GitHub, ".github/skills"),
         (SkillLocation::Claude, ".claude/skills"),
     ] {
         let root = project_root.join(relative_root);
-        for path in skill_file_paths(&root) {
+        for path in skill_file_paths(&root, &mut warnings) {
             match load_skill(&path, location) {
                 Ok(skill) => skills.push(skill),
                 Err(error) => {
+                    warnings.push(format!("{}: {error}", path.display()));
                     tracing::warn!(path = %path.display(), "skill skipped: {error}");
                 }
             }
@@ -31,14 +32,18 @@ pub fn discover(project_root: &Path) -> Vec<SkillSpec> {
             .then_with(|| left.name.cmp(&right.name))
             .then_with(|| left.path.cmp(&right.path))
     });
-    skills
+    DiscoveryResult { skills, warnings }
 }
 
-fn skill_file_paths(root: &Path) -> Vec<PathBuf> {
+fn skill_file_paths(root: &Path, warnings: &mut Vec<String>) -> Vec<PathBuf> {
     let entries = match fs::read_dir(root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(error) => {
+            warnings.push(format!(
+                "{}: failed to read skill root: {error}",
+                root.display()
+            ));
             tracing::warn!(root = %root.display(), "failed to read skill root: {error}");
             return Vec::new();
         }
@@ -47,10 +52,18 @@ fn skill_file_paths(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for entry in entries {
         let Ok(entry) = entry else {
+            warnings.push(format!(
+                "{}: failed to read skill directory entry",
+                root.display()
+            ));
             tracing::warn!(root = %root.display(), "failed to read skill directory entry");
             continue;
         };
         let Ok(file_type) = entry.file_type() else {
+            warnings.push(format!(
+                "{}: failed to read skill entry type",
+                entry.path().display()
+            ));
             tracing::warn!(path = %entry.path().display(), "failed to read skill entry type");
             continue;
         };
@@ -120,6 +133,7 @@ mod tests {
 
         let skills = discover(project.path());
         let got: Vec<_> = skills
+            .skills
             .iter()
             .map(|skill| (skill.name.as_str(), skill.location))
             .collect();
@@ -158,11 +172,17 @@ mod tests {
 
         let skills = discover(project.path());
 
-        assert_eq!(skills.len(), 2);
-        assert_eq!(skills[0].name, "shared");
-        assert_eq!(skills[1].name, "shared");
-        assert_ne!(skills[0].location, skills[1].location);
-        assert!(skills.iter().all(|skill| skill.path.ends_with("SKILL.md")));
+        assert_eq!(skills.skills.len(), 2);
+        assert_eq!(skills.skills[0].name, "shared");
+        assert_eq!(skills.skills[1].name, "shared");
+        assert_ne!(skills.skills[0].location, skills.skills[1].location);
+        assert!(
+            skills
+                .skills
+                .iter()
+                .all(|skill| skill.path.ends_with("SKILL.md"))
+        );
+        assert_eq!(skills.warnings.len(), 1);
     }
 
     #[test]
@@ -177,8 +197,8 @@ mod tests {
 
         let skills = discover(project.path());
 
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "rust-engineer");
+        assert_eq!(skills.skills.len(), 1);
+        assert_eq!(skills.skills[0].name, "rust-engineer");
     }
 
     #[test]
@@ -193,6 +213,23 @@ mod tests {
 
         let skills = discover(project.path());
 
-        assert!(skills.is_empty());
+        assert!(skills.skills.is_empty());
+        assert_eq!(skills.warnings.len(), 1);
+    }
+
+    #[test]
+    fn unreadable_skills_are_reported_in_warnings() {
+        let project = tempdir().expect("tempdir");
+        let root = project.path().join(".github/skills");
+        fs::create_dir_all(&root).expect("create root");
+        fs::write(root.join("README.md"), "ignored").expect("write file");
+        let dir = root.join("bad");
+        fs::create_dir_all(&dir).expect("create bad dir");
+        fs::write(dir.join("SKILL.md"), "---\nname: bad\n---\nBody").expect("write bad skill");
+
+        let skills = discover(project.path());
+
+        assert!(skills.skills.is_empty());
+        assert_eq!(skills.warnings.len(), 1);
     }
 }

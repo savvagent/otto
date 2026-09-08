@@ -24,3 +24,9 @@ pub struct SkillSpec {
     pub location: SkillLocation,
     pub path: PathBuf,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DiscoveryResult {
+    pub skills: Vec<SkillSpec>,
+    pub warnings: Vec<String>,
+}

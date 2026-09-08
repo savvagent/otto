@@ -8,6 +8,13 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Added
+
+- Otto now ships a built-in `/skills` slash command that lists repo-authored skills discovered from
+  `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md`, including each skill's name,
+  location, and repo-supplied description, with that description explicitly labeled as untrusted
+  repo text. (#83)
+
 ## 0.26.3 - 2026-09-08
 
 ### Fixed

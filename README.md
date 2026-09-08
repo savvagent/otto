@@ -155,7 +155,7 @@ provider has a key on file.
 | `/save-canvas [path] [--block N] [--open]` | Write the most recent HTML canvas to a file. Default path is `otto-canvas-<id>.html` in the current directory. `--block N` targets a specific canvas by id; `--open` opens the file in the system browser after writing. |
 | `/resume` | Re-open a previously-saved transcript and continue from where it ended. With no args opens a picker; takes an absolute path or a bare basename relative to `~/.otto/transcripts/`. |
 | `/clear` | Reset the conversation history (and the visible log). |
-| `/skills` | List repo-authored skills discovered from the current project's `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` trees, including each skill's name, description, and location. |
+| `/skills` | List repo-authored skills discovered from the current project's `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` trees, including each skill's name, location, and repo-supplied description (clearly marked as untrusted text). |
 | `/tools` | List the tools registered with the current host, with their permission verdict. |
 | `/bash <cmd>` | Run a shell command through `tool-bash`. `--net` / `--no-net` toggle network access for that single call. |
 | `/sandbox` | Show or change OS-level sandbox settings; `/sandbox on` / `/sandbox off` persist to `~/.otto/sandbox.toml`. |
@@ -286,7 +286,7 @@ Drop markdown files into any of these directories and Otto exposes them as subag
 
 Same precedence as user-defined slash commands and hooks (project beats user; `.otto/` beats `.claude/`). First-wins dedup by filename slug. `/reload-agents` rescans without restarting the session.
 
-Repo-authored skills are a separate surface from these user-defined agents. Run `/skills` to list the current project's skills discovered from `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md`; that output reports each skill's name, description, and location. `/reload-agents` only rescans the subagent directories above and does not change the repo-authored skills list.
+Repo-authored skills are a separate surface from these user-defined agents. Run `/skills` to list the current project's skills discovered from `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md`; that output reports each skill's name, location, and repo-supplied description, with the description labeled as untrusted repo text. `/reload-agents` only rescans the subagent directories above and does not change the repo-authored skills list.
 
 ### Format
 

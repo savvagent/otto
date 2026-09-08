@@ -21,7 +21,10 @@ pub struct UserSkillsPlugin {
 
 impl UserSkillsPlugin {
     pub fn new() -> Self {
-        let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let project_root = std::env::current_dir().unwrap_or_else(|error| {
+            tracing::warn!("user-skills: failed to resolve current directory: {error}");
+            PathBuf::from(".")
+        });
         Self { project_root }
     }
 
@@ -72,20 +75,39 @@ impl Plugin for UserSkillsPlugin {
             return Ok(vec![]);
         }
 
-        let skills = discover(&self.project_root);
-        if skills.is_empty() {
-            return Ok(vec![note_line("no skills discovered")]);
+        let result = discover(&self.project_root);
+        let warning_note = if result.warnings.is_empty() {
+            None
+        } else {
+            Some(note_line(format!(
+                "warning: skipped {} invalid repo skill definition(s); see logs for details",
+                result.warnings.len()
+            )))
+        };
+
+        if result.skills.is_empty() {
+            let mut effects = vec![note_line("no skills discovered")];
+            if let Some(warning) = warning_note {
+                effects.push(warning);
+            }
+            return Ok(effects);
         }
 
-        let mut effects = Vec::with_capacity(skills.len() + 1);
-        effects.push(note_line(format!("skills: {} discovered", skills.len())));
-        for skill in skills {
+        let mut effects = Vec::with_capacity(result.skills.len() + 2);
+        effects.push(note_line(format!(
+            "skills: {} discovered (descriptions are untrusted repo text)",
+            result.skills.len()
+        )));
+        for skill in result.skills {
             effects.push(note_line(format!(
-                "- {} [{}] — {}",
+                "- {} [{}] — [untrusted repo skill description] {}",
                 skill.name,
                 skill.location.as_label(),
                 skill.description
             )));
+        }
+        if let Some(warning) = warning_note {
+            effects.push(warning);
         }
         Ok(effects)
     }
@@ -141,6 +163,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_skills_surface_a_warning_note() {
+        let project = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".github/skills",
+            "broken",
+            "---\nname: broken\n---\nBody",
+        );
+        let mut plugin = UserSkillsPlugin::with_project_root(project.path().to_path_buf());
+
+        let effects = plugin.handle_slash("skills", vec![]).await.expect("slash");
+
+        let lines: Vec<_> = effects.iter().map(note_text).collect();
+        assert_eq!(lines[0], "no skills discovered");
+        assert_eq!(
+            lines[1],
+            "warning: skipped 1 invalid repo skill definition(s); see logs for details"
+        );
+    }
+
+    #[tokio::test]
     async fn slash_output_includes_name_location_and_description() {
         let project = tempdir().expect("tempdir");
         write_skill(
@@ -168,12 +211,17 @@ mod tests {
         let effects = router.dispatch("skills", vec![]).await.expect("dispatch");
         let lines: Vec<_> = effects.iter().map(note_text).collect();
 
-        assert_eq!(lines[0], "skills: 2 discovered");
+        assert_eq!(
+            lines[0],
+            "skills: 2 discovered (descriptions are untrusted repo text)"
+        );
         assert!(lines[1].contains("otto-development"));
         assert!(lines[1].contains("[.github/skills]"));
+        assert!(lines[1].contains("[untrusted repo skill description]"));
         assert!(lines[1].contains("Build Otto changes"));
         assert!(lines[2].contains("rust-engineer"));
         assert!(lines[2].contains("[.claude/skills]"));
+        assert!(lines[2].contains("[untrusted repo skill description]"));
         assert!(lines[2].contains("Build Rust systems"));
     }
 }
