@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// Canonical-absent package builds still need a precise sanity check, so keep
+// the vendored file set and normalized-content digests pinned here.
 const EXPECTED_VENDORED_WIT: &[(&str, u64)] = &[
     ("plugin-interactive.wit", 0xc5cec69227c8b970),
     ("plugin-provider.wit", 0xf62b9a6b8ae413dc),
@@ -150,11 +152,26 @@ fn validate_expected_vendored_tree(vendored_dir: &Path, vendored_files: &BTreeSe
 
 fn fnv1a64(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf29ce484222325_u64;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
+    for byte in normalize_newlines(bytes) {
+        hash ^= u64::from(byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+fn normalize_newlines(bytes: &[u8]) -> Vec<u8> {
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+            normalized.push(b'\n');
+            index += 2;
+            continue;
+        }
+        normalized.push(bytes[index]);
+        index += 1;
+    }
+    normalized
 }
 
 fn collect_wit_files(root: &Path) -> std::io::Result<BTreeSet<PathBuf>> {
