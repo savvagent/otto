@@ -64,11 +64,13 @@ match into a shared `status_to_error_kind(status: u16) -> ErrorKind` helper
 use it in *both* their `complete()` error path and their `list_models` error
 path (`provider-anthropic/src/models.rs:66`,
 `provider-gemini/src/models.rs:66`) — each with an explicit
-`list_models_401_maps_to_authentication`-style test. `provider-openai`
-has the identical `http_status_error`-always-`Network` defect in its own
-`list_models` (`provider-openai/src/lib.rs:138-141`) as DeepSeek — same
-copy-pasted shape, same bug — but issue #81 only reports DeepSeek, so this
-spec fixes DeepSeek only and files a follow-up issue for OpenAI (see Risks).
+`list_models_401_maps_to_authentication`-style test. `provider-openai` had
+the identical `http_status_error`-always-`Network` defect at one point, but
+it was already fixed in commit `e56ae1b` ("Quiet startup provider
+auto-connect noise; validate keys and attribute provider errors", #59) —
+`provider-openai/src/lib.rs`'s `http_status_error` now calls
+`status_to_error_kind(status.as_u16())` too. `provider-deepseek` is the
+only remaining provider crate with this defect.
 
 ### Why this produces exactly the two symptoms in #81
 
@@ -94,12 +96,24 @@ message, not a credential warning), and:
 1. **No `--rekey` hint is ever shown**, since `connect_rejected_note_key`
    (`crates/otto/src/main.rs:90-98`) only selects the hinted message on
    `Ok(ProviderBuildOutcome::Rejected { kind: Authentication, .. })` — a
-   branch DeepSeek's bad-key case never reaches. The user has no
-   discoverable path back into the API-key modal on a plain `/connect
-   deepseek` retry (the silent-reconnect fast path,
-   `try_connect_from_keyring`, only re-opens the modal for `--rekey` or a
-   provider with no keyring entry at all — a provider that "connected"
-   successfully is neither).
+   branch DeepSeek's bad-key case never reaches. Note that
+   `try_connect_from_keyring` (each provider plugin's `handle_slash`/
+   `HostStarting` fast path, e.g. `provider_deepseek/mod.rs:144-165`) only
+   constructs the HTTP client and does not itself validate the key — it
+   optimistically fires `Effect::RegisterProvider` for *any* stored key,
+   bad or good. The actual validation happens one step later, when the
+   queued `Effect::RegisterProvider` reaches `apply_pending_pool_add`
+   (`crates/otto/src/main.rs:1832-1935`), which calls
+   `try_build_registration` and therefore re-runs `list_models`. Today that
+   re-run correctly rejects a DeepSeek 401 as `Rejected { kind: Network,
+   .. }`... except `build_dynamic_caps` treats `Network` as transient and
+   falls back to static capabilities instead of rejecting (see above) — so
+   even this second check waves the bad key through. Once `list_models`
+   reports `Authentication` instead, this same `apply_pending_pool_add`
+   check correctly rejects it and never adds it to the pool, and the user
+   has no discoverable path back into the API-key modal on a plain
+   `/connect deepseek` retry, since `--rekey` is the only trigger for the
+   modal once a client has been optimistically constructed.
 2. **Every subsequent turn against DeepSeek fails**, because `complete()`'s
    `parse_error_response` correctly reports the same 401 as
    `ErrorKind::Authentication` — but by then the user has already been told
@@ -190,22 +204,20 @@ for DeepSeek the moment `list_models` reports the right `kind`.
   unit test.
 
 **Out:**
-- `provider-openai`'s identical `list_models`/`http_status_error` defect
-  (confirmed present, `provider-openai/src/lib.rs:138-141`) — same bug
-  shape, but issue #81 is scoped to DeepSeek. Per this workflow's
-  Stop-and-Escalate guidance on discovering the same bug pattern elsewhere,
-  this is tracked as a new follow-up issue rather than silently widened
-  into this PR (see Risks).
+- `provider-openai` — already fixed (commit `e56ae1b`, #59); no change
+  needed there.
 - Any change to `crates/otto`'s connect flow, `provider_common.rs`,
   `main.rs`'s rejection-note gating, or the locale files — all already
   correct per PR 85 and untouched by this fix.
 - Any change to the silent-reconnect fast path
   (`try_connect_from_keyring`'s "client construction succeeded" heuristic)
   — a separate, real question (does building an HTTP client prove the key
-  works?) that is orthogonal to this bug: once `list_models` classifies
-  correctly, a bad key is rejected before it ever reaches that fast path
-  again, because the keyring's bad key is never treated as "connected" in
-  the first place.
+  works?) that is orthogonal to this bug: `try_connect_from_keyring` never
+  itself validates a key; it always defers the real check to
+  `apply_pending_pool_add`'s `try_build_registration` re-run. Once
+  `list_models` classifies a 401 correctly, that re-run rejects the bad key
+  and the provider is removed from the pending-add path before it is ever
+  added to the host pool — no change to the fast path itself is needed.
 - Deleting or auto-correcting a stored bad key in the keyring — unrelated
   to this fix and explicitly out of scope per the prior #81 design
   (`docs/superpowers/specs/2026-09-08-reconnect-after-api-key-error-design.md`).
@@ -233,12 +245,11 @@ plugin ABI, slash command, or on-disk transcript/keyring format is touched.
   itself is wrong — a real DNS/timeout failure (via `map_reqwest_error`,
   unaffected by this change) should still fall back to static capabilities
   rather than reject the whole connection.
-- **The OpenAI twin bug is out of scope for this PR and is filed as a
-  separate follow-up issue**, per this task's "same bug pattern discovered
-  elsewhere → new issue, don't silently widen scope" rule — justified
-  because #81 is specifically about DeepSeek and fixing OpenAI here would
-  both widen the diff beyond the reported issue and require its own
-  independent verification (OpenAI's own test suite, its own PR review).
+- **The OpenAI twin bug does not need a follow-up** — it was already fixed
+  in commit `e56ae1b` (#59), confirmed by inspecting
+  `provider-openai/src/lib.rs`'s current `http_status_error`, which already
+  calls `status_to_error_kind(status.as_u16())`. DeepSeek is the only
+  remaining provider crate with the defect.
 
 ## Goal & Success Criteria
 
@@ -283,14 +294,8 @@ way its turn-time validation already does.
 
 ## Risks & Open Questions
 
-- **OpenAI has the identical defect** (`provider-openai/src/lib.rs:138-141`
-  hardcodes `ErrorKind::Network` in its own `list_models` error path,
-  same `http_status_error`-shaped helper). This is a confirmed, separate
-  instance of the same bug pattern. Per Stop-and-Escalate guidance, this is
-  not silently folded into this PR; a follow-up GitHub issue is filed
-  against `savvagent/otto` immediately after this PR merges, so it's
-  tracked and not lost.
-- Low risk otherwise: the change is a pure reclassification of an
-  already-correctly-parsed HTTP status inside one crate, backed by
-  existing test patterns already proven out in `provider-anthropic`/
-  `provider-gemini`.
+- Low risk: the change is a pure reclassification of an already-correctly-
+  parsed HTTP status inside one crate, backed by existing test patterns
+  already proven out in `provider-anthropic`/`provider-gemini`/
+  `provider-openai` (all three already do this correctly; DeepSeek was the
+  outlier).
