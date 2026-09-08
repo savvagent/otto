@@ -4,7 +4,7 @@
 
 **Goal:** Make the three existing dead-end failure notes (connect-time rejection, silent stored-key reconnect failure, turn-time authentication failure) point the user at the already-existing `/connect <id> --rekey` mechanism, without inventing any new `/connect` UX. Closes `savvagent/otto#81`.
 
-**Architecture:** Four sequenced slices: (1) thread `otto_protocol::ErrorKind` through `DynamicCapsOutcome::Rejected`/`ProviderBuildOutcome::Rejected` (currently a bare `String`, discarding whether the rejection was actually a bad key vs. a rate limit/permission/quota failure) so the two connect-time call sites can gate a rekey hint correctly; (2) add a new locale key and the `if` at those two call sites; (3) classify turn-time `HostError::Provider` errors by `ErrorKind::Authentication`, capture the per-turn routed provider id from `TurnEvent::RouteSelected` (not `app.active_provider_id`, which can be stale/wrong under `@`-override or `routing.toml` routing), and surface a matching hint via a new `WorkerMsg::TurnAuthError` variant in the TUI (`main.rs`); (4) mirror slice 3 in the GUI front-end (`egui_app/mod.rs`), which shares the same `WorkerMsg` enum via an exhaustive match with no wildcard arm and therefore must be updated in the same change or the crate does not compile.
+**Architecture:** Three sequenced slices: (1) thread `otto_protocol::ErrorKind` through `DynamicCapsOutcome::Rejected`/`ProviderBuildOutcome::Rejected` (currently a bare `String`, discarding whether the rejection was actually a bad key vs. a rate limit/permission/quota failure) so the two connect-time call sites can gate a rekey hint correctly; (2) add a new locale key and the `if` at those two call sites; (3) classify turn-time `HostError::Provider` errors by `ErrorKind::Authentication`, capture the per-turn routed provider id from `TurnEvent::RouteSelected` (not `app.active_provider_id`, which can be stale/wrong under `@`-override or `routing.toml` routing) via a shared, unit-testable `providers::turn_auth_hint` helper, and surface a matching hint via a new `WorkerMsg::TurnAuthError` variant in **both** front-ends (`main.rs`'s TUI and `egui_app/mod.rs`'s GUI, landed in one commit since `egui_app`'s exhaustive `WorkerMsg` match would not otherwise compile).
 
 **Tech Stack:** Existing workspace crates only (`otto-protocol`, `otto`, `otto-host` read-only). No new dependencies.
 
@@ -174,17 +174,23 @@ unchanged notes.connect-failed text, since --rekey would not fix those."
 
 ---
 
-## Task 3: Surface the same hint after a turn-time authentication failure (TUI)
+## Task 3: Surface the same hint after a turn-time authentication failure (both front-ends)
 
 **Depends on Task 1 (not Task 2 — this task is independent of the connect-time locale key, but shares the `otto_protocol::ErrorKind` import already in scope).**
 
+**Note on commit granularity:** `egui_app` is compiled unconditionally (`mod egui_app;` in `main.rs`), and its `handle_worker_msg` (`crates/otto/src/egui_app/mod.rs:193`) is an exhaustive `match` over `WorkerMsg` with no wildcard arm. Adding `WorkerMsg::TurnAuthError` therefore breaks the crate's build the instant it's introduced, until `egui_app/mod.rs` also handles it. This task's steps are ordered TUI-first for readability, but **land the `WorkerMsg::TurnAuthError` variant and both front-ends' handling of it in the same commit** (Step 8's commit) — do not commit the variant addition (Step 3) separately, and do not expect a green build after Step 3/4/5 in isolation; the first green-build checkpoint in this task is Step 7, after both front-ends are updated.
+
 **Files:**
 - Modify: `crates/otto/locales/{en,es,hi,pt}.toml`
+- Modify: `crates/otto/src/providers.rs`
 - Modify: `crates/otto/src/main.rs`
+- Modify: `crates/otto/src/egui_app/mod.rs`
 
-- [ ] **Step 1: Read the current turn-error path**
+- [ ] **Step 1: Read the current turn-error path in both front-ends**
 
-View `crates/otto/src/main.rs`'s `WorkerMsg` enum (~line 91), the turn-spawn block's `Ok(Err(e)) => tx.send(WorkerMsg::Error(e.to_string()))` (~line 3869), the `WorkerMsg::Error(msg)` match arm (~lines 3428-3479) including its `footer_pending_turn_id`/`current_turn_id`/`turn_terminal_event_seen`/`next_turn_id` bookkeeping, and the `WorkerMsg::Event(e)` arm's `html_block_stop_id` capture pattern (~line 3333) to mirror for `current_turn_provider_id`. Also view `crates/otto-host/src/session.rs`'s `HostError::Provider { name, error }` and `TurnEvent::RouteSelected { provider_id, .. }` (~lines 137, 238), and `crates/otto/src/app.rs`'s `RouteSelected` arm in `apply_turn_event` (~line 1114) to confirm `provider_id`'s type (`otto_protocol::ProviderId`) and that nothing today retains it past that arm.
+View `crates/otto/src/main.rs`'s `WorkerMsg` enum (~line 91), the turn-spawn block's `Ok(Err(e)) => tx.send(WorkerMsg::Error(e.to_string()))` (~line 3869), the `WorkerMsg::Error(msg)` match arm (~lines 3428-3479) including its `footer_pending_turn_id`/`current_turn_id`/`turn_terminal_event_seen`/`next_turn_id` bookkeeping, and the `WorkerMsg::Event(e)` arm's `html_block_stop_id` capture pattern (the `if let TurnEvent::HtmlBlockStop { index } = &e` block a few lines before `app.apply_turn_event(e)`) to mirror for `current_turn_provider_id`. Also view `crates/otto-host/src/session.rs`'s `HostError::Provider { name, error }` and `TurnEvent::RouteSelected { provider_id, .. }` (~lines 137, 238), `crates/otto/src/app.rs`'s `RouteSelected` arm in `apply_turn_event` (~line 1114) to confirm `provider_id`'s type (`otto_protocol::ProviderId`, which exposes `.as_str()` — see `crates/otto-protocol/src/provider_id.rs`) and that nothing today retains it past that arm, and `crates/otto/src/providers.rs`'s `ProviderSpec` (`id: &'static str`, `api_key_required: bool`) and `effective_providers() -> Vec<&'static ProviderSpec>`.
+
+Then view `crates/otto/src/egui_app/mod.rs`'s `OttoApp` struct (its `current_turn_id`/`next_turn_id`/`next_tool_call_id`/`last_tool_call_id` fields — confirm it has **no** `footer_pending_turn_id` and **no** `turn_terminal_event_seen`, unlike `main.rs`), `handle_worker_msg`'s `WorkerMsg::Event(e)` arm (`crates/otto/src/egui_app/mod.rs:195-256`) and `WorkerMsg::Error(msg)` arm (`:257-296`), and its own turn-spawn site (~line 396-415) that independently sends `WorkerMsg::Error`.
 
 - [ ] **Step 2: Add the locale key**
 
@@ -194,9 +200,44 @@ Add to `crates/otto/locales/en.toml` (and the translated equivalents in `es.toml
 turn-auth-failed-hint = "Run /connect %{id} --rekey to enter a different API key for %{name}."
 ```
 
-- [ ] **Step 3: Add `WorkerMsg::TurnAuthError`**
+- [ ] **Step 3: Add a shared, unit-testable hint helper in `providers.rs`**
 
-Add a variant to `WorkerMsg` (~line 91):
+Both front-ends must apply the *identical* gating/lookup logic, so put it once in `crates/otto/src/providers.rs` (which already owns `ProviderSpec`/`effective_providers`) rather than duplicating it in `main.rs` and `egui_app/mod.rs`:
+
+```rust
+/// Render the `--rekey` hint for a turn-time authentication failure, or
+/// `None` if the routed provider is unknown or doesn't take an API key
+/// (in which case `--rekey` would have nothing useful to do).
+///
+/// `routed_provider_id` should come from the per-turn `TurnEvent::
+/// RouteSelected` capture, not `App::active_provider_id` — routing
+/// (`@`-override, modality redirection, `routing.toml`) can select a
+/// different pool entry than the active one for a given turn.
+pub(crate) fn turn_auth_hint(
+    routed_provider_id: Option<&otto_protocol::ProviderId>,
+    provider_display_name: &str,
+) -> Option<String> {
+    let id = routed_provider_id?;
+    let spec = effective_providers()
+        .into_iter()
+        .find(|spec| spec.id == id.as_str())?;
+    if !spec.api_key_required {
+        return None;
+    }
+    Some(
+        rust_i18n::t!("notes.turn-auth-failed-hint", id = spec.id, name = provider_display_name)
+            .to_string(),
+    )
+}
+```
+
+Add a unit test in `providers.rs`'s existing test module asserting: `turn_auth_hint(Some(&ProviderId::new("gemini").unwrap()), "Gemini")` returns `Some(text)` where `text.contains("/connect gemini --rekey")`; `turn_auth_hint(None, "Gemini")` returns `None`; and (using `local`'s spec, `api_key_required: false`) `turn_auth_hint(Some(&ProviderId::new("local").unwrap()), "Local")` returns `None`. This is the plan's concrete regression test for the "routed id, not active id" requirement — the helper takes the routed id as an explicit parameter with no reference to `App::active_provider_id` at all, so the property is structurally enforced and directly testable without spinning up `run_app`'s TUI loop or `OttoApp`'s GUI loop (this crate's `tests/` integration tests cannot reach `src/main.rs`/`src/egui_app/` internals — see the existing note in `crates/otto/tests/`).
+
+Run `cargo test -p otto providers:: 2>&1 | tail -30` — expect green.
+
+- [ ] **Step 4: Add `WorkerMsg::TurnAuthError`**
+
+Add a variant to `WorkerMsg` (~line 91) in `main.rs` (shared by both front-ends):
 
 ```rust
 /// Sent if `run_turn_streaming` returned an error whose ErrorKind is
@@ -208,158 +249,93 @@ TurnAuthError {
 },
 ```
 
-- [ ] **Step 4: Capture `current_turn_provider_id` in the main loop**
+(This alone does not compile — `egui_app`'s exhaustive match now has a missing arm. Continue to Step 5 before attempting a build.)
 
-Declare `let mut current_turn_provider_id: Option<otto_protocol::ProviderId> = None;` alongside `current_turn_id`/`footer_pending_turn_id`/`turn_terminal_event_seen` (~line 3226). In the `WorkerMsg::Event(e)` arm, before `app.apply_turn_event(e)` consumes `e`, add (mirroring the `html_block_stop_id` capture immediately above it):
+- [ ] **Step 5: Wire the TUI (`main.rs`)**
 
-```rust
-if let TurnEvent::RouteSelected { provider_id, .. } = &e {
-    current_turn_provider_id = Some(provider_id.clone());
-}
-```
+1. Declare `let mut current_turn_provider_id: Option<otto_protocol::ProviderId> = None;` alongside `current_turn_id`/`footer_pending_turn_id`/`turn_terminal_event_seen` (~line 3226).
+2. In the `WorkerMsg::Event(e)` arm, before `app.apply_turn_event(e)` consumes `e`, add (mirroring the `html_block_stop_id` capture immediately above it):
+   ```rust
+   if let TurnEvent::RouteSelected { provider_id, .. } = &e {
+       current_turn_provider_id = Some(provider_id.clone());
+   }
+   ```
+3. Reset `current_turn_provider_id = None;` at the same point `turn_terminal_event_seen = true;` is set inside this arm's terminal-event branch, and also at the end of both the `WorkerMsg::Error` arm and the new `WorkerMsg::TurnAuthError` arm (mirroring where `turn_terminal_event_seen = false;` is reset at the end of today's `WorkerMsg::Error` arm) — a stale routed-provider id from a previous turn must never leak into a later one.
+4. Extract the existing `WorkerMsg::Error(msg)` arm's bookkeeping body (the `is_loading` reset, the `Entry::Note` push, the synthetic `TurnStart`/`TurnEnd { success: false }` dance, `turn_terminal_event_seen` reset) into a private async helper (e.g. `record_turn_error(app: &mut App, message: String, footer_pending_turn_id: &mut Option<u32>, current_turn_id: &mut Option<u32>, next_turn_id: &mut u32, last_tool_call_id: &mut Option<u64>, turn_terminal_event_seen: &mut bool)` — exact shape adjusted to match existing local-variable ownership). Update the existing `WorkerMsg::Error(msg)` arm to call it. This helper does **not** own `current_turn_provider_id` — both call sites (the `WorkerMsg::Error` arm and the new `WorkerMsg::TurnAuthError` arm below) reset that field themselves, after the helper call, alongside their respective note-pushing.
+5. At the turn-spawn block's `Ok(Err(e))` arm (~line 3869), classify before sending:
+   ```rust
+   Ok(Err(e)) => {
+       let auth_name = if let otto_host::HostError::Provider { name, error } = &e {
+           (error.kind == otto_protocol::ErrorKind::Authentication).then(|| name.clone())
+       } else {
+           None
+       };
+       match auth_name {
+           Some(provider_display_name) => {
+               let _ = tx
+                   .send(WorkerMsg::TurnAuthError {
+                       message: e.to_string(),
+                       provider_display_name,
+                   })
+                   .await;
+           }
+           None => {
+               let _ = tx.send(WorkerMsg::Error(e.to_string())).await;
+           }
+       }
+   }
+   ```
+   (adjust the exact `HostError`/`ErrorKind` import path to match what's already in scope in this file).
+6. Add a new arm in the main loop's `match msg`:
+   ```rust
+   WorkerMsg::TurnAuthError { message, provider_display_name } => {
+       record_turn_error(app, message, &mut footer_pending_turn_id, &mut current_turn_id, &mut next_turn_id, &mut last_tool_call_id, &mut turn_terminal_event_seen).await;
+       if let Some(hint) = crate::providers::turn_auth_hint(current_turn_provider_id.as_ref(), &provider_display_name) {
+           app.push_note(hint);
+       }
+       current_turn_provider_id = None;
+   }
+   ```
 
-Reset `current_turn_provider_id = None;` everywhere `turn_terminal_event_seen = true;` is currently set inside this arm's terminal-event branch, and also at the end of the `WorkerMsg::Error`/new `WorkerMsg::TurnAuthError` arms (mirroring where `turn_terminal_event_seen = false;` is reset at the end of today's `WorkerMsg::Error` arm), so a stale routed-provider id from a previous turn never leaks into a later one.
+- [ ] **Step 6: Wire the GUI (`egui_app/mod.rs`)**
 
-- [ ] **Step 5: Extract the shared turn-bookkeeping helper**
+1. Add a `current_turn_provider_id: Option<otto_protocol::ProviderId>` field to `OttoApp`'s turn-tracking state (initialized to `None` wherever `current_turn_id`/`next_turn_id` are initialized).
+2. In `handle_worker_msg`'s `WorkerMsg::Event(e)` arm, capture it from `TurnEvent::RouteSelected` identically to Step 5.2 above, before `self.app.apply_turn_event(e)` consumes `e`. Reset it to `None` after any terminal `TurnEvent` (`TurnComplete`, `Cancelled`, `AbortedAfterGrace`) is handled and at the end of both the existing `WorkerMsg::Error` arm and the new `WorkerMsg::TurnAuthError` arm. `OttoApp` has neither `footer_pending_turn_id` nor `turn_terminal_event_seen` — do **not** introduce either into `OttoApp` for this feature; only mirror its existing simpler turn-id bookkeeping.
+3. At the turn-spawn site (~line 411), apply the identical classification from Step 5.5: if the `HostError` is `Provider { error, .. }` with `error.kind == ErrorKind::Authentication`, send `WorkerMsg::TurnAuthError { message, provider_display_name }` instead of `WorkerMsg::Error`.
+4. Add a `WorkerMsg::TurnAuthError { message, provider_display_name }` arm to `handle_worker_msg`, mirroring the existing `WorkerMsg::Error(msg)` arm's bookkeeping shape in this file (its own synthetic-turn-id logic, not `main.rs`'s `record_turn_error`), then call the same `crate::providers::turn_auth_hint(self.app.current_turn_provider_id.as_ref(), &provider_display_name)` and `self.app.push_note(hint)` if `Some`.
 
-Factor the existing `WorkerMsg::Error(msg)` arm's body (the `is_loading` reset, the `Entry::Note` push, the synthetic `TurnStart`/`TurnEnd { success: false }` dance, `turn_terminal_event_seen`/`current_turn_provider_id` reset) into a private async helper, e.g.:
+- [ ] **Step 7: Build and test — first green-build checkpoint**
 
-```rust
-async fn record_turn_error(
-    app: &mut App,
-    message: String,
-    footer_pending_turn_id: &mut Option<u32>,
-    current_turn_id: &mut Option<u32>,
-    next_turn_id: &mut u32,
-    last_tool_call_id: &mut Option<u64>,
-    turn_terminal_event_seen: &mut bool,
-)
-```
+Run `cargo build --workspace 2>&1 | tail -60` — this is the first point since Step 4 that the workspace is expected to compile (both front-ends now handle `WorkerMsg::TurnAuthError`). Run `cargo test -p otto 2>&1 | tail -60`.
 
-(exact parameter list/ownership adjusted as needed to match the existing local-variable shapes in `run_app` — this is a pure extraction, no behavior change). Update the existing `WorkerMsg::Error(msg)` arm to call it.
+- [ ] **Step 8: Manual side-by-side diff check**
 
-Run `cargo build -p otto 2>&1 | tail -30` and `cargo test -p otto 2>&1 | tail -30` — expect green (pure refactor, no new behavior yet).
-
-- [ ] **Step 6: Classify the turn-spawn error and add the new match arm**
-
-At the turn-spawn block's `Ok(Err(e))` arm (~line 3869), classify before sending:
-
-```rust
-Ok(Err(e)) => {
-    let is_auth_failure = matches!(
-        &e,
-        otto_host::HostError::Provider { error, .. } if error.kind == otto_protocol::ErrorKind::Authentication
-    );
-    if is_auth_failure {
-        let otto_host::HostError::Provider { name, .. } = &e else { unreachable!() };
-        let _ = tx
-            .send(WorkerMsg::TurnAuthError {
-                message: e.to_string(),
-                provider_display_name: name.clone(),
-            })
-            .await;
-    } else {
-        let _ = tx.send(WorkerMsg::Error(e.to_string())).await;
-    }
-}
-```
-
-(adjust the exact `HostError` variant destructure/import path to match what compiles — `otto_host::HostError`/`otto_protocol::ErrorKind` per the existing imports in this file). Add a new arm in the main loop's `match msg`:
-
-```rust
-WorkerMsg::TurnAuthError { message, provider_display_name } => {
-    record_turn_error(app, message, &mut footer_pending_turn_id, &mut current_turn_id, &mut next_turn_id, &mut last_tool_call_id, &mut turn_terminal_event_seen).await;
-    let hint = current_turn_provider_id
-        .as_ref()
-        .and_then(|id| crate::providers::effective_providers().into_iter().find(|s| &s.id == id))
-        .filter(|spec| spec.api_key_required);
-    if let Some(spec) = hint {
-        app.push_note(
-            rust_i18n::t!("notes.turn-auth-failed-hint", id = spec.id, name = provider_display_name)
-                .to_string(),
-        );
-    }
-    current_turn_provider_id = None;
-}
-```
-
-- [ ] **Step 7: Add a regression test for the routed-provider case**
-
-Add/extend a test (at whatever level `RouteSelected` handling is already unit-testable — e.g. via `App::apply_turn_event` plus a small harness around the new `current_turn_provider_id` capture logic, extracted into a testable pure function if the full `run_app` loop isn't unit-testable directly) asserting: given a `RouteSelected { provider_id: "gemini", .. }` event followed by a `TurnAuthError`, the hint names `gemini`, not whatever `app.active_provider_id` is set to (simulate `active_provider_id` being a different provider, e.g. `"anthropic"`, to prove the routed id — not the active one — wins).
-
-Run the new test — expect green (if it fails, fix the capture/lookup logic, not the test).
-
-- [ ] **Step 8: Build and full test pass**
-
-Run `cargo build --workspace 2>&1 | tail -60` and `cargo test -p otto 2>&1 | tail -60`.
+Diff `main.rs`'s Step 5 changes against `egui_app/mod.rs`'s Step 6 changes side-by-side to confirm the classification logic and the shared `turn_auth_hint` call are wired identically in both front-ends — this is largely guaranteed by construction now that both call the same `providers::turn_auth_hint` helper, but confirm the `HostError`/`ErrorKind` classification `if`/`match` at each turn-spawn site is the same shape.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add crates/otto/locales crates/otto/src/main.rs
+git add crates/otto/locales crates/otto/src/providers.rs crates/otto/src/main.rs crates/otto/src/egui_app/mod.rs
 git commit -m "fix(otto): hint at --rekey after a turn-time authentication failure
 
-The turn-runner spawn now classifies HostError::Provider errors by
-ErrorKind::Authentication and, when matched, sends a new
-WorkerMsg::TurnAuthError instead of the generic WorkerMsg::Error. The
+Both front-ends' turn-runner spawn now classify HostError::Provider
+errors by ErrorKind::Authentication and, when matched, send a new
+WorkerMsg::TurnAuthError instead of the generic WorkerMsg::Error. Each
 main loop captures the per-turn routed provider id from
-TurnEvent::RouteSelected (not app.active_provider_id, which can be wrong
-under @-override/routing.toml routing) and appends a
-notes.turn-auth-failed-hint note naming the routed provider and the
-existing --rekey command, alongside the unchanged Error: ... note."
+TurnEvent::RouteSelected (not App::active_provider_id, which can be
+wrong under @-override/routing.toml routing) and, via the new shared
+providers::turn_auth_hint helper, appends a notes.turn-auth-failed-hint
+note naming the routed provider and the existing --rekey command,
+alongside the unchanged Error: ... note. Landed as one commit across
+both crates/otto/src/main.rs and crates/otto/src/egui_app/mod.rs since
+egui_app's exhaustive WorkerMsg match would not otherwise compile."
 ```
 
 ---
 
-## Task 4: Mirror Task 3 in the GUI front-end (`egui_app`)
+## Task 4: Final verification
 
-**Depends on Task 3 (introduces `WorkerMsg::TurnAuthError`, which `egui_app`'s exhaustive `handle_worker_msg` match must handle to compile at all).**
-
-**Files:**
-- Modify: `crates/otto/src/egui_app/mod.rs`
-
-- [ ] **Step 1: Read the mirrored structures**
-
-View `crates/otto/src/egui_app/mod.rs`'s `OttoApp` turn-tracking fields (`current_turn_id`, `next_turn_id`, etc., near the struct definition), `handle_worker_msg`'s `WorkerMsg::Event(e)`/`WorkerMsg::Error(msg)` arms (~lines 187-296), and its own turn-spawn site (~line 396-415) that independently sends `WorkerMsg::Error`. Confirm `cargo build -p otto 2>&1 | tail -60` currently fails here with a non-exhaustive-match error after Task 3 lands (expected — this task fixes it).
-
-- [ ] **Step 2: Add `current_turn_provider_id` to `OttoApp`**
-
-Add a `current_turn_provider_id: Option<otto_protocol::ProviderId>` field to `OttoApp`'s turn-tracking state (initialized to `None` wherever `current_turn_id`/`next_turn_id` are initialized). In `handle_worker_msg`'s `WorkerMsg::Event(e)` arm, capture it from `TurnEvent::RouteSelected` identically to `main.rs`'s Task 3 Step 4, before `self.app.apply_turn_event(e)` consumes `e`. Reset it to `None` at the same points `main.rs` does.
-
-- [ ] **Step 3: Classify the turn-spawn error**
-
-At the turn-spawn site (~line 411), apply the identical classification from Task 3 Step 6: if the `HostError` is `Provider { error, .. }` with `error.kind == ErrorKind::Authentication`, send `WorkerMsg::TurnAuthError { message, provider_display_name }` instead of `WorkerMsg::Error`.
-
-- [ ] **Step 4: Add the `WorkerMsg::TurnAuthError` arm to `handle_worker_msg`**
-
-Add an arm mirroring the existing `WorkerMsg::Error(msg)` arm's bookkeeping shape in this file (note: `egui_app` has no `footer_pending_turn_id` concept — mirror its existing simpler synthetic-turn-id logic, not `main.rs`'s), then apply the identical `current_turn_provider_id` → `effective_providers()` → `notes.turn-auth-failed-hint` lookup and `push_note` call from Task 3 Step 6.
-
-- [ ] **Step 5: Build and test**
-
-Run `cargo build --workspace 2>&1 | tail -60` — expect green (this is the point the crate compiles again after Task 3). Run `cargo test -p otto 2>&1 | tail -60`.
-
-- [ ] **Step 6: Manual side-by-side diff check**
-
-Per the spec's Risks section, manually diff `main.rs`'s Task 3 changes against this task's changes side-by-side to confirm the classification logic (which `ErrorKind`/provider-lookup/locale-key/gating conditions trigger the hint) is identical in both front-ends — not just "both compile," but semantically matching behavior.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add crates/otto/src/egui_app/mod.rs
-git commit -m "fix(otto): mirror the --rekey turn-auth hint in the GUI front-end
-
-egui_app/mod.rs shares the WorkerMsg enum with main.rs via an exhaustive
-match with no wildcard arm; it gains the same current_turn_provider_id
-capture, turn-spawn error classification, and WorkerMsg::TurnAuthError
-handling introduced for the TUI in the previous commit, so both
-front-ends give the user the same fix for issue #81."
-```
-
----
-
-## Task 5: Final verification
-
-**Depends on Tasks 1-4.**
+**Depends on Tasks 1-3.**
 
 - [ ] **Step 1: Full workspace build**
 
