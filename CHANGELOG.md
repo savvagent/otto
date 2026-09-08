@@ -8,6 +8,13 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.26.1 - 2026-09-08
+
+### Fixed
+
+- The startup splash and the `/splash` command now share the same rendering logic, so both
+  surfaces stay visually consistent instead of drifting out of sync. (#66)
+
 ## 0.26.0 - 2026-09-08
 
 ### Added
