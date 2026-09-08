@@ -61,42 +61,86 @@ boundary by pointing at the existing mechanism, not inventing a new one.
 
 ## Approach
 
-### 1. Make the connect-time rejection note actionable — only for a keyed rejection
+### 1. Make the connect-time rejection note actionable — only for an actual key rejection
 
 The `--rekey` hint only makes sense for a **credential** rejection on a
-**keyed** provider — `ProviderBuildOutcome::Rejected(reason)` (the key was
-read back and a real request rejected it) on a provider whose
-`spec.api_key_required` is `true`. It does *not* make sense for:
+**keyed** provider. Naively, that looks like "any `ProviderBuildOutcome::
+Rejected(reason)` on a provider whose `spec.api_key_required` is `true`" —
+but `Rejected` is not that specific today: `build_dynamic_caps` in
+`crates/otto/src/plugin/builtin/provider_common.rs` collapses *every*
+`list_models` error other than `Network`/`NotImplemented` into
+`DynamicCapsOutcome::Rejected(e.message.clone())`, **discarding
+`e.kind` entirely** — so a bad key (`ErrorKind::Authentication`), a
+rate-limited account (`ErrorKind::RateLimited`), and a permission/quota
+failure (`ErrorKind::PermissionDenied`) are all indistinguishable
+`Rejected(String)` at the call sites in `perform_connect` and
+`apply_pending_pool_add`. Telling a rate-limited or quota-exhausted user to
+"try a different key" would be actively wrong advice most of the time
+that's not a bad key.
 
-- The generic build `Err(e)` arm at both call sites (`perform_connect`,
-  `apply_pending_pool_add`) — this covers TLS/proxy init failures, fd
-  exhaustion, or any other non-credential build error; telling the user to
-  re-enter a key would not fix those and is actively misleading.
-- `local`/Ollama's `Rejected` case (its `spec.api_key_required` is `false`,
-  `crates/otto/src/providers.rs:90`) — a `list_models` rejection there means
-  "Ollama isn't reachable," not "the key is wrong" (`local` has no key);
-  `--rekey` opens a modal with nothing useful to enter.
+So this now requires a small, additive shape change to `DynamicCapsOutcome`
+and `ProviderBuildOutcome`'s `Rejected` variants — from a bare `String` to a
+struct carrying both the reason and the originating `otto_protocol::
+ErrorKind`:
 
-So, unlike a pure locale-only change, both call sites need a small,
-mechanical branch added: when `ProviderBuildOutcome::Rejected(reason)` and
-`spec.api_key_required`, use a new locale key; otherwise keep using the
-existing `notes.connect-failed` unchanged. Add:
+```rust
+// provider_common.rs
+pub(crate) enum DynamicCapsOutcome {
+    Ready(ProviderCapabilities, Option<String>),
+    Rejected { reason: String, kind: otto_protocol::ErrorKind },
+}
+
+pub(crate) enum ProviderBuildOutcome {
+    Unavailable,
+    Rejected { reason: String, kind: otto_protocol::ErrorKind },
+    Ready(ProviderRegistration, Option<String>),
+}
+```
+
+`build_dynamic_caps`'s final `Err(e) => DynamicCapsOutcome::Rejected(e.
+message.clone())` arm becomes `DynamicCapsOutcome::Rejected { reason: e.
+message.clone(), kind: e.kind }`. Each of the 5 provider plugins
+(`provider_{anthropic,deepseek,gemini,local,openai}/mod.rs`) has one
+`DynamicCapsOutcome::Rejected(reason) => return Ok(ProviderBuildOutcome::
+Rejected(reason))` arm; each becomes `DynamicCapsOutcome::Rejected { reason,
+kind } => return Ok(ProviderBuildOutcome::Rejected { reason, kind })` — a
+pure destructure/re-wrap, no logic change. `provider_common.rs`'s existing
+unit tests (asserting on `DynamicCapsOutcome::Rejected(reason)` /
+`Rejected(_)`) update their patterns to the struct form; their assertions
+(e.g. `reason.contains("invalid api key")`) are unchanged otherwise.
+
+This touches `ProviderBuildOutcome`/`DynamicCapsOutcome` more than the
+original Approach draft intended (see revised Scope below) — it is
+necessary, not optional, because without `kind` there is no way to gate the
+hint correctly.
+
+Of the three existing `Ok(..Rejected(reason))` call sites
+(`crates/otto/src/main.rs:650, 1912, 2689`):
+
+- **Line 650** (the startup `try_provider!` macro, used for the fully
+  silent/log-only startup path, distinct from `apply_pending_pool_add`) is
+  updated to destructure `{ reason, kind: _ }` (kind discarded) — its
+  existing `notes.startup-build-failed` note (verbose-startup-gated, not
+  user-facing by default) is unchanged. This site is *not* one of the three
+  failure sites the issue is about (see Problem), so no hint is added here;
+  it's touched only because the enum shape changed underneath it.
+- **Line 1912** (`apply_pending_pool_add`) and **line 2689**
+  (`perform_connect`) gain the actual behavior change. Add a new locale key:
 
 ```
 notes.connect-rejected-keyed = "Connect to %{id} failed: %{err} Run /connect %{id} --rekey to try a different key."
 ```
 
-(all four locales), and at each `Ok(ProviderBuildOutcome::Rejected(reason))`
-arm in `perform_connect` and `apply_pending_pool_add`, change:
+  (all four locales), and at each site change:
 
 ```rust
 app.push_note(rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string());
 ```
 
-to:
+  to:
 
 ```rust
-let key = if spec.api_key_required {
+let key = if kind == otto_protocol::ErrorKind::Authentication && spec.api_key_required {
     "notes.connect-rejected-keyed"
 } else {
     "notes.connect-failed"
@@ -106,10 +150,10 @@ app.push_note(rust_i18n::t!(key, id = spec.id, err = reason).to_string());
 
 The generic `Err(e)` arms at both call sites are unchanged — they keep
 using `notes.connect-failed` verbatim, for every provider, since a build
-error there is never known to be credential-shaped. This is a narrow,
-additive branch (one new locale key, one `if` at two existing call sites)
-that does not otherwise touch either function's control flow — no new
-returns, no modal reopen, no change to what gets registered or when.
+error there is never known to be credential-shaped. Beyond this one `if`
+and the mechanical enum-shape threading described above, no other control
+flow changes at either site — no new returns, no modal reopen, no change to
+what gets registered or when.
 
 ### 2. Surface the same hint after a turn-time authentication failure
 
@@ -325,11 +369,23 @@ strictly additive, low-risk change.
   `notes.connect-rejected-keyed` (the `--rekey` hint for keyed-provider
   rejections); add new key `notes.turn-auth-failed-hint`.
   `notes.connect-failed` itself is unchanged text-wise.
-- `crates/otto/src/main.rs` — the `if spec.api_key_required` locale-key
-  selection at both `Rejected` arms (`perform_connect`,
-  `apply_pending_pool_add`); new `WorkerMsg::TurnAuthError` variant; the
-  turn-runner spawn block's error classification; the main loop's new match
-  arm; the shared turn-bookkeeping helper extraction.
+- `crates/otto/src/plugin/builtin/provider_common.rs` — thread
+  `otto_protocol::ErrorKind` through `DynamicCapsOutcome::Rejected` and
+  `ProviderBuildOutcome::Rejected` (`String` → `{ reason: String, kind:
+  ErrorKind }`); update the construction site in `build_dynamic_caps` and
+  the existing unit tests' patterns to match.
+- `crates/otto/src/plugin/builtin/provider_{anthropic,deepseek,gemini,
+  local,openai}/mod.rs` — mechanical destructure/re-wrap update at each
+  `DynamicCapsOutcome::Rejected` → `ProviderBuildOutcome::Rejected` pass-
+  through site (no logic change).
+- `crates/otto/src/main.rs` — destructure updates at all three existing
+  `Ok(ProviderBuildOutcome::Rejected(..))` call sites (the startup
+  `try_provider!` macro at ~line 650, discarding `kind`; `apply_pending_pool_add`
+  at ~line 1912 and `perform_connect` at ~line 2689, both gaining the `kind
+  == ErrorKind::Authentication && spec.api_key_required` locale-key
+  selection); new `WorkerMsg::TurnAuthError` variant; the turn-runner spawn
+  block's error classification; the main loop's new match arm; the shared
+  turn-bookkeeping helper extraction.
 - `crates/otto/src/egui_app/mod.rs` — the mirrored `current_turn_provider_id`
   capture, turn-spawn error classification, and `WorkerMsg::TurnAuthError`
   arm in `handle_worker_msg` (Approach §3) — required for the crate to
@@ -340,11 +396,14 @@ strictly additive, low-risk change.
 - Auto-reopening the API-key modal on any failure path (see "Why not..."
   above).
 - Any control-flow change to `perform_connect` or `apply_pending_pool_add`
-  beyond the one `if spec.api_key_required { ... }` locale-key selection at
-  their existing `Rejected` arms — no new branches, no modal reopen, no
-  change to the generic `Err(e)` arms.
-- Any change to `ErrorKind`, `ProviderBuildOutcome`, `HostError`, or the
-  `--rekey` flag's existing implementation — all reused as-is.
+  beyond the one `if kind == ErrorKind::Authentication && spec.
+  api_key_required { ... }` locale-key selection at their existing
+  `Rejected` arms — no new branches, no modal reopen, no change to the
+  generic `Err(e)` arms.
+- Changing `HostError` or the `--rekey` flag's existing implementation —
+  reused as-is. (`ProviderBuildOutcome`/`DynamicCapsOutcome` *are* now
+  in scope, narrowly, as described above — the earlier draft's blanket
+  exclusion of these two types was wrong; see Risks.)
 - Deleting or auto-correcting a stored-bad key. The already-documented
   `creds::save`-before-validate ordering in `perform_connect` (a key that
   fails validation is still persisted) is a pre-existing, separate behavior
@@ -370,17 +429,25 @@ strings are user-facing text, not a wire or schema contract.
   `RouteSelected` fires unconditionally before the first
   `IterationStarted` and is the authoritative source. Justified in Approach
   §2 above.
-- **Gating the `--rekey` hint on `spec.api_key_required` at the `Rejected`
-  arms (not appending it to the shared `notes.connect-failed` key
-  unconditionally) is necessary, not just cosmetic.** `notes.connect-failed`
+- **Gating the `--rekey` hint on `kind == ErrorKind::Authentication &&
+  spec.api_key_required` at the `Rejected` arms (not appending it to the
+  shared `notes.connect-failed` key unconditionally, and not gating on
+  `Rejected` alone) is necessary, not just cosmetic.** `notes.connect-failed`
   is also used for the generic build `Err(e)` arm (host-construction/
-  proxy/TLS failures unrelated to credentials) and would otherwise be
-  reused for `local`/Ollama's keyless `Rejected` case too; a blanket
-  `--rekey` hint on either would be actively misleading. A new key
-  (`notes.connect-rejected-keyed`) selected only when both conditions hold
-  keeps the existing `notes.connect-failed` text accurate for every other
-  case, at the cost of one new locale key across 4 files and a single `if`
-  at each of the two existing `Rejected` arms.
+  proxy/TLS failures unrelated to credentials); `Rejected` alone also covers
+  `RateLimited`/`PermissionDenied`/quota-exhaustion `list_models` failures
+  that `--rekey` cannot fix (confirmed: `build_dynamic_caps` previously
+  discarded `ErrorKind` entirely, collapsing all of these into one untyped
+  reason string — this spec now threads `kind` through
+  `DynamicCapsOutcome`/`ProviderBuildOutcome` specifically so this gate is
+  possible); and would otherwise be reused for `local`/Ollama's keyless
+  `Rejected` case too. A blanket `--rekey` hint on any of these would be
+  actively misleading. A new key (`notes.connect-rejected-keyed`) selected
+  only when both conditions hold keeps the existing `notes.connect-failed`
+  text accurate for every other case, at the cost of one new locale key
+  across 4 files, a `kind: ErrorKind` field threaded through two private
+  enums (and their ~7 mechanical call/construction sites), and a single
+  `if` at each of the two existing `Rejected` arms that act on it.
 - **Non-native-speaker translations for es/hi/pt are acceptable for this
   fix**, consistent with how the existing locale files were evidently
   populated (short, literal phrases mirroring the English structure) — a
@@ -400,15 +467,19 @@ to enter a valid API key" no longer applies to any of the three sites named
 in Problem.
 
 - [ ] `/connect anthropic` (or gemini/openai/deepseek) with a key rejected
-      by `list_models` shows `Connect to anthropic failed: <reason> Run
-      /connect anthropic --rekey to try a different key.` (the new
-      `notes.connect-rejected-keyed` text) instead of the bare failure
-      message. A generic build error (the `Err(e)` arm, any provider) still
-      shows the unchanged `notes.connect-failed` text with no hint.
+      by `list_models` with `ErrorKind::Authentication` shows `Connect to
+      anthropic failed: <reason> Run /connect anthropic --rekey to try a
+      different key.` (the new `notes.connect-rejected-keyed` text) instead
+      of the bare failure message. A `Rejected` outcome with a *different*
+      `kind` (e.g. `RateLimited`, `PermissionDenied` — account disabled,
+      quota exhausted, etc.) shows the unchanged `notes.connect-failed` text
+      with no `--rekey` hint, since rekeying would not fix those. A generic
+      build error (the `Err(e)` arm, any provider) also still shows the
+      unchanged `notes.connect-failed` text with no hint.
 - [ ] `local`/Ollama's `Rejected` case (its `spec.api_key_required` is
       `false`) still shows the unchanged `notes.connect-failed` text with no
-      `--rekey` hint, since re-entering a (nonexistent) key would not fix a
-      connectivity problem.
+      `--rekey` hint regardless of `kind`, since re-entering a (nonexistent)
+      key would not fix a connectivity problem.
 - [ ] The same keyed-rejection hint appears when a stored key goes bad and is
       caught by the silent-reconnect path (`apply_pending_pool_add`'s
       `Rejected` arm) **outside of startup** — i.e. when
@@ -422,7 +493,8 @@ in Problem.
       `savvagent/otto#14`'s deliberate quiet-startup design. When it *is*
       shown (verbose startup, or the non-startup call site), the message
       picks up the same new `notes.connect-rejected-keyed` text
-      automatically (subject to the same `spec.api_key_required` gate).
+      automatically (subject to the same `kind == ErrorKind::Authentication
+      && spec.api_key_required` gate).
 - [ ] A turn routed to a non-active provider (via `@`-override, modality
       redirection, or a `routing.toml` rule) that fails with
       `ErrorKind::Authentication` shows a hint naming the *routed* provider
@@ -455,9 +527,15 @@ in Problem.
   `TurnEvent::RouteSelected` fires unconditionally before any provider call
   that could produce an `Authentication`-kind `HostError::Provider`, so this
   should not occur in practice): same silent-skip behavior.
-- **A provider whose `api_key_required` is `false`** (`local`) producing an
-  `Authentication`-kind error (unexpected, since Ollama has no auth) is
-  handled by the existing `spec.api_key_required` guard — hint is skipped.
+- **A provider whose `api_key_required` is `false`** (`local`) producing a
+  `Rejected` outcome of any `kind` (unexpected, since Ollama has no auth) is
+  handled by the existing `spec.api_key_required` half of the guard — hint
+  is skipped regardless of `kind`.
+- **A `Rejected` outcome whose `kind` is not `Authentication`** (e.g.
+  `RateLimited`, `PermissionDenied` from a disabled org or exhausted quota)
+  on an `api_key_required` provider: handled by the `kind ==
+  ErrorKind::Authentication` half of the guard — hint is skipped, plain
+  `notes.connect-failed` text still shown.
 - **A turn routed to a non-active provider that then fails authentication**:
   correctly handled — see Approach §2's `TurnEvent::RouteSelected` capture;
   the hint names the routed provider, not the active one.
@@ -468,6 +546,15 @@ in Problem.
 
 ## Risks & Open Questions
 
+- Threading `kind: ErrorKind` through `DynamicCapsOutcome::Rejected` and
+  `ProviderBuildOutcome::Rejected` touches 7 call/construction sites across
+  6 files (`provider_common.rs`'s construction site and 3 tests; 5 provider
+  plugins' pass-through arms; 3 sites in `main.rs`) purely to change a
+  tuple variant to a struct variant — mechanical, but the plan should
+  enumerate each site explicitly as its own checklist item (not just "update
+  callers") so none is missed and the crate fails to compile with a clear
+  list of exhaustive-match errors to fix one at a time, rather than a vague
+  "fix compile errors" step.
 - The turn-bookkeeping extraction (shared helper for `WorkerMsg::Error` and
   `WorkerMsg::TurnAuthError`) touches a code path with several closure-
   captured `&mut` locals (`footer_pending_turn_id`, `current_turn_id`,
