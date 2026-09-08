@@ -8,6 +8,16 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.25.4 - 2026-09-08
+
+### Fixed
+
+- Startup no longer trusts an equal-version update-check cache entry as authoritative — it always
+  revalidates live before deciding Otto is up to date, so an available update is now surfaced
+  reliably. (#65)
+- `/update` now performs an authoritative live release check and serializes installer admission so
+  overlapping checks can no longer race into duplicate or failed installs. (#65)
+
 ## 0.25.3 - 2026-09-07
 
 ### Fixed

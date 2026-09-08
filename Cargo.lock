@@ -5226,7 +5226,7 @@ dependencies = [
 
 [[package]]
 name = "otto"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5293,7 +5293,7 @@ dependencies = [
 
 [[package]]
 name = "otto-canvas"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
@@ -5312,11 +5312,11 @@ dependencies = [
 
 [[package]]
 name = "otto-fence"
-version = "0.25.3"
+version = "0.25.4"
 
 [[package]]
 name = "otto-host"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5346,7 +5346,7 @@ dependencies = [
 
 [[package]]
 name = "otto-mcp"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "async-trait",
  "otto-protocol",
@@ -5359,7 +5359,7 @@ dependencies = [
 
 [[package]]
 name = "otto-plugin"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "async-trait",
  "otto-protocol",
@@ -5370,7 +5370,7 @@ dependencies = [
 
 [[package]]
 name = "otto-plugin-wasm"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5396,14 +5396,14 @@ dependencies = [
 
 [[package]]
 name = "otto-plugin-wit"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "wit-parser 0.250.0",
 ]
 
 [[package]]
 name = "otto-protocol"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "schemars",
  "serde",
@@ -5957,7 +5957,7 @@ dependencies = [
 
 [[package]]
 name = "provider-anthropic"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5980,7 +5980,7 @@ dependencies = [
 
 [[package]]
 name = "provider-deepseek"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6003,7 +6003,7 @@ dependencies = [
 
 [[package]]
 name = "provider-gemini"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6026,7 +6026,7 @@ dependencies = [
 
 [[package]]
 name = "provider-local"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6046,7 +6046,7 @@ dependencies = [
 
 [[package]]
 name = "provider-openai"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8678,7 +8678,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "tool-bash"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "rmcp",
@@ -8694,7 +8694,7 @@ dependencies = [
 
 [[package]]
 name = "tool-fs"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "globset",
@@ -8712,7 +8712,7 @@ dependencies = [
 
 [[package]]
 name = "tool-grep"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "grep-matcher",
@@ -8732,7 +8732,7 @@ dependencies = [
 
 [[package]]
 name = "tool-lsp"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -8753,7 +8753,7 @@ dependencies = [
 
 [[package]]
 name = "tool-web"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "anyhow",
  "axum",
