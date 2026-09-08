@@ -3513,10 +3513,10 @@ async fn run_app(
         if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
             continue;
         }
-        let top_screen_id = app.screen_stack.top().map(|(screen, _)| screen.id());
+        let top_screen_id = app.screen_stack.top_id();
         if key.code == KeyCode::Char('c')
             && key.modifiers.contains(KeyModifiers::CONTROL)
-            && global_quit_allowed(top_screen_id.as_deref())
+            && global_quit_allowed(top_screen_id)
         {
             dispatch_failed_turn_end_on_exit(
                 app,
@@ -3547,7 +3547,7 @@ async fn run_app(
             let portable = crate::plugin::convert::key_event_to_portable(*key);
             if portable.modifiers.ctrl
                 && matches!(portable.code, otto_plugin::KeyCodePortable::Char('d'))
-                && global_quit_allowed(top_screen_id.as_deref())
+                && global_quit_allowed(top_screen_id)
             {
                 dispatch_failed_turn_end_on_exit(
                     app,

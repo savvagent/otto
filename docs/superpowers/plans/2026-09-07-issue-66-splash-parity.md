@@ -46,6 +46,9 @@ change)
   aligned with splash any-key dismissal semantics.
 - `crates/otto/src/main.rs` — keep ratatui global quit chords from bypassing
   the topmost splash screen's own key handling.
+- `crates/otto/src/plugin/screen_stack.rs` — cache screen ids alongside active
+  screens so splash special-casing does not add per-frame `Screen::id()`
+  allocations.
 
 ## Task 1: Route `/splash` through the shared splash renderer
 
@@ -54,6 +57,7 @@ change)
 - Modify: `crates/otto/src/splash.rs`
 - Modify: `crates/otto/src/plugin/effects.rs`
 - Modify: `crates/otto/src/egui_app/view.rs`
+- Modify: `crates/otto/src/plugin/screen_stack.rs`
 
 - [ ] Add targeted tests in `crates/otto/src/ui.rs` first covering the
       fullscreen splash-screen render path: a fake `"splash"` screen should
@@ -80,6 +84,9 @@ change)
 - [ ] In `crates/otto/src/egui_app/view.rs`, make fullscreen splash overlays
       consume the shared splash content with centered, non-wrapping logo rows
       so egui matches ratatui instead of reflowing the art.
+- [ ] In `crates/otto/src/plugin/screen_stack.rs`, cache the active screen id
+      when pushing screens so splash-specific render/input branches can consult
+      the top id without adding new per-frame `String` allocations.
 - [ ] Run `cargo test -p otto --bin otto ui::tests::paint_screen` again and
       expect the new targeted tests to pass.
 - [ ] Public-interface check: record that this task does **not** change the SPP

@@ -5,13 +5,19 @@
 
 use otto_plugin::{Screen, ScreenLayout};
 
+struct ScreenEntry {
+    id: String,
+    screen: Box<dyn Screen>,
+    layout: ScreenLayout,
+}
+
 /// LIFO stack of active screens paired with their layout descriptors.
 ///
 /// The layout travels with the screen so the runtime can paint the correct
 /// chrome (border, title, centred modal overlay) around each screen's inner
 /// content without the screen needing to know about terminal geometry.
 pub struct ScreenStack {
-    stack: Vec<(Box<dyn Screen>, ScreenLayout)>,
+    stack: Vec<ScreenEntry>,
 }
 
 impl ScreenStack {
@@ -25,25 +31,36 @@ impl ScreenStack {
     /// Key events and render calls are routed to the new top screen until it
     /// is popped.
     pub fn push(&mut self, screen: Box<dyn Screen>, layout: ScreenLayout) {
-        self.stack.push((screen, layout));
+        let id = screen.id();
+        self.stack.push(ScreenEntry { id, screen, layout });
     }
 
     /// Removes and returns the top `(screen, layout)` pair, or `None` when the
     /// stack is empty.
     pub fn pop(&mut self) -> Option<(Box<dyn Screen>, ScreenLayout)> {
-        self.stack.pop()
+        self.stack.pop().map(|entry| (entry.screen, entry.layout))
     }
 
     /// Returns a shared reference to the top screen and its layout, or `None`
     /// when the stack is empty.
     pub fn top(&self) -> Option<(&dyn Screen, &ScreenLayout)> {
-        self.stack.last().map(|(s, l)| (s.as_ref(), l))
+        self.stack
+            .last()
+            .map(|entry| (entry.screen.as_ref(), &entry.layout))
     }
 
     /// Returns mutable access to the top screen box and a shared reference to
     /// its layout, or `None` when the stack is empty.
     pub fn top_mut(&mut self) -> Option<(&mut Box<dyn Screen>, &ScreenLayout)> {
-        self.stack.last_mut().map(|(s, l)| (s, &*l))
+        self.stack
+            .last_mut()
+            .map(|entry| (&mut entry.screen, &entry.layout))
+    }
+
+    /// Returns the cached id of the top screen, or `None` when the stack is
+    /// empty.
+    pub fn top_id(&self) -> Option<&str> {
+        self.stack.last().map(|entry| entry.id.as_str())
     }
 
     /// Returns the number of screens currently on the stack.

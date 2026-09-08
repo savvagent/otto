@@ -397,6 +397,9 @@ pub fn render(
             frame,
             area,
             chunks[4].y,
+            app.screen_stack
+                .top_id()
+                .expect("top screen id present when top screen exists"),
             top_screen,
             layout,
             palette,
@@ -1218,6 +1221,7 @@ fn paint_screen(
     f: &mut Frame,
     area: Rect,
     input_top: u16,
+    screen_id: &str,
     screen: &dyn otto_plugin::Screen,
     layout: &otto_plugin::ScreenLayout,
     palette: Palette,
@@ -1227,7 +1231,7 @@ fn paint_screen(
 
     match layout {
         ScreenLayout::Fullscreen { .. } => {
-            if screen.id() == "splash" {
+            if screen_id == "splash" {
                 crate::splash::render(f, area, splash_sandbox);
                 return;
             }
@@ -1630,6 +1634,7 @@ mod tests {
         palette: Palette,
         splash_sandbox: crate::splash::SandboxSplashState,
     ) -> Buffer {
+        let screen_id = screen.id();
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
@@ -1639,6 +1644,7 @@ mod tests {
                     frame,
                     area,
                     area.bottom(),
+                    &screen_id,
                     screen,
                     layout,
                     palette,

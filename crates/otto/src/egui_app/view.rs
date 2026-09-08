@@ -74,7 +74,7 @@ fn paint_screen_overlay(state: &mut OttoApp, ctx: &egui::Context, palette: &Pale
         };
         let geom = modal_geometry(avail, layout, glyph_w, glyph_h);
         let id = screen.id();
-        let lines = overlay_lines(screen, layout, geom.region, &state.app.splash_sandbox);
+        let lines = overlay_lines(screen, &id, layout, geom.region, &state.app.splash_sandbox);
         let tips = screen.tips();
         (layout.clone(), id, lines, tips, geom)
     };
@@ -154,11 +154,12 @@ fn paint_screen_overlay(state: &mut OttoApp, ctx: &egui::Context, palette: &Pale
 
 fn overlay_lines(
     screen: &dyn otto_plugin::Screen,
+    screen_id: &str,
     layout: &ScreenLayout,
     region: otto_plugin::Region,
     splash_sandbox: &crate::splash::SandboxSplashState,
 ) -> Vec<OverlayLine> {
-    if matches!(layout, ScreenLayout::Fullscreen { .. }) && screen.id() == "splash" {
+    if matches!(layout, ScreenLayout::Fullscreen { .. }) && screen_id == "splash" {
         return crate::plugin::builtin::splash::screen::shared_splash_styled_lines(splash_sandbox)
             .into_iter()
             .map(|line| OverlayLine {
@@ -530,6 +531,7 @@ mod tests {
                 id: "splash".into(),
                 body: vec![one_span_line("fake splash body")],
             },
+            "splash",
             &ScreenLayout::Fullscreen { hide_chrome: false },
             Region {
                 x: 0,
@@ -589,6 +591,7 @@ mod tests {
                 id: "plugins.manager".into(),
                 body: vec![one_span_line("fullscreen body")],
             },
+            "plugins.manager",
             &ScreenLayout::Fullscreen { hide_chrome: false },
             Region {
                 x: 0,

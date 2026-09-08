@@ -453,12 +453,12 @@ impl OttoApp {
         //    pickers are opened via slash commands (see `submit_prompt`); only
         //    the ratatui TUI drives plugin-bound home accelerators.
         let events = ctx.input(|i| i.events.clone());
-        let top_screen_id = self.app.screen_stack.top().map(|(screen, _)| screen.id());
+        let top_screen_id = self.app.screen_stack.top_id();
         for ev in &events {
             if let Some(k) = convert::egui_event_to_portable(ev) {
                 use otto_plugin::KeyCodePortable as KC;
                 let quit = k.modifiers.ctrl && matches!(k.code, KC::Char('c') | KC::Char('d'));
-                if quit && Self::global_quit_allowed(top_screen_id.as_deref()) {
+                if quit && Self::global_quit_allowed(top_screen_id) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 // Skip global Ctrl-O while a canvas holds focus — the
@@ -466,10 +466,7 @@ impl OttoApp {
                 // and the two would otherwise both fire.
                 let open_picker = k.modifiers.ctrl
                     && matches!(k.code, KC::Char('o'))
-                    && Self::global_open_picker_allowed(
-                        top_screen_id.as_deref(),
-                        &self.app.input_mode,
-                    );
+                    && Self::global_open_picker_allowed(top_screen_id, &self.app.input_mode);
                 if open_picker {
                     self.file_picker.open();
                 }
