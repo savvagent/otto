@@ -2727,6 +2727,10 @@ mod tests {
 
     #[test]
     fn provider_selector_api_key_entry_helper_preserves_placeholder_behavior() {
+        use crate::test_helpers::HOME_LOCK;
+        let _lock = HOME_LOCK.lock().unwrap();
+        rust_i18n::set_locale("en");
+
         let mut app = fresh_app();
         let spec = effective_providers()
             .into_iter()
@@ -2747,6 +2751,8 @@ mod tests {
                 env = spec.api_key_env
             ),
         );
+
+        rust_i18n::set_locale("en");
     }
 
     #[test]

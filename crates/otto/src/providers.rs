@@ -113,9 +113,17 @@ pub const PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD: usize = 5;
 /// display name. Empty queries match every provider so callers can always
 /// derive their visible list from `effective_providers()` through one helper.
 pub(crate) fn provider_matches_query(spec: &ProviderSpec, query: &str) -> bool {
+    provider_label_matches_query(spec.id, spec.display_name, query)
+}
+
+/// Case-insensitive subsequence match against a provider id/display-name pair.
+/// Shared by the legacy `SelectingProvider` modal and the plugin-owned
+/// `connect.picker` screen so `/connect` stays consistent whichever surface
+/// opens it.
+pub(crate) fn provider_label_matches_query(id: &str, display_name: &str, query: &str) -> bool {
     query.is_empty()
-        || matches_case_insensitive_subsequence(spec.id, query)
-        || matches_case_insensitive_subsequence(spec.display_name, query)
+        || matches_case_insensitive_subsequence(id, query)
+        || matches_case_insensitive_subsequence(display_name, query)
 }
 
 fn matches_case_insensitive_subsequence(haystack: &str, needle: &str) -> bool {
