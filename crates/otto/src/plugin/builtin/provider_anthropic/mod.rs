@@ -182,8 +182,8 @@ impl ProviderAnthropicPlugin {
         let (caps, note) =
             match build_dynamic_caps(client.as_ref(), Self::capabilities(), DISPLAY_NAME).await {
                 DynamicCapsOutcome::Ready(caps, note) => (caps, note),
-                DynamicCapsOutcome::Rejected(reason) => {
-                    return Ok(ProviderBuildOutcome::Rejected(reason));
+                DynamicCapsOutcome::Rejected { reason, kind } => {
+                    return Ok(ProviderBuildOutcome::Rejected { reason, kind });
                 }
             };
         let reg = ProviderRegistration::new(

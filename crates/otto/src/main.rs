@@ -647,7 +647,10 @@ async fn bootstrap_pool_host(
                 Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Unavailable)) => {
                     // No credentials stored; user will /connect later.
                 }
-                Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Rejected(reason))) => {
+                Ok(Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Rejected {
+                    reason,
+                    kind: _,
+                })) => {
                     // A key was found but list_models rejected it (bad key,
                     // no credit, rate-limited, org disabled, ...). Don't
                     // register a falsely-healthy provider; always log, only
@@ -1909,12 +1912,13 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot, 
             }
             return;
         }
-        Ok(ProviderBuildOutcome::Rejected(reason)) => {
+        Ok(ProviderBuildOutcome::Rejected { reason, kind }) => {
             // The stored key was rejected by list_models (bad key, no
             // credit, rate-limited, org disabled, ...). Don't register a
             // falsely-healthy provider.
             tracing::warn!(provider = %pending.id.as_str(), reason = %reason,
                 "apply_pending_pool_add: provider key rejected");
+            let _ = kind;
             if show_notes {
                 app.push_note(
                     rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string(),
@@ -2686,12 +2690,16 @@ async fn perform_connect(
             );
             return;
         }
-        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Rejected(reason)) => {
+        Ok(crate::plugin::builtin::provider_common::ProviderBuildOutcome::Rejected {
+            reason,
+            kind,
+        }) => {
             // The just-saved key was rejected by list_models (bad key, no
             // credit, rate-limited, org disabled, ...). Surface the real
             // reason instead of the misleading "key not found" message —
             // this is a direct response to a user-initiated /connect, so
             // always shown (not gated by startup.verbose).
+            let _ = kind;
             app.push_note(
                 rust_i18n::t!("notes.connect-failed", id = spec.id, err = reason).to_string(),
             );
