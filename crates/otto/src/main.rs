@@ -87,6 +87,13 @@ fn global_quit_allowed(top_screen_id: Option<&str>) -> bool {
     top_screen_id != Some("splash")
 }
 
+fn should_route_home_keybinding(key: &crossterm::event::KeyEvent, prompt: &[String]) -> bool {
+    !matches!(
+        key.code,
+        KeyCode::Char('/') if key.modifiers.is_empty() && prompt.iter().any(|line| !line.is_empty())
+    )
+}
+
 fn connect_rejected_note_key(
     kind: otto_protocol::ErrorKind,
     api_key_required: bool,
@@ -4059,7 +4066,9 @@ async fn run_app(
                                     let router = crate::plugin::keybindings::KeybindingRouter::new(
                                         &idx_guard,
                                     );
-                                    router.route(&portable, None)
+                                    should_route_home_keybinding(key, app.input_textarea.lines())
+                                        .then(|| router.route(&portable, None))
+                                        .flatten()
                                 };
                                 if let Some(action) = action {
                                     dispatch_bound_action(app, action).await;
@@ -4532,6 +4541,36 @@ mod model_validation_tests {
     fn global_quit_allowed_is_true_for_other_contexts() {
         assert!(super::global_quit_allowed(None));
         assert!(super::global_quit_allowed(Some("palette")));
+    }
+
+    #[test]
+    fn palette_shortcut_requires_empty_prompt() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        assert!(super::should_route_home_keybinding(
+            &slash,
+            &[String::new()]
+        ));
+        assert!(!super::should_route_home_keybinding(
+            &slash,
+            &[String::from("draft")]
+        ));
+        assert!(!super::should_route_home_keybinding(
+            &slash,
+            &[String::from(""), String::from("still editing")]
+        ));
+    }
+
+    #[test]
+    fn non_palette_keys_still_route_with_prompt_text() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let ctrl_p = KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL);
+        assert!(super::should_route_home_keybinding(
+            &ctrl_p,
+            &[String::from("draft")]
+        ));
     }
 
     #[test]
