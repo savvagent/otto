@@ -60,6 +60,15 @@ pub enum ToolScope {
 pub enum SkillScope {
     ProjectOtto,
     ProjectClaude,
+    /// `<project>/.github/skills/` — Copilot CLI's location. Not a Claude
+    /// Code tier, but repos that predate otto keep their skills here, so
+    /// otto reads it rather than making them move. Project-scoped, so it
+    /// ranks above every user tier; below `.claude/` because that is the
+    /// format otto's own docs tell authors to write.
+    ///
+    /// There is no user-scope equivalent: Copilot CLI defines
+    /// `.github/skills/` only inside a repository.
+    ProjectGithub,
     UserOtto,
     UserClaude,
     /// Contributed by a Claude Code plugin (E2). Ranks below every
@@ -76,6 +85,7 @@ impl SkillScope {
         match self {
             Self::ProjectOtto => "project/.otto".into(),
             Self::ProjectClaude => "project/.claude".into(),
+            Self::ProjectGithub => "project/.github".into(),
             Self::UserOtto => "user/.otto".into(),
             Self::UserClaude => "user/.claude".into(),
             Self::Plugin(id) => format!("plugin:{id}"),

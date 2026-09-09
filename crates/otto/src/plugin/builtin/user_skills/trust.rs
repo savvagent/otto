@@ -44,7 +44,11 @@ pub fn evaluate(spec: &SkillSpec, project_root: &Path, home: &Path) -> SkillTrus
         SkillScope::UserOtto | SkillScope::UserClaude | SkillScope::Plugin(_) => {
             return SkillTrust::Allowed;
         }
-        SkillScope::ProjectOtto | SkillScope::ProjectClaude => {}
+        // `.github/` is project scope like the other two: the skill and
+        // its bundled scripts arrived with the checkout, which is exactly
+        // the exposure this gate exists for. Where the repo chose to put
+        // it changes nothing about who wrote it.
+        SkillScope::ProjectOtto | SkillScope::ProjectClaude | SkillScope::ProjectGithub => {}
     }
 
     let (levels, warning) = trust::load(home);
@@ -100,6 +104,7 @@ mod tests {
         for scope in [
             SkillScope::ProjectOtto,
             SkillScope::ProjectClaude,
+            SkillScope::ProjectGithub,
             SkillScope::UserOtto,
             SkillScope::UserClaude,
         ] {
@@ -108,6 +113,24 @@ mod tests {
                 SkillTrust::Allowed
             );
         }
+    }
+
+    /// A `.github/skills/` skill shipping runnable files is gated the
+    /// same as `.otto/` and `.claude/` — it came with the repository.
+    #[test]
+    fn github_scope_skill_with_scripts_needs_consent() {
+        let home = tempdir().unwrap();
+        let project = PathBuf::from("/some/project");
+        assert_eq!(
+            evaluate(
+                &spec(SkillScope::ProjectGithub, true),
+                &project,
+                home.path()
+            ),
+            SkillTrust::NeedsConsent {
+                project: project.display().to_string()
+            }
+        );
     }
 
     #[test]

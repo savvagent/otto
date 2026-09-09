@@ -1,6 +1,12 @@
-//! Four-tier discovery for `SKILL.md` definitions. Same precedence as
+//! Five-tier discovery for `SKILL.md` definitions. Same precedence as
 //! sub-projects A, B, and C: project beats user, `.otto/` beats
 //! `.claude/`. First-wins dedup by directory slug.
+//!
+//! The spec names four tiers; `<project>/.github/skills/` is a fifth,
+//! added because it is where Copilot CLI puts skills and where repos
+//! that predate otto — this one included — already keep them. It sits
+//! last among the project tiers and has no user-scope counterpart,
+//! because Copilot CLI only defines it inside a repository.
 //!
 //! Unlike agents, a skill is a directory — `skills/<slug>/SKILL.md` —
 //! because the format carries level-3 resources (`scripts/`,
@@ -39,6 +45,10 @@ pub fn discover(project_root: &Path, user_home: &Path) -> Discovered {
         (
             project_root.join(".claude").join("skills"),
             SkillScope::ProjectClaude,
+        ),
+        (
+            project_root.join(".github").join("skills"),
+            SkillScope::ProjectGithub,
         ),
         (user_home.join(".otto").join("skills"), SkillScope::UserOtto),
         (
@@ -200,18 +210,74 @@ mod tests {
     }
 
     #[test]
-    fn finds_skills_in_all_four_tiers() {
+    fn finds_skills_in_all_five_tiers() {
         let project = tempdir().unwrap();
         let home = tempdir().unwrap();
         write_skill(&project.path().join(".otto/skills"), "a", MINIMAL);
         write_skill(&project.path().join(".claude/skills"), "b", MINIMAL);
+        write_skill(&project.path().join(".github/skills"), "e", MINIMAL);
         write_skill(&home.path().join(".otto/skills"), "c", MINIMAL);
         write_skill(&home.path().join(".claude/skills"), "d", MINIMAL);
 
         let found = discover(project.path(), home.path()).skills;
         let mut names: Vec<&str> = found.iter().map(|s| s.name.as_str()).collect();
         names.sort();
-        assert_eq!(names, vec!["a", "b", "c", "d"]);
+        assert_eq!(names, vec!["a", "b", "c", "d", "e"]);
+    }
+
+    /// `.github/` is the lowest project tier, so a repo that keeps the
+    /// same skill in both `.claude/` and `.github/` gets the `.claude/`
+    /// copy — the format otto's docs tell authors to write.
+    #[test]
+    fn precedence_project_claude_beats_project_github() {
+        let project = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        write_skill(
+            &project.path().join(".claude/skills"),
+            "dup",
+            "---\ndescription: project claude\n---\nwinner",
+        );
+        write_skill(
+            &project.path().join(".github/skills"),
+            "dup",
+            "---\ndescription: project github\n---\nloser",
+        );
+
+        let found = discover(project.path(), home.path()).skills;
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].description, "project claude");
+    }
+
+    /// But `.github/` is still a *project* tier, so it outranks every
+    /// user tier — a repo's own skill wins over a same-named personal one.
+    #[test]
+    fn precedence_project_github_beats_user_otto() {
+        let project = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        write_skill(
+            &project.path().join(".github/skills"),
+            "dup",
+            "---\ndescription: project github\n---\nwinner",
+        );
+        write_skill(
+            &home.path().join(".otto/skills"),
+            "dup",
+            "---\ndescription: user otto\n---\nloser",
+        );
+
+        let found = discover(project.path(), home.path()).skills;
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].description, "project github");
+    }
+
+    #[test]
+    fn github_tier_is_labelled_distinctly() {
+        let project = tempdir().unwrap();
+        let home = tempdir().unwrap();
+        write_skill(&project.path().join(".github/skills"), "a", MINIMAL);
+
+        let found = discover(project.path(), home.path()).skills;
+        assert_eq!(found[0].scope.label(), "project/.github");
     }
 
     #[test]

@@ -11,10 +11,10 @@ boundary changes and PATCH captures fixes).
 ### Added
 
 - Otto now ships a built-in `/skills` slash command that lists skills discovered from
-  `.otto/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` at both project and user scope,
-  including each skill's name, source tier, and file-supplied description, with that description
-  explicitly labeled as untrusted text. Skills that fail to parse are skipped and reported as a
-  count rather than silently omitted. (#83)
+  `.otto/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` at both project and user scope, plus
+  the project's `.github/skills/*/SKILL.md`, including each skill's name, source tier, and
+  file-supplied description, with that description explicitly labeled as untrusted text. Skills
+  that fail to parse are skipped and reported as a count rather than silently omitted. (#83)
 
 ### Removed
 

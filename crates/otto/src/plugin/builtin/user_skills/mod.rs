@@ -14,11 +14,14 @@
 //! See `docs/superpowers/specs/2026-09-09-issue-83-claude-code-compat-design.md`.
 //!
 //! Discovery walks the four tiers the spec defines — project beats user,
-//! `.otto/` beats `.claude/` — and *not* `.github/skills/`. An earlier
-//! draft of `/skills` read `.github/skills/`; that tier is deliberately
-//! absent here because it is a Copilot CLI convention, not one Claude
-//! Code writes, and the spec's precedence chain is what the `skill` tool,
-//! the agent tiers, and the command tiers all share.
+//! `.otto/` beats `.claude/` — plus `<project>/.github/skills/`, which
+//! Copilot CLI defines and which repos predating otto (this one included)
+//! already use. `.github/` ranks last among the project tiers and has no
+//! user-scope counterpart, since Copilot CLI only defines it in-repo.
+//!
+//! For the level-3 trust gate `.github/` counts as project scope like the
+//! other two: its skills arrive with the checkout, which is the exposure
+//! the gate exists for.
 
 pub mod discovery;
 pub mod frontmatter;
