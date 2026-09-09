@@ -48,10 +48,11 @@ impl ToolSummaryRouter {
         let registry_guard = self.registry.read().await;
         let pid = indexes_guard.tool_summaries.get(name)?;
         let handle = registry_guard.get(pid)?;
-        // Non-blocking: this runs on the GUI paint thread via `build_model`.
-        // A blocking acquire here can wedge the winit loop (see the matching
-        // note in `slots::SlotRouter::render`). Skip the summary this frame if
-        // the plugin is momentarily locked.
+        // Non-blocking: this runs on the TUI's redraw path, awaited from
+        // `ui::compute_home_frame_data` just before `terminal.draw`. A
+        // blocking acquire here stalls the redraw and can deadlock (see the
+        // matching note in `slots::SlotRouter::render`). Skip the summary this
+        // frame if the plugin is momentarily locked.
         let Ok(plugin) = handle.try_lock() else {
             tracing::trace!(
                 tool = name,

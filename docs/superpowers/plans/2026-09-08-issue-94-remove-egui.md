@@ -94,3 +94,57 @@
 
 - [ ] No code changes in this task. After this feature PR merges, a dedicated release PR per `RELEASING.md` cuts **v0.27.0** (MINOR — breaking removal of the `otto gui` entry point): that PR, not this branch, bumps `workspace.package.version` and every internal `workspace.dependencies` version in the root `Cargo.toml`, and renames `## [Unreleased]` to `## 0.27.0 - <date>`. Do not duplicate the version bump here.
 - [ ] Note for the release PR author: `## [Unreleased]` was empty at branch time even though #89 (`provider-deepseek: classify list_models HTTP errors by status code`) and #92 (`otto: mirror highlighted slash command into the prompt input`) merged after the v0.26.3 tag. Those two merges have no changelog entries. Surface this when cutting v0.27.0 rather than silently shipping them undocumented.
+
+## Task 2b: Sweep stale two-front-end comments
+
+Added after Tasks 1 and 2 were committed and reviewed. Task 2's completeness check was
+`rg 'egui|eframe' crates/ -g '*.rs'`, which by construction cannot see a comment that never
+spells the framework's name. Several comments describing the deleted front-end said "the GUI",
+"the winit event loop", "the paint thread", "the window", or `build_model` (a function that lived
+in the removed `egui_app/render_model.rs`) — so they passed a zero-hit check while still narrating
+a two-front-end world, and in places pointing at subsystems this branch deleted. `winit` was never
+a direct dependency at all; it arrived transitively through `eframe` and left with it. Two
+independent reviewers of the branch flagged the same gap.
+
+**Sites fixed (comments and markdown only — no logic, symbol, or test-name changes):**
+
+- `crates/otto/src/main.rs` — the `bootstrap_host_only`, `bootstrap_app_and_host`, and
+  `build_app_with_host` doc comments described a host-off-thread / `App`-on-the-UI-thread split
+  that only the GUI ever performed. Verified that each of the two halves now has exactly one
+  production caller (`bootstrap_app_and_host`, which awaits them back to back on one task) and
+  said so honestly, keeping the `Send`/`!Send` explanation of *why* the two functions are shaped
+  the way they are rather than inventing a new justification for the split.
+- `crates/otto/src/plugin/slots.rs` and `crates/otto/src/plugin/tool_summaries.rs` — the rationale
+  for the deliberate non-blocking `try_lock` on the render path was written in terms of the winit
+  event loop and `build_model`. The pattern is still correct, so the rationale was re-grounded in
+  what is true now: this runs on the TUI's redraw path (`ui::compute_home_frame_data`, awaited just
+  before `terminal.draw`), where a blocking acquire stalls the redraw, and the registry-read-lock /
+  plugin-`Mutex` ordering against a write-preferring `registry.write()` waiter can deadlock it
+  outright.
+- `crates/otto/src/plugin/effects.rs` — a test doc comment claiming "Both front-ends already gate
+  their palette opener on an empty prompt". There is one front-end.
+- `crates/provider-local/src/lib.rs` — the `connect_timeout` rationale named "the GUI bootstrap"
+  as the caller it protects; it is otto's startup bootstrap.
+- `CHANGELOG.md` — the `### Removed` entry said `otto gui` no longer launches a window without
+  saying what it does instead. Now records that the argument is ignored and the TUI launches
+  (verified: `main()` has no argv branch, and the crate's only other `std::env::args()` consumer,
+  `crates/otto/src/plugin/builtin/self_update/mod.rs:133`, tests solely for `--no-update-check`).
+- `docs/superpowers/specs/2026-05-26-v0.19.0-egui-frontend-design.md` — its
+  `Supersedes: nothing (the ratatui TUI is removed, not deprecated in place)` line sat directly
+  under the new "abandoned" status and read as a contradiction; it is now marked as the abandoned
+  plan's intent. The document body is untouched.
+
+**The check that should have been used**, and that this task asserts:
+
+```
+rg -in 'egui|eframe|winit|build_model' crates/ -g '*.rs'   # must be empty
+rg -in 'GUI|front-end|frontend' crates/ -g '*.rs'          # review every hit by hand
+```
+
+The second grep cannot be a zero-hit assertion — legitimate hits remain — so it is a
+read-every-result check, not an automated one.
+
+**Deliberately left for separate follow-ups:** renaming the test
+`shared_content_marks_logo_rows_centered_for_frontend_parity` in `crates/otto/src/splash.rs` (a
+code change, not a comment change), and relocating the misattached `bootstrap_app_and_host` doc
+comment that sits above `pub(crate) struct HostBoot` in `crates/otto/src/main.rs` (pre-existing).

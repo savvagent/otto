@@ -47,15 +47,16 @@ impl<'a> SlotRouter<'a> {
                 );
                 continue;
             };
-            // Non-blocking acquire: the slot render runs on the GUI's
-            // paint thread (via `build_model`), and a blocking `.lock().await`
-            // here can deadlock the winit event loop. The render path holds
-            // the registry read-lock while acquiring this plugin `Mutex`; a
-            // task holding the plugin lock and waiting on `registry.write()`
-            // (tokio `RwLock` is write-preferring) would otherwise wedge the
-            // whole window. If the plugin is momentarily locked, skip it this
-            // frame — it renders on the next one. Mirrors the deliberate
-            // `try_lock` in `self_update::render_slot`.
+            // Non-blocking acquire: the slot render runs on the TUI's redraw
+            // path (`ui::compute_home_frame_data`, awaited immediately before
+            // `terminal.draw`), so a blocking `.lock().await` here stalls the
+            // redraw and every keypress behind it. It can also deadlock: the
+            // render path holds the registry read-lock while acquiring this
+            // plugin `Mutex`, so a task holding the plugin lock and waiting on
+            // `registry.write()` (tokio `RwLock` is write-preferring) would
+            // wedge the loop outright. If the plugin is momentarily locked,
+            // skip it this frame — it renders on the next one. Mirrors the
+            // deliberate `try_lock` in `self_update::render_slot`.
             let Ok(plugin) = handle.try_lock() else {
                 tracing::trace!(
                     plugin_id = %pid.as_str(),

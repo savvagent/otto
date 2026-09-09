@@ -3141,8 +3141,8 @@ mod tests {
     /// "palette" }` while the textarea holds a real draft must neither
     /// overwrite that draft nor push a palette screen — the effects layer
     /// refuses the open instead of letting the palette seize the user's
-    /// text. Both front-ends already gate their palette opener on an empty
-    /// prompt, so this guards a future plugin/hook-driven open.
+    /// text. The TUI already gates its palette opener on an empty prompt, so
+    /// this guards a future plugin/hook-driven open.
     #[tokio::test]
     async fn palette_open_is_refused_over_non_empty_prompt() {
         use crate::plugin::manifests::Indexes;
