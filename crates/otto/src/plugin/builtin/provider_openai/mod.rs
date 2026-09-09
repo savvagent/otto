@@ -319,7 +319,7 @@ mod tests {
         rust_i18n::set_locale("en");
     }
 
-    /// `/connect openai` with a stored key must NOT emit
+    /// The picker dispatches `connect openai` with a stored key — this must NOT emit
     /// `Effect::PromptApiKey`; it must instead emit `RegisterProvider`
     /// immediately via the keyring path.
     #[tokio::test]
@@ -354,8 +354,9 @@ mod tests {
         rust_i18n::set_locale("en");
     }
 
-    /// `--rekey` must open the API-key modal even with a stored key,
-    /// letting the user update their credentials.
+    /// The picker dispatches `connect openai` with a re-key (Alt+Enter) —
+    /// this must open the API-key modal even with a stored key, letting the
+    /// user update their credentials.
     #[tokio::test]
     #[serial_test::serial]
     async fn handle_slash_with_rekey_flag_opens_modal_even_when_client_exists() {

@@ -1,6 +1,6 @@
 //! `internal:provider-anthropic` — thin Anthropic shim.
 //!
-//! On `HostStarting` (and on `/connect anthropic`) the plugin attempts to
+//! On `HostStarting` (and when the picker dispatches `connect anthropic`) the plugin attempts to
 //! read an API key from the keyring; on success it constructs an
 //! [`provider_anthropic::AnthropicProvider`], wraps it in
 //! [`otto_mcp::InProcessProviderClient`] so the runtime receives a
@@ -143,7 +143,7 @@ impl ProviderAnthropicPlugin {
     ///
     /// Returns [`ProviderBuildOutcome::Unavailable`] when no key is found
     /// in either the keyring or the environment — this is not an error; the
-    /// user can run `/connect anthropic` later.
+    /// user can reconnect by opening `/connect` and picking Anthropic.
     /// Returns [`ProviderBuildOutcome::Rejected`] when a key was found but
     /// `list_models` rejected it (bad key, no credit, rate-limited, org
     /// disabled, ...) — the provider must not be registered.
@@ -347,10 +347,10 @@ mod tests {
     use super::*;
     use crate::plugin::builtin::provider_common::test_support::use_mock_keyring;
 
-    /// With no keyring entry available (CI default), `/connect anthropic`
-    /// must emit [`Effect::PromptApiKey`] so the runtime opens the
-    /// masked input — not a dead-end note telling the user to do
-    /// what they just did.
+    /// With no keyring entry available (CI default), the picker dispatches
+    /// `connect anthropic` and the plugin must emit
+    /// [`Effect::PromptApiKey`] so the runtime opens the masked input — not
+    /// a dead-end note telling the user to do what they just did.
     #[tokio::test]
     #[serial_test::serial]
     async fn no_creds_emits_prompt_api_key() {
@@ -371,7 +371,7 @@ mod tests {
         rust_i18n::set_locale("en");
     }
 
-    /// `/connect anthropic` with a stored key must NOT emit
+    /// The picker dispatches `connect anthropic` with a stored key — this must NOT emit
     /// `Effect::PromptApiKey`; it must instead emit `RegisterProvider`
     /// immediately via the keyring path.
     #[tokio::test]
