@@ -8,7 +8,22 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Added
+
+- Otto now ships a built-in `/skills` slash command that lists skills discovered from
+  `.otto/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` at both project and user scope, plus
+  the project's `.github/skills/*/SKILL.md`, including each skill's name, source tier, and
+  file-supplied description, with that description explicitly labeled as untrusted text. Skills
+  that fail to parse are skipped and reported as a count rather than silently omitted. (#83)
+
 ### Removed
+
+- The `.deb` and `.rpm` Linux packages, along with the `package-linux.yml` workflow and the
+  `cargo-deb` / `cargo-generate-rpm` metadata that fed it. Linux installs go through the shell
+  installer or the platform tarball, which is what the README has always documented; the distro
+  packages were never referenced there. The two packaging tools share no configuration, so the
+  build carried two hand-synced asset lists enumerating all ten binaries. Releases published
+  before this change keep the assets they already have. (#108)
 
 - The experimental `eframe`/`egui` native GUI front-end and its `otto gui` entry point, along with
   the `eframe`, `egui`, and `egui-file-dialog` dependencies. `otto gui` no longer launches a

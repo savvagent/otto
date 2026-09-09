@@ -133,6 +133,10 @@ pub(crate) fn register_builtins(
         Box::new(builtin::themes::ThemesPlugin::new()),
         Box::new(builtin::tool_bash_summary::ToolBashSummaryPlugin::new()),
         Box::new(builtin::user_agents::UserAgentsPlugin::new()),
+        Box::new(builtin::user_skills::UserSkillsPlugin::with_roots(
+            project_root.clone(),
+            dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(".")),
+        )),
         Box::new(builtin::user_slash_commands::UserSlashCommandsPlugin::new(
             trust_levels,
         )),
@@ -264,6 +268,7 @@ mod tests {
             "internal:tool-task-summary",
             "internal:tool-web-summary",
             "internal:user-agents",
+            "internal:user-skills",
             "internal:user-slash-commands",
             "internal:html-canvas",
         ] {
@@ -272,7 +277,7 @@ mod tests {
                 "missing non-provider plugin id: {expected}"
             );
         }
-        assert_eq!(set.plugins.len(), 28);
+        assert_eq!(set.plugins.len(), 29);
 
         // `internal:user-hooks` lives in `hook_entries`, not the `plugins`
         // Vec. The dual-Arc HookEntry pattern means it still appears in
@@ -326,16 +331,17 @@ mod tests {
         // removing view-file, edit-file, and editor-keybindings drops the
         // non-provider count from 30 back down to 27;
         // `/mcp` adds 1 more, bringing non-provider count to 28;
+        // `/skills` adds 1 more, bringing non-provider count to 29;
         // sub-project B (user-hooks) moves to `hook_entries` (not counted
         // in the plugins Vec) but still surfaces in the registry's plugins
         // map via the dual-Arc HookEntry, contributing 1 more registry
         // entry; the DeepSeek provider shim adds a 5th provider plugin;
-        // total registry size is 28 + 5 + 1 = 34.
+        // total registry size is 29 + 5 + 1 = 35.
         let reg = PluginRegistry::new(set);
         assert_eq!(
             reg.len(),
-            34,
-            "registry should have 28 non-provider + 5 provider + 1 hook plugin"
+            35,
+            "registry should have 29 non-provider + 5 provider + 1 hook plugin"
         );
         assert_eq!(
             reg.provider_count(),
