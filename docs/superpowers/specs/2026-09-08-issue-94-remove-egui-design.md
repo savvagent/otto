@@ -32,7 +32,9 @@ Remove the whole `crates/otto/src/egui_app/` directory (`mod.rs`, `view.rs`, `co
 
 ### 2. Drop the GUI-only dependencies
 
-Remove `eframe`, `egui`, `egui-file-dialog`, and `futures` from `crates/otto/Cargo.toml` and from `[workspace.dependencies]` in the root `Cargo.toml`, along with the comment blocks that explain their GUI-specific pins (the eframe default-features warning and the `egui-file-dialog` version pin note). `futures` goes with them because `grep` over `crates/otto/src` finds zero uses outside `egui_app` — it was added for the foreign-executor `block_on` in the synchronous egui paint pass.
+Remove `eframe`, `egui`, and `egui-file-dialog` from **both** `crates/otto/Cargo.toml` and `[workspace.dependencies]` in the root `Cargo.toml`, along with the comment blocks that explain their GUI-specific pins (the eframe default-features warning and the `egui-file-dialog` version pin note).
+
+`futures` is different and must be handled separately: remove it from `crates/otto/Cargo.toml` **only**, and leave `futures = "0.3"` in the root `[workspace.dependencies]` exactly as it is. `crates/otto`'s use of it was egui-only (the foreign-executor `block_on` in the synchronous paint pass, `egui_app/mod.rs:88`), but seven other workspace members declare `futures.workspace = true` and use it in real code: `otto-host`, `provider-anthropic`, `provider-deepseek`, `provider-gemini`, `provider-local`, `provider-openai`, and `tool-web`. Deleting the root entry makes all seven fail to resolve.
 
 `image` stays: it is used by `frame_to_dynamic_image` in `crates/otto/src/app.rs:152-176` and is a transitive dep of `ratatui-image` and `blitz-paint`. (`ui.rs` renders through `ratatui_image`, not `image` directly.)
 
@@ -40,7 +42,7 @@ Remove `eframe`, `egui`, `egui-file-dialog`, and `futures` from `crates/otto/Car
 
 `App::prefill_input` (`crates/otto/src/app.rs:1972-1985`) does two things: it replaces `input_textarea` (what the TUI reads) and it stages the same text on `pending_prefill`, a one-shot bridge that exists solely because the egui shell keeps its prompt buffer outside `App` (`OttoApp::prompt`). With egui gone, the bridge has no consumer.
 
-Remove the `pending_prefill` field, its initializer, and `App::take_pending_prefill`. `prefill_input` itself stays — the TUI depends on it, and the palette's prompt-preview behavior from #80 must not regress.
+Remove the `pending_prefill` field, its initializer, and `App::take_pending_prefill`. `prefill_input` keeps its signature and its `input_textarea` behavior, but its body loses the two bridge lines at `crates/otto/src/app.rs:1973-1974` (the `// Bridge for out-of-App prompt buffers` comment and `self.pending_prefill = Some(text.clone());`), after which `text.clone()` collapses to `text`. `prefill_input` itself stays — the TUI depends on it, and the palette's prompt-preview behavior from #80 must not regress.
 
 `take_pending_prefill` has **two** test call sites, both of which must come out, and they are not equivalent:
 
@@ -54,7 +56,13 @@ Remove the `pending_prefill` field, its initializer, and `App::take_pending_pref
 - `crates/otto/src/main.rs:241-252` currently holds **three** stacked doc comments where there should be two. `:241-244` documents `bootstrap_app_and_host` ("Shared by the ratatui TUI (`run_app`) and the egui front-end"); `:245-248` is an orphan second `HostBoot` summary that exists only to explain the GUI's off-thread bootstrap ("see the GUI's `GuiApp` bootstrap in `egui_app`"); `:249-252` is the real `HostBoot` doc block and is GUI-free already. Reword `:241-244` to drop the second front-end, delete `:245-248` outright rather than rewording it, and leave `:249-252` alone. `HostBoot` and `bootstrap_host_only` are still used by the TUI path (`main.rs:414-435`) and stay; the `#[allow(dead_code)]` on `HostBoot` (`:253`) should be re-evaluated once the GUI's field reads are gone.
 - `docs/superpowers/specs/2026-05-26-v0.19.0-egui-frontend-design.md`: flip its status to record that the migration was abandoned, citing #94. The five plans and two specs stay in place — they are the historical record of shipped work, and this repo has no archive directory.
 
-### 5. Let the compiler find the rest
+### 5. Delete `xterm_colors`, which loses its only consumer
+
+`crates/otto/src/plugin/builtin/themes/xterm_colors.rs` exposes `pub(crate) fn xterm_256_rgb`, and its only non-test caller anywhere in the crate is `egui_app/convert.rs:14` (plus 17 call sites inside that file). The TUI never calls it — ratatui resolves indexed colors natively, which is why the helper was written for the GUI sink in the first place.
+
+Once `egui_app` is gone the function is dead, and `crates/otto` is a binary crate, so `dead_code` applies to `pub` items too and `clippy -D warnings` fails. Delete `xterm_colors.rs` outright along with the `pub mod xterm_colors;` declaration at `crates/otto/src/plugin/builtin/themes/mod.rs:12`. Its three unit tests go with it; that is correct, not a lost-coverage regression, because the code under test no longer exists. Do not keep the module alive behind an `#[allow(dead_code)]` — that preserves an unreachable helper and hides the fact that nothing needs it.
+
+### 6. Let the compiler find the rest
 
 `crates/otto` is compiled with `-D warnings` in CI. Anything that becomes dead once `egui_app` is gone — a `pub(crate)` helper in `main.rs` with no remaining caller, an unused import — surfaces as a `dead_code` or `unused_imports` error rather than needing to be enumerated up front. `cargo clippy --workspace --all-targets` is the authority on completeness here, not a hand-written list.
 
@@ -63,7 +71,8 @@ Remove the `pending_prefill` field, its initializer, and `App::take_pending_pref
 **In:**
 - Delete `crates/otto/src/egui_app/` (9 files).
 - Remove `mod egui_app;` and the `otto gui` argv branch from `crates/otto/src/main.rs`.
-- Remove `eframe`, `egui`, `egui-file-dialog`, `futures` from `crates/otto/Cargo.toml` and the root `Cargo.toml`; regenerate `Cargo.lock`.
+- Remove `eframe`, `egui`, `egui-file-dialog` from `crates/otto/Cargo.toml` **and** the root `Cargo.toml`; remove `futures` from `crates/otto/Cargo.toml` **only**; regenerate `Cargo.lock`.
+- Delete `crates/otto/src/plugin/builtin/themes/xterm_colors.rs` and its `pub mod` declaration — `egui_app` was its only consumer.
 - Remove `App::pending_prefill` + `App::take_pending_prefill` and the bridge assertions in `crates/otto/src/plugin/effects.rs`.
 - Update `README.md` and the GUI-referencing doc comments listed above.
 - Flip the v0.19.0 egui design spec's status to abandoned.
@@ -91,7 +100,8 @@ The GUI was documented as experimental and in-progress from the day it shipped, 
 ## Premise corrections
 
 - **Issue #94's framing that the migration "was never executed" is accurate but incomplete.** Plans 1–4 *were* executed and shipped (PRs #104–#107 per the Plan 5 roadmap block); only Plan 5, the teardown that would have deleted ratatui, was not. What is being removed is shipped, working, partial code — not an abandoned branch.
-- **Issue #94 lists `futures` as removable "only egui_app uses it."** Verified: zero `futures` references in `crates/otto/src` outside `egui_app`.
+- **Issue #94's claim that `futures` should be removed "from both the workspace root and `crates/otto` manifests" is wrong and would break the build.** The narrow claim behind it is true — zero `futures` references in `crates/otto/src` outside `egui_app` — but seven other workspace members consume the root `[workspace.dependencies]` entry via `futures.workspace = true`. Only the `crates/otto/Cargo.toml` entry may go. The issue's acceptance criterion should be corrected to match.
+- **Issue #94 does not mention `xterm_colors`.** `egui_app/convert.rs` is the sole consumer of `xterm_256_rgb`, so the module dies with the GUI and must be deleted for `clippy -D warnings` to pass. This is in scope even though the issue does not name it.
 - **Issue #94 suggests the prompt-prefill bridge "may now be dead" and should be checked.** It is dead in full: `take_pending_prefill` has exactly one caller family (the egui paint pass) plus its own test assertion. `prefill_input` is *not* dead and must stay.
 - **Issue #94 does not name a version bump.** This spec fixes it at MINOR (`v0.27.0`) on the breaking-change reading above, rather than leaving it to the release step.
 
@@ -107,7 +117,7 @@ The GUI was documented as experimental and in-progress from the day it shipped, 
 
 `crates/otto` builds and ships one front-end — the ratatui TUI — with no egui code, no egui dependencies, and no GUI-shaped accommodations left in shared state, and with TUI behavior unchanged.
 
-- [ ] `crates/otto/src/egui_app/` does not exist, and `rg 'egui|eframe' crates/ -g '*.rs' -g '*/Cargo.toml'` returns no hits. (Do **not** grep bare `egui` across all of `crates/` — `crates/otto/locales/pt.toml` contains the substring inside ordinary Portuguese words at `:80`, `:81`, `:240`, `:242` (`Prosseguindo`, `seguinte`), which have nothing to do with the GUI and must not be touched.)
+- [ ] `crates/otto/src/egui_app/` does not exist, and `rg 'egui|eframe' crates/ -g '*.rs' -g '**/Cargo.toml'` returns no hits. Note the `**/` — a `*/Cargo.toml` glob silently matches nothing, which would make the manifest half of this check a no-op. (Do **not** grep bare `egui` across all of `crates/` — `crates/otto/locales/pt.toml` contains the substring inside ordinary Portuguese words at `:80`, `:81`, `:240`, `:242` (`Prosseguindo`, `seguinte`), which have nothing to do with the GUI and must not be touched.)
 - [ ] `eframe`, `egui`, `egui-file-dialog`, and `futures` appear in neither `Cargo.toml`, and `Cargo.lock` no longer resolves `eframe`/`egui`/`egui-file-dialog`.
 - [ ] `cargo build`, `cargo build --workspace --all-targets`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` are all green.
 - [ ] `cargo run -p otto` launches the TUI, renders the home view, and `/` opens the command palette with the prompt preview from #80 still working — verified by hand, since CI cannot.
@@ -119,7 +129,7 @@ The GUI was documented as experimental and in-progress from the day it shipped, 
 - **`otto gui` after removal.** The argument falls through to whatever the TUI already does with an unrecognized first argument. Determine that behavior during implementation and state it in the plan; if it would panic or produce a confusing hang, that is a defect to fix, not to inherit. A plain TUI launch that ignores the argument is acceptable.
 - **Residual dead code in `main.rs`.** Helpers that existed only for the GUI bootstrap (`bootstrap_host_only`'s split, `HostBoot`'s `#[allow(dead_code)]`) may go partly or fully unused. Do not delete anything the TUI still calls; let clippy decide, and re-check whether `#[allow(dead_code)]` on `HostBoot` is still earned.
 - **`Cargo.lock` churn.** Dropping `eframe` removes a large transitive subtree. The lockfile diff will be large and that is expected; it must be regenerated by `cargo check --workspace`, not hand-edited.
-- **Linux build deps.** `libfontconfig1-dev` is still required after this change — it belongs to Blitz via `otto-canvas`, not to egui. Do not remove it from the dist apt dependencies.
+- **Linux build deps.** `libfontconfig1-dev` is still required after this change — it belongs to Blitz via `otto-canvas`, not to egui. It is installed by `.github/workflows/ci.yml`, not by `[workspace.metadata.dist.dependencies.apt]` (which lists only `libdbus-1-dev` and `pkg-config`). Leave both untouched.
 - **Windows CI carve-out.** `otto-canvas`/`otto` remain excluded from the Windows test matrix for the documented Blitz font-discovery hang. That exclusion is unrelated to egui and must not be "fixed" as part of this change.
 
 ## Risks & Open Questions
