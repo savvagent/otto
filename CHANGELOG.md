@@ -10,6 +10,13 @@ boundary changes and PATCH captures fixes).
 
 ### Removed
 
+- The `.deb` and `.rpm` Linux packages, along with the `package-linux.yml` workflow and the
+  `cargo-deb` / `cargo-generate-rpm` metadata that fed it. Linux installs go through the shell
+  installer or the platform tarball, which is what the README has always documented; the distro
+  packages were never referenced there. The two packaging tools share no configuration, so the
+  build carried two hand-synced asset lists enumerating all ten binaries. Releases published
+  before this change keep the assets they already have. (#108)
+
 - The experimental `eframe`/`egui` native GUI front-end and its `otto gui` entry point, along with
   the `eframe`, `egui`, and `egui-file-dialog` dependencies. `otto gui` no longer launches a
   window — the `gui` argument is simply ignored and the TUI launches as usual; the ratatui TUI is

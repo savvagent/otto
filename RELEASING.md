@@ -69,21 +69,12 @@ then dropping this manual process.
    arm64, Linux x86_64/aarch64, Windows msvc) and publishes the GitHub
    Release with those assets.
 
-6. **Linux `.deb`/`.rpm` packages attach automatically.** Once `release.yml`
-   finishes, `.github/workflows/package-linux.yml` runs automatically via its
-   `workflow_run` trigger and uploads `.deb`/`.rpm` packages to the same
-   release. If it ever fails or needs to be re-run without rebuilding the
-   whole release, dispatch it manually:
-
-   ```sh
-   gh workflow run "Package (deb/rpm)" -f tag=vX.Y.Z
-   ```
-
-7. **Verify the release:**
+6. **Verify the release:**
 
    ```sh
    gh release view vX.Y.Z
    ```
 
-   Confirm all expected platform archives/installers plus `.deb`/`.rpm` are
-   attached.
+   Confirm all expected platform archives and installers are attached.
+   otto does not ship `.deb`/`.rpm` packages — Linux installs go through the
+   shell installer or the platform tarball.
