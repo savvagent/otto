@@ -659,6 +659,27 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         let screen: Box<dyn otto_plugin::Screen> = Box::new(PluginsManagerScreen::with_rows(rows));
         (screen, layout)
     } else if id == "palette" {
+        // The palette mirrors its selection into the prompt — `open_screen`
+        // seeds the preview below and `PaletteScreen` clears it again on
+        // Esc / empty-result Enter / no-arg Enter — so it owns the draft
+        // from the first frame. It may therefore only open over an empty
+        // prompt: the TUI already refuses to emit
+        // `OpenScreen { id: "palette" }` while text is present, because it
+        // routes `/` to the palette only on an empty prompt. This guard
+        // keeps a future plugin/hook-driven open from seizing and
+        // destroying a real draft, and is purely defensive today.
+        if app
+            .input_textarea
+            .lines()
+            .iter()
+            .any(|line| !line.is_empty())
+        {
+            tracing::debug!(
+                "refusing to open the command palette: the prompt is non-empty, \
+                 and the palette would overwrite the draft"
+            );
+            return Ok(());
+        }
         let layout = {
             let plugin = handle.lock().await;
             let manifest = plugin.manifest();
@@ -672,7 +693,12 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
                 .clone()
         };
         let commands = build_palette_commands(&reg, &idx).await;
-        let screen: Box<dyn otto_plugin::Screen> = Box::new(PaletteScreen::with_commands(commands));
+        let screen = PaletteScreen::with_commands(commands);
+        // Seed the prompt preview with the first highlighted command so
+        // the prompt and palette are synchronized from the first frame.
+        let preview = screen.prompt_preview();
+        app.prefill_input(preview);
+        let screen: Box<dyn otto_plugin::Screen> = Box::new(screen);
         (screen, layout)
     } else if id == crate::plugin::builtin::prompt_keybindings::SCREEN_ID {
         // Build the dynamic plugin-contributed section from the live
@@ -1310,17 +1336,6 @@ mod tests {
             app.input_textarea.lines(),
             &["/bash ".to_string()],
             "PrefillInput must install the literal text as a single line"
-        );
-        assert_eq!(
-            app.take_pending_prefill().as_deref(),
-            Some("/bash "),
-            "PrefillInput must also stage the text on the pending_prefill bridge \
-             that the egui prompt drains"
-        );
-        assert_eq!(
-            app.take_pending_prefill(),
-            None,
-            "take_pending_prefill is one-shot: draining the bridge leaves it empty",
         );
     }
 
@@ -3001,6 +3016,188 @@ mod tests {
         assert_eq!(
             app.pending_turn_cancellation.as_deref(),
             Some("blocked by user hook")
+        );
+    }
+
+    /// Regression test: opening the palette through Effect::OpenScreen must
+    /// immediately prefill the prompt with the first highlighted slash command
+    /// so the palette and prompt are synchronized from the first frame.
+    #[tokio::test]
+    async fn palette_open_screen_prefills_prompt_with_first_command() {
+        use crate::plugin::manifests::Indexes;
+        use crate::plugin::register_builtins;
+        use crate::plugin::registry::PluginRegistry;
+        use otto_plugin::KeyCodePortable;
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
+            Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
+            Arc::new(tokio::sync::RwLock::new(
+                crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
+            )),
+            "test-session".into(),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
+                "/t.json",
+            ))),
+            crate::McpManagerSeed::default(),
+            vec![],
+        );
+        let registry = PluginRegistry::new(set);
+        let indexes = Indexes::build(&registry).await.expect("indexes build");
+
+        let mut app = {
+            let _lock = HOME_LOCK.lock().unwrap();
+            let _home = HomeGuard::new();
+            fresh_app()
+        };
+        app.install_plugin_runtime(registry, indexes);
+
+        // Open the palette through apply_effects.
+        apply_effects(
+            &mut app,
+            vec![Effect::OpenScreen {
+                id: "palette".into(),
+                args: otto_plugin::ScreenArgs::None,
+            }],
+        )
+        .await
+        .expect("open palette screen");
+
+        // The prompt should be prefilled with the first highlighted command.
+        // Get the first line of the input_textarea.
+        let prompt_lines = app.input_textarea.lines();
+        let first_line = prompt_lines.first().map(|s| s.as_str()).unwrap_or("");
+
+        // Build the expected first command by sorting the slash commands alphabetically.
+        let idx = app.plugin_indexes.as_ref().unwrap().read().await;
+        let mut entries: Vec<String> = idx.slash.keys().cloned().collect();
+        drop(idx);
+        entries.sort();
+        assert!(
+            !entries.is_empty(),
+            "the builtin slash index must be non-empty for the seed assertion below"
+        );
+
+        let expected_first_command = format!("/{}", entries[0]);
+
+        // The prompt should equal the expected first command, not just start with /.
+        assert_eq!(
+            first_line, expected_first_command,
+            "prompt should equal the first highlighted command, got: '{first_line}' but expected: '{expected_first_command}'"
+        );
+
+        // Verify the screen was pushed to the stack.
+        let screen_ref = app
+            .screen_stack
+            .top()
+            .expect("palette screen should be on the stack");
+        assert_eq!(screen_ref.0.id(), "palette");
+
+        // Now test the close path: press Esc on the top (palette) screen. It
+        // emits CloseScreen + PrefillInput{""}, which must pop the palette AND
+        // clear the seeded preview from the prompt. This doubles as the
+        // app-level Esc-close regression without dispatching a live slash
+        // against the alphabetically-first builtin (which would couple this
+        // test to that builtin being no-arg and dispatching real effects).
+        let (screen, _) = app
+            .screen_stack
+            .top_mut()
+            .expect("palette screen should be on the stack");
+
+        let esc_event = otto_plugin::KeyEventPortable {
+            code: KeyCodePortable::Esc,
+            modifiers: Default::default(),
+        };
+        let esc_effects = screen
+            .on_key(esc_event)
+            .await
+            .expect("screen should handle Esc");
+
+        // Apply the Esc effects (CloseScreen + PrefillInput with empty text).
+        apply_effects(&mut app, esc_effects)
+            .await
+            .expect("apply Esc effects");
+
+        // The palette screen is popped and the seeded preview is cleared.
+        assert!(
+            app.screen_stack.is_empty(),
+            "Esc on the palette must pop the palette screen"
+        );
+        let cleared_lines = app.input_textarea.lines();
+        let cleared_first_line = cleared_lines.first().map(|s| s.as_str()).unwrap_or("");
+
+        assert_eq!(
+            cleared_first_line, "",
+            "prompt preview should be cleared after Esc, but got: '{cleared_first_line}'"
+        );
+    }
+
+    /// The palette mirrors its selection into the prompt (and clears it
+    /// again on Esc / empty-result Enter / no-arg Enter), so it may only
+    /// open over an empty prompt. Applying `Effect::OpenScreen { id:
+    /// "palette" }` while the textarea holds a real draft must neither
+    /// overwrite that draft nor push a palette screen — the effects layer
+    /// refuses the open instead of letting the palette seize the user's
+    /// text. The TUI already gates its palette opener on an empty prompt, so
+    /// this guards a future plugin/hook-driven open.
+    #[tokio::test]
+    async fn palette_open_is_refused_over_non_empty_prompt() {
+        use crate::plugin::manifests::Indexes;
+        use crate::plugin::register_builtins;
+        use crate::plugin::registry::PluginRegistry;
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
+            Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
+            Arc::new(tokio::sync::RwLock::new(
+                crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
+            )),
+            "test-session".into(),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
+                "/t.json",
+            ))),
+            crate::McpManagerSeed::default(),
+            vec![],
+        );
+        let registry = PluginRegistry::new(set);
+        let indexes = Indexes::build(&registry).await.expect("indexes build");
+
+        let mut app = {
+            let _lock = HOME_LOCK.lock().unwrap();
+            let _home = HomeGuard::new();
+            fresh_app()
+        };
+        app.install_plugin_runtime(registry, indexes);
+
+        // Seed a real draft the way the TUI textarea would hold one.
+        let draft = vec!["my half-written thought".to_string()];
+        app.input_textarea = crate::app::make_input_textarea(draft.clone());
+
+        apply_effects(
+            &mut app,
+            vec![Effect::OpenScreen {
+                id: "palette".into(),
+                args: otto_plugin::ScreenArgs::None,
+            }],
+        )
+        .await
+        .expect("a refused palette open must return Ok, not an error");
+
+        // The draft is untouched — no seed, no staged clear, no screen push.
+        assert_eq!(
+            app.input_textarea.lines(),
+            &draft[..],
+            "palette open over a non-empty prompt must not alter the draft"
+        );
+        assert!(
+            app.screen_stack.is_empty(),
+            "a refused palette open must not push a palette screen"
         );
     }
 }

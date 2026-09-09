@@ -10,10 +10,38 @@ boundary changes and PATCH captures fixes).
 
 ### Added
 
-- Otto now ships a built-in `/skills` slash command that lists repo-authored skills discovered from
-  `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md`, including each skill's name,
-  location, and repo-supplied description, with that description explicitly labeled as untrusted
-  repo text. (#83)
+- Otto now ships a built-in `/skills` slash command that lists skills discovered from
+  `.otto/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` at both project and user scope,
+  including each skill's name, source tier, and file-supplied description, with that description
+  explicitly labeled as untrusted text. Skills that fail to parse are skipped and reported as a
+  count rather than silently omitted. (#83)
+
+### Removed
+
+- The experimental `eframe`/`egui` native GUI front-end and its `otto gui` entry point, along with
+  the `eframe`, `egui`, and `egui-file-dialog` dependencies. `otto gui` no longer launches a
+  window — the `gui` argument is simply ignored and the TUI launches as usual; the ratatui TUI is
+  unchanged and is now otto's only front-end. The removed code stays recoverable from git history.
+  (#94)
+
+## 0.26.4 - 2026-09-08
+
+### Added
+
+- The inline `/` command palette now mirrors the currently-highlighted slash command into the
+  prompt input: pressing `/` over an empty prompt opens the palette and immediately seeds the
+  prompt with the first matching command, typing and arrow-navigation keep the prompt in sync with
+  the highlighted row (falling back to `/<filter>` when nothing matches), and closing or running a
+  command clears the staged text. The palette only ever opens over an empty prompt, so an
+  in-progress draft is never overwritten. Both the ratatui TUI and the egui front-end are covered.
+  (#80)
+
+### Fixed
+
+- The DeepSeek provider's `list_models` call (used by connect-time validation) now classifies
+  non-2xx `/models` responses by HTTP status into the matching error kind instead of always
+  reporting a network error, so a rejected or expired key surfaces the same `--rekey` recovery
+  path as turn-time authentication failures. (#89)
 
 ## 0.26.3 - 2026-09-08
 

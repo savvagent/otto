@@ -92,31 +92,7 @@ cargo build
 
 # Run the TUI. With nothing configured, it boots disconnected.
 cargo run -p otto
-
-# Or launch the experimental native GUI (egui) instead of the TUI.
-cargo run -p otto -- gui
 ```
-
-> **Experimental GUI (v0.19.0, in progress).** `otto gui` opens a
-> native `eframe`/`egui` window that reuses the exact same host, plugin
-> runtime, and turn machinery as the TUI — it paints the conversation log,
-> the plugin header/tips/footer slots, and a prompt that submits streaming
-> turns. It is being built alongside the ratatui TUI, which remains the
-> default and is unchanged. Screens and modals now work: the
-> theme/model/language/connect/plugins/changelog pickers open and operate
-> via slash commands (`/theme`, `/model`, `/language`, `/connect`,
-> `/plugins`, `/changelog`, …). The active screen is painted as an egui
-> overlay — centered modal, full-screen, or bottom sheet — with chrome,
-> tips, and a dimmed backdrop, and keyboard input routes to it. `Ctrl-O`
-> from the home prompt opens a file picker; the chosen path is spliced into
-> the prompt as an `@<path>` reference. `/lsp` (the LSP-installer's
-> multi-select picker) is now driven by portable keys end-to-end.
-> Plugin-bound home accelerators (the command
-> palette's `/` chord and any plugin keybindings) are **not** routed in the
-> GUI yet — open those screens by their slash command, or use the TUI. Also
-> still **not** wired up in the GUI (deferred to a later plan):
-> high-fidelity markdown rendering (the changelog renders as line-based
-> text) and inline canvases (render as placeholders).
 
 If the bundled tool servers (`otto-tool-fs`, `otto-tool-bash`,
 `otto-tool-grep`) aren't on `$PATH` and aren't sitting next to the
@@ -155,7 +131,7 @@ provider has a key on file.
 | `/save-canvas [path] [--block N] [--open]` | Write the most recent HTML canvas to a file. Default path is `otto-canvas-<id>.html` in the current directory. `--block N` targets a specific canvas by id; `--open` opens the file in the system browser after writing. |
 | `/resume` | Re-open a previously-saved transcript and continue from where it ended. With no args opens a picker; takes an absolute path or a bare basename relative to `~/.otto/transcripts/`. |
 | `/clear` | Reset the conversation history (and the visible log). |
-| `/skills` | List repo-authored skills discovered from the current project's `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` trees, including each skill's name, location, and repo-supplied description (clearly marked as untrusted text). |
+| `/skills` | List skills discovered from `.otto/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` at both project and user scope, including each skill's name, source tier, and file-supplied description (clearly marked as untrusted text). |
 | `/tools` | List the tools registered with the current host, with their permission verdict. |
 | `/bash <cmd>` | Run a shell command through `tool-bash`. `--net` / `--no-net` toggle network access for that single call. |
 | `/sandbox` | Show or change OS-level sandbox settings; `/sandbox on` / `/sandbox off` persist to `~/.otto/sandbox.toml`. |
@@ -286,7 +262,16 @@ Drop markdown files into any of these directories and Otto exposes them as subag
 
 Same precedence as user-defined slash commands and hooks (project beats user; `.otto/` beats `.claude/`). First-wins dedup by filename slug. `/reload-agents` rescans without restarting the session.
 
-Repo-authored skills are a separate surface from these user-defined agents. Run `/skills` to list the current project's skills discovered from `.github/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md`; that output reports each skill's name, location, and repo-supplied description, with the description labeled as untrusted repo text. `/reload-agents` only rescans the subagent directories above and does not change the repo-authored skills list.
+Skills are a separate surface from these user-defined agents. Run `/skills` to list the skills discovered across four tiers, highest precedence first:
+
+```
+<project>/.otto/skills/<name>/SKILL.md
+<project>/.claude/skills/<name>/SKILL.md
+~/.otto/skills/<name>/SKILL.md
+~/.claude/skills/<name>/SKILL.md
+```
+
+Project beats user and `.otto/` beats `.claude/`; the first tier to claim a slug wins, and a shadowed copy is reported so an author editing the losing file finds out why nothing changed. That output reports each skill's name, source tier, and file-supplied description, with the description labeled as untrusted text; skills that fail to parse are skipped and reported as a count. Note that `.github/skills/` is **not** a tier — it is a Copilot CLI convention, not one Claude Code writes. `/reload-agents` only rescans the subagent directories above and does not change the skills list.
 
 ### Format
 

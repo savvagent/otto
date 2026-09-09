@@ -147,7 +147,7 @@ impl OllamaProviderBuilder {
             // refusing the connection), a bare connect can hang for the OS TCP
             // timeout — tens of seconds. `connect_timeout` caps that so the
             // health probe / `list_models` fail fast instead of stalling any
-            // caller (the GUI bootstrap in particular).
+            // caller (otto's startup bootstrap in particular).
             .connect_timeout(Duration::from_secs(2))
             .build()
             .map_err(|e| BuildError::HttpClient(e.to_string()))?;
