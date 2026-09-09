@@ -67,6 +67,26 @@ impl PaletteScreen {
             .filter(|(_, c)| c.name.contains(&f))
             .collect()
     }
+
+    /// Derive the prompt preview text from the current palette state.
+    ///
+    /// This returns the text that should appear in the prompt to mirror the
+    /// currently highlighted command or the typed filter as a fallback.
+    ///
+    /// Rules:
+    /// - If the filtered list has a highlighted command: `/<command name>`
+    /// - Else if the user typed a filter: `/<filter>` (fallback when no match)
+    /// - Else: `/` (empty palette or empty filter)
+    pub fn prompt_preview(&self) -> String {
+        let filtered = self.filtered();
+        if let Some((_, cmd)) = filtered.get(self.cursor) {
+            format!("/{}", cmd.name)
+        } else if !self.filter.is_empty() {
+            format!("/{}", self.filter)
+        } else {
+            "/".to_string()
+        }
+    }
 }
 
 impl Default for PaletteScreen {
@@ -193,34 +213,60 @@ impl Screen for PaletteScreen {
 
     async fn on_key(&mut self, key: KeyEventPortable) -> Result<Vec<Effect>, PluginError> {
         match key.code {
-            KeyCodePortable::Esc => Ok(vec![Effect::CloseScreen]),
+            KeyCodePortable::Esc => {
+                // Close the screen and clear the preview.
+                Ok(vec![
+                    Effect::CloseScreen,
+                    Effect::PrefillInput {
+                        text: String::new(),
+                    },
+                ])
+            }
             KeyCodePortable::Up => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                 }
-                Ok(vec![])
+                // Emit the updated preview.
+                Ok(vec![Effect::PrefillInput {
+                    text: self.prompt_preview(),
+                }])
             }
             KeyCodePortable::Down => {
                 let max = self.filtered().len().saturating_sub(1);
                 if self.cursor < max {
                     self.cursor += 1;
                 }
-                Ok(vec![])
+                // Emit the updated preview.
+                Ok(vec![Effect::PrefillInput {
+                    text: self.prompt_preview(),
+                }])
             }
             KeyCodePortable::Backspace => {
                 self.filter.pop();
                 self.cursor = 0;
-                Ok(vec![])
+                // Emit the updated preview.
+                Ok(vec![Effect::PrefillInput {
+                    text: self.prompt_preview(),
+                }])
             }
             KeyCodePortable::Char(c) => {
                 self.filter.push(c);
                 self.cursor = 0;
-                Ok(vec![])
+                // Emit the updated preview.
+                Ok(vec![Effect::PrefillInput {
+                    text: self.prompt_preview(),
+                }])
             }
             KeyCodePortable::Enter => {
                 let filtered = self.filtered();
                 let Some((_, cmd)) = filtered.get(self.cursor).cloned() else {
-                    return Ok(vec![Effect::CloseScreen]);
+                    // No match: close screen and clear preview.
+                    return Ok(vec![
+                        Effect::CloseScreen,
+                        Effect::PrefillInput {
+                            text: String::new(),
+                        },
+                    ]);
                 };
                 let name = cmd.name.clone();
                 if cmd.needs_arg {
@@ -236,8 +282,13 @@ impl Screen for PaletteScreen {
                         },
                     ])])
                 } else {
+                    // No-argument command: clear preview before running
+                    // so stale text doesn't remain behind.
                     Ok(vec![Effect::Stack(vec![
                         Effect::CloseScreen,
+                        Effect::PrefillInput {
+                            text: String::new(),
+                        },
                         Effect::RunSlash { name, args: vec![] },
                     ])])
                 }
@@ -294,7 +345,13 @@ mod tests {
         match effs.first() {
             Some(Effect::Stack(children)) => {
                 assert!(matches!(children[0], Effect::CloseScreen));
+                // children[1] should be PrefillInput to clear the preview
                 match &children[1] {
+                    Effect::PrefillInput { text } if text.is_empty() => {}
+                    other => panic!("expected PrefillInput to clear preview, got {other:?}"),
+                }
+                // children[2] should be RunSlash
+                match &children[2] {
                     Effect::RunSlash { name, .. } => assert_eq!(name, "clear"),
                     other => panic!("expected RunSlash, got {other:?}"),
                 }
@@ -347,7 +404,13 @@ mod tests {
         match effs.first() {
             Some(Effect::Stack(children)) => {
                 assert!(matches!(children[0], Effect::CloseScreen));
+                // children[1] should be PrefillInput to clear the preview
                 match &children[1] {
+                    Effect::PrefillInput { text } if text.is_empty() => {}
+                    other => panic!("expected PrefillInput to clear preview, got {other:?}"),
+                }
+                // children[2] should be RunSlash
+                match &children[2] {
                     Effect::RunSlash { name, args } => {
                         assert_eq!(name, "exit");
                         assert!(args.is_empty());
@@ -527,5 +590,243 @@ mod tests {
             assert!(joined.contains(&format!("/cmd{i}")), "missing /cmd{i}");
         }
         assert!(!joined.contains("more below"));
+    }
+
+    // --- Prompt preview tests (issue #80) ---
+
+    /// The palette should derive a prompt preview from the currently
+    /// highlighted command: `/<highlighted command name>`.
+    #[test]
+    fn prompt_preview_shows_highlighted_command() {
+        let p = fixture();
+        assert_eq!(p.prompt_preview(), "/clear");
+    }
+
+    /// When the palette is empty, the preview should be just `/`.
+    #[test]
+    fn prompt_preview_empty_palette_shows_slash() {
+        let p = PaletteScreen::empty();
+        assert_eq!(p.prompt_preview(), "/");
+    }
+
+    /// When the filter returns no matches but the user has typed a filter,
+    /// the preview should show the filter as fallback: `/<filter>`.
+    #[tokio::test]
+    async fn prompt_preview_no_match_shows_filter() {
+        let mut p = fixture();
+        // Type a filter that matches nothing.
+        for ch in "xyz".chars() {
+            p.on_key(KeyEventPortable {
+                code: KeyCodePortable::Char(ch),
+                modifiers: KeyMods::default(),
+            })
+            .await
+            .unwrap();
+        }
+        assert!(p.filtered().is_empty(), "filter should match nothing");
+        assert_eq!(p.prompt_preview(), "/xyz");
+    }
+
+    /// Pressing `Up` should update the preview to the previous command.
+    #[tokio::test]
+    async fn prompt_preview_updates_on_up() {
+        let mut p = fixture();
+        // Start at "clear" (index 0)
+        assert_eq!(p.prompt_preview(), "/clear");
+        // Move down to "demo"
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/demo");
+        // Move up back to "clear"
+        p.on_key(key(KeyCodePortable::Up)).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/clear");
+    }
+
+    /// Pressing `Down` should update the preview to the next command.
+    #[tokio::test]
+    async fn prompt_preview_updates_on_down() {
+        let mut p = fixture();
+        assert_eq!(p.prompt_preview(), "/clear");
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/demo");
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/exit");
+    }
+
+    /// Typing a character that has no match should show the filter as
+    /// fallback, not a stale command preview.
+    #[tokio::test]
+    async fn prompt_preview_shows_filter_on_no_match() {
+        let mut p = fixture();
+        for ch in "xyz".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert!(p.filtered().is_empty());
+        assert_eq!(p.prompt_preview(), "/xyz");
+    }
+
+    /// `Char`, `Backspace`, `Up`, and `Down` should emit `PrefillInput`
+    /// effects to keep the prompt in sync with the palette selection.
+    #[tokio::test]
+    async fn char_emits_prefill_input() {
+        let mut p = fixture();
+        let effs = p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
+        let has_prefill = effs
+            .iter()
+            .any(|e| matches!(e, Effect::PrefillInput { .. }));
+        assert!(
+            has_prefill,
+            "Char key should emit PrefillInput, got: {:?}",
+            effs
+        );
+    }
+
+    #[tokio::test]
+    async fn backspace_emits_prefill_input() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
+        let effs = p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        let has_prefill = effs
+            .iter()
+            .any(|e| matches!(e, Effect::PrefillInput { .. }));
+        assert!(
+            has_prefill,
+            "Backspace should emit PrefillInput, got: {:?}",
+            effs
+        );
+    }
+
+    #[tokio::test]
+    async fn up_emits_prefill_input() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        let effs = p.on_key(key(KeyCodePortable::Up)).await.unwrap();
+        let has_prefill = effs
+            .iter()
+            .any(|e| matches!(e, Effect::PrefillInput { .. }));
+        assert!(has_prefill, "Up should emit PrefillInput, got: {:?}", effs);
+    }
+
+    #[tokio::test]
+    async fn down_emits_prefill_input() {
+        let mut p = fixture();
+        let effs = p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        let has_prefill = effs
+            .iter()
+            .any(|e| matches!(e, Effect::PrefillInput { .. }));
+        assert!(
+            has_prefill,
+            "Down should emit PrefillInput, got: {:?}",
+            effs
+        );
+    }
+
+    /// `Esc` should close the screen and clear the preview by emitting
+    /// `PrefillInput` with an empty string.
+    #[tokio::test]
+    async fn esc_clears_preview() {
+        let mut p = fixture();
+        let effs = p.on_key(key(KeyCodePortable::Esc)).await.unwrap();
+        let clear_effect = effs
+            .iter()
+            .find(|e| matches!(e, Effect::PrefillInput { text } if text.is_empty()));
+        assert!(
+            clear_effect.is_some(),
+            "Esc should emit PrefillInput with empty text to clear preview, got: {:?}",
+            effs
+        );
+    }
+
+    /// Empty-result `Enter` should close the screen and clear the preview.
+    #[tokio::test]
+    async fn empty_result_enter_clears_preview() {
+        let mut p = fixture();
+        // Filter to no matches.
+        for ch in "xyz".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert!(p.filtered().is_empty());
+        let effs = p.on_key(key(KeyCodePortable::Enter)).await.unwrap();
+        let clear_effect = effs
+            .iter()
+            .find(|e| matches!(e, Effect::PrefillInput { text } if text.is_empty()));
+        assert!(
+            clear_effect.is_some(),
+            "empty-result Enter should emit PrefillInput with empty text, got: {:?}",
+            effs
+        );
+    }
+
+    /// `Enter` on a no-argument command should run the slash and clear the
+    /// preview (no stale preview text remains afterward).
+    #[tokio::test]
+    async fn no_arg_enter_clears_preview_before_run() {
+        let mut p = fixture();
+        let effs = p.on_key(key(KeyCodePortable::Enter)).await.unwrap();
+        // Should have Stack([CloseScreen, ?, RunSlash]) where one of the
+        // middle effects is a PrefillInput that clears the preview.
+        match effs.first() {
+            Some(Effect::Stack(children)) => {
+                assert!(matches!(children[0], Effect::CloseScreen));
+                let has_clear = children
+                    .iter()
+                    .any(|e| matches!(e, Effect::PrefillInput { text } if text.is_empty()));
+                let has_runslash = children
+                    .iter()
+                    .any(|e| matches!(e, Effect::RunSlash { .. }));
+                assert!(
+                    has_clear && has_runslash,
+                    "no-arg Enter should clear preview before RunSlash, got: {:?}",
+                    children
+                );
+            }
+            other => panic!("expected Stack, got: {:?}", other),
+        }
+    }
+
+    /// `Enter` on an argument-taking command should close the screen and
+    /// prefill the input with `/<command> `, preserving the palette semantics.
+    #[tokio::test]
+    async fn arg_taking_enter_preserves_prefill_semantics() {
+        let mut p = fixture();
+        for ch in "demo".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        let effs = p.on_key(key(KeyCodePortable::Enter)).await.unwrap();
+        match effs.first() {
+            Some(Effect::Stack(children)) => {
+                assert!(matches!(children[0], Effect::CloseScreen));
+                match &children[1] {
+                    Effect::PrefillInput { text } => {
+                        assert_eq!(text, "/demo ");
+                    }
+                    other => panic!("expected PrefillInput, got: {:?}", other),
+                }
+            }
+            other => panic!("expected Stack, got: {:?}", other),
+        }
+    }
+
+    /// Typing should update the preview to the first matching command.
+    /// Using 'd' which matches only 'demo' (alphabetically first).
+    #[tokio::test]
+    async fn prompt_preview_updates_on_char() {
+        let mut p = fixture();
+        assert_eq!(p.prompt_preview(), "/clear");
+        p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
+        // Filter now matches only "demo"; cursor resets to 0 → "demo"
+        assert_eq!(p.prompt_preview(), "/demo");
+    }
+
+    /// Backspacing should update the preview based on the new filter.
+    #[tokio::test]
+    async fn prompt_preview_updates_on_backspace() {
+        let mut p = fixture();
+        // Type "d" to filter to ["demo"]
+        p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/demo");
+        // Backspace to clear the filter
+        p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        // Back to full list, cursor at 0 → "clear"
+        assert_eq!(p.prompt_preview(), "/clear");
     }
 }

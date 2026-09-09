@@ -517,14 +517,16 @@ impl OttoApp {
     /// now lives on [`GuiApp`] so the window can open and stay responsive while
     /// the (network-touching) host build runs in the background.
     fn frame(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 0. Drain any prompt prefill staged by `apply_effects` last frame
-        //    (the command palette emits `Effect::PrefillInput { "/cmd " }` for
-        //    arg-requiring slashes). `prefill_input` writes the ratatui
-        //    textarea AND this bridge field; the egui prompt lives on
-        //    `self.prompt`, so we move it across here.
-        if let Some(text) = self.app.take_pending_prefill() {
-            self.prompt = text;
-        }
+        // 0. Prompt prefill sync happens exactly once per frame, in
+        //    `sync_prompt_from_prefill`, immediately before each
+        //    `view::paint` — after any effect application in this frame
+        //    that could set `pending_prefill` (block 2's palette-open
+        //    effects and block 3's screen-key effects) and before paint
+        //    reads `self.prompt`. A prefill staged during a *previous*
+        //    frame's paint (e.g. by a slash opened via `submit_prompt`)
+        //    simply stays on the bridge until this frame's pre-paint sync;
+        //    nothing between here and paint reads `self.prompt`, so the
+        //    paint still observes the latest staged text.
 
         // 1. Global quit chord. Observes Ctrl-C / Ctrl-D and requests a viewport
         //    close — the events themselves still propagate to block 3 (when a
@@ -568,6 +570,15 @@ impl OttoApp {
             // `view::paint_prompt`). Reuses the `palette` screen, which
             // `apply_effects::open_screen` self-populates from the slash index.
             if std::mem::take(&mut self.pending_open_palette) {
+                // The palette open invariant — it may only open over an
+                // empty prompt — is enforced on the *egui* prompt buffer
+                // (`self.prompt`), which the palette trigger just cleared.
+                // `App::input_textarea` is the state the effects layer's
+                // palette guard reads, and it only ever reflects the last
+                // `prefill_input` (e.g. a stale "/cmd " from a prior
+                // arg-taking selection), never egui keystrokes. Align it so
+                // the guard sees the empty prompt the trigger guaranteed.
+                self.app.prefill_input(String::new());
                 let effs = vec![otto_plugin::Effect::OpenScreen {
                     id: "palette".into(),
                     args: otto_plugin::ScreenArgs::None,
@@ -621,12 +632,18 @@ impl OttoApp {
                     *self.render_cache.lock().unwrap() = model;
                 }
             });
+            // See block 0: pending_prefill must be drained exactly once per
+            // frame, after effects and before paint. The screen-key effects
+            // above (and block 2's palette-open effects before them) may have
+            // set pending_prefill; paint must see the latest state.
+            self.sync_prompt_from_prefill();
             view::paint(self, ctx);
             ctx.request_repaint(); // screens are interactive; keep ticking
             return;
         }
 
-        // 4. Paint.
+        // 4. Paint. Same single pre-paint sync as the screen path above.
+        self.sync_prompt_from_prefill();
         view::paint(self, ctx);
 
         // 5. Keep repainting while a turn streams so newly-arrived deltas show
@@ -637,6 +654,20 @@ impl OttoApp {
         //    needing another input event.
         if self.app.is_loading || !self.app.screen_stack.is_empty() {
             ctx.request_repaint();
+        }
+    }
+
+    /// Drain the one-shot prompt-prefill bridge into the egui prompt buffer.
+    ///
+    /// `App::prefill_input` writes the ratatui textarea AND this bridge field
+    /// (the command palette emits `Effect::PrefillInput { "/cmd " }` for
+    /// arg-requiring slashes); the egui prompt lives on `self.prompt`, so we
+    /// move the staged text across here. Must be called exactly once per
+    /// frame — after any effect application that could set `pending_prefill`
+    /// and immediately before `view::paint` (both paint sites in `frame`).
+    fn sync_prompt_from_prefill(&mut self) {
+        if let Some(text) = self.app.take_pending_prefill() {
+            self.prompt = text;
         }
     }
 

@@ -31,11 +31,12 @@ struct OverlayLine {
 /// it, which reads top-to-bottom as `log → footer → prompt`.
 pub fn paint(state: &mut OttoApp, ctx: &egui::Context) {
     let palette = Palette::for_theme(state.app.active_theme);
-    let screen_open = !state.app.screen_stack.is_empty();
+    let screen_layout = state.app.screen_stack.top().map(|(_, layout)| layout);
+    let screen_open = screen_layout.is_some();
 
     paint_header(state, ctx);
-    if !screen_open {
-        paint_prompt(state, ctx); // prompt hidden while a modal owns input
+    if prompt_visible_for_screen(screen_layout) {
+        paint_prompt(state, ctx, !screen_open);
     }
     paint_footer(state, ctx, &palette);
     paint_log(state, ctx, &palette);
@@ -55,8 +56,8 @@ pub fn paint(state: &mut OttoApp, ctx: &egui::Context) {
 
 /// Paint the top screen of the stack (if any) as an overlay above the home
 /// panels. The screen's `render(region)` is SYNC, so no async here. The caller
-/// (`paint`) checks `screen_stack` itself to suppress the home prompt; this
-/// function silently does nothing when the stack is empty.
+/// (`paint`) manages prompt visibility separately; this function silently does
+/// nothing when the stack is empty.
 fn paint_screen_overlay(state: &mut OttoApp, ctx: &egui::Context, palette: &Palette) {
     // Glyph metrics for points <-> cols/rows.
     let font = egui::FontId::monospace(FONT_SIZE);
@@ -210,9 +211,10 @@ fn paint_header(state: &OttoApp, ctx: &egui::Context) {
 /// Bottom panel: the multi-line prompt editor. Submits on Enter (without
 /// Shift). Shift+Enter inserts a newline (egui's default multiline behavior),
 /// matching the ratatui prompt's contract.
-fn paint_prompt(state: &mut OttoApp, ctx: &egui::Context) {
+fn paint_prompt(state: &mut OttoApp, ctx: &egui::Context, interactive: bool) {
     egui::TopBottomPanel::bottom("prompt").show(ctx, |ui| {
-        let resp = ui.add(
+        let resp = ui.add_enabled(
+            interactive,
             egui::TextEdit::multiline(&mut state.prompt)
                 .desired_rows(3)
                 .desired_width(f32::INFINITY)
@@ -225,7 +227,7 @@ fn paint_prompt(state: &mut OttoApp, ctx: &egui::Context) {
         // inserts a trailing newline for this Enter, but `mem::take` + `trim`
         // below discard it. Shift+Enter falls through to the default newline.
         let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter) && !i.modifiers.shift);
-        let submit = resp.has_focus() && enter_pressed;
+        let submit = interactive && resp.has_focus() && enter_pressed;
         if submit {
             let text = std::mem::take(&mut state.prompt);
             let trimmed = text.trim().to_string();
@@ -241,8 +243,9 @@ fn paint_prompt(state: &mut OttoApp, ctx: &egui::Context) {
         // shell doesn't route through the plugin `KeybindingRouter`). The
         // typed `/` is cleared and `pending_open_palette` tells the next
         // frame's async pass to emit `Effect::OpenScreen { id: "palette" }`.
-        // `paint_prompt` only runs when no screen is open, so no extra guard.
-        if palette_trigger(&state.prompt) {
+        // When a bottom-sheet screen is open we still paint the preview here,
+        // but keep the field non-interactive so only the palette owns input.
+        if interactive && palette_trigger(&state.prompt) {
             state.prompt.clear();
             state.pending_open_palette = true;
             ctx.request_repaint();
@@ -256,10 +259,23 @@ fn paint_prompt(state: &mut OttoApp, ctx: &egui::Context) {
         // splice marker; `paint`'s `take_picked` → `splice_at_reference`
         // replaces it with the chosen `@<path>`. Cancelling leaves the bare
         // `@` for the user to edit or delete.
-        if resp.has_focus() && typed_at_marker(ui) {
+        if interactive && resp.has_focus() && typed_at_marker(ui) {
             state.file_picker.open();
         }
     });
+}
+
+/// Whether the prompt editor is shown (and, when interactive, focusable)
+/// while `screen_layout` is the top of the stack.
+///
+/// Today this keys off layout: the palette is the only `BottomSheet`
+/// screen and the only prompt-preview producer, so keeping the prompt
+/// visible-but-disabled under it mirrors the selection the palette feeds
+/// into the prompt. A future bottom-sheet screen that does NOT mirror into
+/// the prompt should revisit this (either hide the prompt or make the
+/// visibility explicit per screen rather than inferred from layout).
+fn prompt_visible_for_screen(screen_layout: Option<&ScreenLayout>) -> bool {
+    matches!(screen_layout, None | Some(ScreenLayout::BottomSheet { .. }))
 }
 
 /// Whether the current prompt buffer should open the command palette.
@@ -522,6 +538,27 @@ mod tests {
         assert!(!palette_trigger("/co"));
         assert!(!palette_trigger("fix bug in a/b"));
         assert!(!palette_trigger(" /"));
+    }
+
+    #[test]
+    fn prompt_remains_visible_for_bottom_sheet_screens() {
+        assert!(super::prompt_visible_for_screen(Some(
+            &ScreenLayout::BottomSheet { height: 12 }
+        )));
+    }
+
+    #[test]
+    fn prompt_hides_for_modal_and_fullscreen_screens() {
+        assert!(!super::prompt_visible_for_screen(Some(
+            &ScreenLayout::CenteredModal {
+                width_pct: 60,
+                height_pct: 50,
+                title: Some("Test".into()),
+            }
+        )));
+        assert!(!super::prompt_visible_for_screen(Some(
+            &ScreenLayout::Fullscreen { hide_chrome: false }
+        )));
     }
 
     #[test]
