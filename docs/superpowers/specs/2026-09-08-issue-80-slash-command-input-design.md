@@ -1,7 +1,7 @@
 # Slash command prompt preview — design
 
 Date: 2026-09-08
-Status: pending review
+Status: IMPLEMENTED
 Related: `savvagent/otto#80`
 
 ## Problem
