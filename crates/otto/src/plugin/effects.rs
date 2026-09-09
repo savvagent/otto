@@ -1338,17 +1338,6 @@ mod tests {
             &["/bash ".to_string()],
             "PrefillInput must install the literal text as a single line"
         );
-        assert_eq!(
-            app.take_pending_prefill().as_deref(),
-            Some("/bash "),
-            "PrefillInput must also stage the text on the pending_prefill bridge \
-             that the egui prompt drains"
-        );
-        assert_eq!(
-            app.take_pending_prefill(),
-            None,
-            "take_pending_prefill is one-shot: draining the bridge leaves it empty",
-        );
     }
 
     /// Stack effect recurses through children in order; results are applied
@@ -3206,11 +3195,6 @@ mod tests {
             app.input_textarea.lines(),
             &draft[..],
             "palette open over a non-empty prompt must not alter the draft"
-        );
-        assert_eq!(
-            app.take_pending_prefill(),
-            None,
-            "a refused palette open must not stage a PrefillInput"
         );
         assert!(
             app.screen_stack.is_empty(),

@@ -39,7 +39,6 @@ mod app;
 mod canvas_input;
 mod config_file;
 mod creds;
-mod egui_app;
 mod mcp_config_writer;
 mod mcp_oauth;
 mod migration;
@@ -180,15 +179,6 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     init_tracing();
 
-    // `otto gui` launches the experimental native egui front-end
-    // (v0.19.0 migration, in progress) instead of the ratatui TUI. Every
-    // other invocation runs the TUI exactly as before. `eframe::run_native`
-    // owns the main thread for the lifetime of the window; we are inside
-    // `#[tokio::main]`, so spawned turn workers use `Handle::current()`.
-    if std::env::args().nth(1).as_deref() == Some("gui") {
-        return egui_app::run().map_err(|e| anyhow::anyhow!("egui front-end failed: {e}"));
-    }
-
     let (mut app, host_slot, project_root, tool_bins) = bootstrap_app_and_host().await?;
 
     let mut terminal = tui::init()?;
@@ -250,7 +240,6 @@ async fn main() -> Result<()> {
 /// background Tokio worker to the UI thread. A named struct (rather than a bare
 /// 4-tuple) so the two `String`/`Vec<String>`-family members can't be
 /// transposed at a decode site.
-#[allow(dead_code)]
 pub(crate) struct HostBoot {
     /// The started provider-pool host, if startup connected successfully.
     pub host: Option<Arc<Host>>,

@@ -524,14 +524,6 @@ pub enum CommandSelection {
 /// TUI app state.
 pub struct App {
     pub input_textarea: TextArea<'static>,
-    /// Text staged by [`App::prefill_input`] for a front-end whose prompt
-    /// buffer lives outside `App` (the egui shell's `OttoApp::prompt`).
-    /// The egui frame drains this into its prompt each frame via
-    /// [`App::take_pending_prefill`]; the ratatui TUI ignores it (it reads
-    /// `input_textarea` directly). `Some` only between a palette prefill and
-    /// the next frame that consumes it. Private so the one-shot drain is the
-    /// only way out of the bridge.
-    pending_prefill: Option<String>,
     pub input_mode: InputMode,
     pub model: String,
     pub transcript_dir: PathBuf,
@@ -976,7 +968,6 @@ impl App {
         let provider_matches = effective_providers();
         let mut app = Self {
             input_textarea: make_input_textarea(Vec::<String>::new()),
-            pending_prefill: None,
             input_mode: InputMode::Editing,
             model,
             transcript_dir,
@@ -1970,8 +1961,6 @@ impl App {
     /// (e.g. `/bash`) so the user can complete the line via the
     /// `@` file picker instead of executing the command with no args.
     pub fn prefill_input(&mut self, text: String) {
-        // Bridge for out-of-`App` prompt buffers (egui's `OttoApp::prompt`).
-        self.pending_prefill = Some(text.clone());
         self.input_textarea = make_input_textarea(vec![text]);
         let row = self.input_textarea.lines().len().saturating_sub(1) as u16;
         let col = self
@@ -1982,14 +1971,6 @@ impl App {
             .unwrap_or(0) as u16;
         self.input_textarea
             .move_cursor(tui_textarea::CursorMove::Jump(row, col));
-    }
-
-    /// Drain the one-shot prompt-prefill bridge staged by [`App::prefill_input`].
-    /// Returns `Some(text)` exactly once per prefill; subsequent calls return
-    /// `None` until the next prefill. The egui frame calls this each paint to
-    /// move staged text into its out-of-`App` prompt buffer.
-    pub fn take_pending_prefill(&mut self) -> Option<String> {
-        self.pending_prefill.take()
     }
 
     /// Set the active theme by slug. Unknown slugs are surfaced as a
