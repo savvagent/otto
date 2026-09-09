@@ -1,5 +1,5 @@
-//! `internal:connect` — provider picker. With no args, opens the picker.
-//! With one arg, routes to the named provider's connect slash.
+//! `internal:connect` — provider picker. Always opens the interactive
+//! provider picker screen (`connect.picker`), regardless of arguments.
 
 pub mod screen;
 
@@ -11,11 +11,10 @@ use otto_plugin::{
 
 use screen::ConnectPickerScreen;
 
-/// Core plugin that exposes `/connect [provider]`.
+/// Core plugin that exposes `/connect`.
 ///
-/// With no args, pushes the `connect.picker` screen so the user can choose
-/// a provider interactively. With one arg, routes directly to the named
-/// provider's connect slash (e.g. `/connect anthropic`).
+/// Regardless of any arguments supplied, this always pushes the
+/// `connect.picker` screen so the user can choose a provider interactively.
 ///
 /// The plugin keeps an in-memory list of provider candidates, refreshed
 /// whenever a [`HostEvent::ProviderRegistered`] arrives via [`Plugin::on_event`].
@@ -52,7 +51,7 @@ impl Plugin for ConnectPlugin {
         contributions.slash_commands = vec![SlashSpec {
             name: "connect".into(),
             summary: rust_i18n::t!("slash.connect-summary").to_string(),
-            args_hint: Some("[provider]".into()),
+            args_hint: None,
             requires_arg: false,
             suppress_prompt_segments: vec![],
         }];
@@ -81,31 +80,16 @@ impl Plugin for ConnectPlugin {
     async fn handle_slash(
         &mut self,
         _: &str,
-        args: Vec<String>,
+        _args: Vec<String>,
     ) -> Result<Vec<Effect>, PluginError> {
-        if let Some(provider) = args.into_iter().next() {
-            // Validate provider id format: lowercase alphanumeric with optional
-            // dashes/underscores. Reject anything with spaces or special chars
-            // before constructing a slash name we can't route.
-            if !provider
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
-            {
-                return Err(PluginError::InvalidArgs(format!(
-                    "invalid provider id: {provider:?}; expected lowercase ASCII with optional - or _"
-                )));
-            }
-            // Direct route: /connect anthropic -> internal:provider-anthropic's connect slash.
-            Ok(vec![Effect::RunSlash {
-                name: format!("connect {provider}"),
-                args: vec![],
-            }])
-        } else {
-            Ok(vec![Effect::OpenScreen {
-                id: "connect.picker".into(),
-                args: ScreenArgs::ConnectPicker,
-            }])
-        }
+        // Always open the interactive provider picker, regardless of any
+        // arguments the user may have typed. The arg-routing path (which
+        // dispatched `/connect <provider>` directly) was removed in issue #82
+        // to unify on a single entry-point.
+        Ok(vec![Effect::OpenScreen {
+            id: "connect.picker".into(),
+            args: ScreenArgs::ConnectPicker,
+        }])
     }
 
     async fn on_event(&mut self, event: HostEvent) -> Result<Vec<Effect>, PluginError> {
@@ -132,43 +116,45 @@ impl Plugin for ConnectPlugin {
     }
 }
 
+/// Returns `true` when `name` belongs to the private `connect …` namespace
+/// (i.e. names that start with `"connect "`). This namespace is shared by
+/// the picker-screen dispatch slashes (`connect <provider_id>`) and the
+/// palette filter; it is not part of the public slash-command surface.
+pub(crate) fn is_internal_connect_namespace(name: &str) -> bool {
+    name.starts_with("connect ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn handle_slash_rejects_provider_with_spaces() {
+    async fn handle_slash_always_opens_picker() {
         let mut p = ConnectPlugin::new();
-        let err = p
+        // No args → picker.
+        let effs = p.handle_slash("connect", vec![]).await.unwrap();
+        assert!(
+            matches!(&effs[0], Effect::OpenScreen { id, .. } if id == "connect.picker"),
+            "no-args case must open picker, got {effs:?}"
+        );
+        // Valid provider id arg → still picker (no direct routing).
+        let effs = p
+            .handle_slash("connect", vec!["anthropic".into()])
+            .await
+            .unwrap();
+        assert!(
+            matches!(&effs[0], Effect::OpenScreen { id, .. } if id == "connect.picker"),
+            "valid-id case must open picker, got {effs:?}"
+        );
+        // Junk arg → still picker (no validation error).
+        let effs = p
             .handle_slash("connect", vec!["bad provider".into()])
             .await
-            .unwrap_err();
+            .unwrap();
         assert!(
-            matches!(err, PluginError::InvalidArgs(_)),
-            "expected InvalidArgs, got {err:?}"
+            matches!(&effs[0], Effect::OpenScreen { id, .. } if id == "connect.picker"),
+            "junk-arg case must open picker, got {effs:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn handle_slash_rejects_provider_with_uppercase() {
-        let mut p = ConnectPlugin::new();
-        let err = p
-            .handle_slash("connect", vec!["Anthropic".into()])
-            .await
-            .unwrap_err();
-        assert!(matches!(err, PluginError::InvalidArgs(_)));
-    }
-
-    #[tokio::test]
-    async fn handle_slash_accepts_valid_provider_ids() {
-        let mut p = ConnectPlugin::new();
-        for id in ["anthropic", "gemini-pro", "my_provider", "provider2"] {
-            let effs = p.handle_slash("connect", vec![id.into()]).await.unwrap();
-            assert!(
-                matches!(&effs[0], Effect::RunSlash { name, .. } if name == &format!("connect {id}")),
-                "unexpected effects for id={id}: {effs:?}"
-            );
-        }
     }
 
     #[tokio::test]
@@ -220,5 +206,14 @@ mod tests {
                 .hooks
                 .contains(&HookKind::ProviderRegistered)
         );
+    }
+
+    #[test]
+    fn is_internal_connect_namespace_matches_prefixed_names() {
+        assert!(is_internal_connect_namespace("connect anthropic"));
+        assert!(is_internal_connect_namespace("connect my-provider"));
+        assert!(!is_internal_connect_namespace("connect"));
+        assert!(!is_internal_connect_namespace("connectpicker"));
+        assert!(!is_internal_connect_namespace("disconnect foo"));
     }
 }
