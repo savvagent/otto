@@ -12,9 +12,19 @@ with internal path+version dependencies when comparing against the local
 tree (see [release-plz/release-plz#2595](https://github.com/release-plz/release-plz/issues/2595),
 still open; fix tracked in [PR #2789](https://github.com/release-plz/release-plz/pull/2789)).
 Until that lands in a release-plz release, **cut releases manually** using
-the process below. Once #2789 ships, re-enable the automation by confirming
-`release-plz.yml`'s `release-pr` job succeeds on a push to `main`, and drop
-this manual process.
+the process below.
+
+Because the automation is non-functional, the `release-pr` job in
+`.github/workflows/release-plz.yml` is **disabled** (`if: false`). It was
+previously still running on every push to `main` and opening
+`chore: release vX.Y.Z` PRs that nobody could merge, which made the release
+state ambiguous — an open release PR reads as a pending release even when
+that version has already shipped through the manual process below.
+
+Once #2789 ships, re-enable the automation by restoring that job's original
+condition (`if: github.repository_owner == 'savvagent'`, recorded in a
+comment beside it), confirming the job succeeds on a push to `main`, and
+then dropping this manual process.
 
 ## Manual release process
 
