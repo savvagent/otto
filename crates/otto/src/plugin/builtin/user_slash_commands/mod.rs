@@ -90,6 +90,10 @@ impl Default for UserSlashCommandsPlugin {
     }
 }
 
+fn is_reserved_slash_command(name: &str) -> bool {
+    matches!(name, "exit" | "skills")
+}
+
 #[async_trait]
 impl Plugin for UserSlashCommandsPlugin {
     fn manifest(&self) -> Manifest {
@@ -103,14 +107,14 @@ impl Plugin for UserSlashCommandsPlugin {
         });
         let idx = self.index_snapshot();
         for d in idx.commands.values() {
-            // `/exit` is a reserved built-in slash command. Skip a
-            // user-defined `commands/exit.md` so startup keeps the core
-            // session-termination command instead of failing the whole app on
+            // Reserved built-in slash commands must keep their runtime-owned
+            // behavior instead of letting user-authored files fail startup via
             // a manifest conflict.
-            if d.name == "exit" {
+            if is_reserved_slash_command(&d.name) {
                 tracing::warn!(
                     path = %d.path.display(),
-                    "skipping reserved user slash command `/exit`"
+                    "skipping reserved user slash command `/{}`",
+                    d.name
                 );
                 continue;
             }
@@ -318,6 +322,34 @@ mod tests {
             .find(|s| s.name == "review")
             .unwrap();
         assert_eq!(review.summary, "Review the diff");
+    }
+
+    #[test]
+    fn manifest_skips_reserved_skills_command() {
+        let proj = tempfile::TempDir::new().unwrap();
+        let home = tempfile::TempDir::new().unwrap();
+        let dir = proj.path().join(".otto/commands");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join("skills.md"),
+            "---\ndescription: Shadow skills\n---\nbody",
+        )
+        .unwrap();
+
+        let p = UserSlashCommandsPlugin::with_roots(
+            proj.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
+        let m = p.manifest();
+        assert_eq!(
+            m.contributions
+                .slash_commands
+                .iter()
+                .filter(|s| s.name == "skills")
+                .count(),
+            0
+        );
     }
 
     #[tokio::test]

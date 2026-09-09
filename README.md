@@ -131,6 +131,7 @@ provider has a key on file.
 | `/save-canvas [path] [--block N] [--open]` | Write the most recent HTML canvas to a file. Default path is `otto-canvas-<id>.html` in the current directory. `--block N` targets a specific canvas by id; `--open` opens the file in the system browser after writing. |
 | `/resume` | Re-open a previously-saved transcript and continue from where it ended. With no args opens a picker; takes an absolute path or a bare basename relative to `~/.otto/transcripts/`. |
 | `/clear` | Reset the conversation history (and the visible log). |
+| `/skills` | List skills discovered from `.otto/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` at both project and user scope, plus the project's `.github/skills/*/SKILL.md`, including each skill's name, source tier, and file-supplied description (clearly marked as untrusted text). |
 | `/tools` | List the tools registered with the current host, with their permission verdict. |
 | `/bash <cmd>` | Run a shell command through `tool-bash`. `--net` / `--no-net` toggle network access for that single call. |
 | `/sandbox` | Show or change OS-level sandbox settings; `/sandbox on` / `/sandbox off` persist to `~/.otto/sandbox.toml`. |
@@ -260,6 +261,22 @@ Drop markdown files into any of these directories and Otto exposes them as subag
 - `~/.claude/agents/**/*.md`
 
 Same precedence as user-defined slash commands and hooks (project beats user; `.otto/` beats `.claude/`). First-wins dedup by filename slug. `/reload-agents` rescans without restarting the session.
+
+Skills are a separate surface from these user-defined agents. Run `/skills` to list the skills discovered across five tiers, highest precedence first:
+
+```
+<project>/.otto/skills/<name>/SKILL.md
+<project>/.claude/skills/<name>/SKILL.md
+<project>/.github/skills/<name>/SKILL.md
+~/.otto/skills/<name>/SKILL.md
+~/.claude/skills/<name>/SKILL.md
+```
+
+Project beats user and `.otto/` beats `.claude/`; the first tier to claim a slug wins, and a shadowed copy is reported so an author editing the losing file finds out why nothing changed. That output reports each skill's name, source tier, and file-supplied description, with the description labeled as untrusted text; skills that fail to parse are skipped and reported as a count.
+
+`<project>/.github/skills/` is Copilot CLI's location rather than a Claude Code one, and otto reads it so repos that already keep skills there — this one included — work without moving them. It has no user-scope counterpart because Copilot CLI only defines it inside a repository, and it ranks below `.claude/` so a skill written in the format otto's own docs describe wins a slug collision. For the trust gate it counts as project scope like the other two: those skills arrive with the checkout.
+
+`/reload-agents` only rescans the subagent directories above and does not change the skills list.
 
 ### Format
 
