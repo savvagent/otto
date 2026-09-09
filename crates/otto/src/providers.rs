@@ -183,9 +183,11 @@ pub fn effective_providers() -> Vec<&'static ProviderSpec> {
     v
 }
 
-/// Render the `--rekey` hint for a turn-time authentication failure, or
-/// `None` if the routed provider is unknown or doesn't take an API key
-/// (in which case `--rekey` would have nothing useful to do).
+/// Render picker-based recovery guidance for a turn-time authentication
+/// failure, or `None` if the routed provider is unknown or doesn't take an
+/// API key (in which case there would be nothing useful to guide). The
+/// rendered string instructs running `/connect` and picking the provider,
+/// pressing `Alt+Enter` to enter a fresh key.
 ///
 /// `routed_provider_id` should come from the per-turn `TurnEvent::RouteSelected`
 /// capture, not `App::active_provider_id` — routing (`@`-override, modality
@@ -257,10 +259,26 @@ mod tests {
 
         let gemini_hint = turn_auth_hint(Some(&gemini_id), "Gemini");
         assert!(gemini_hint.is_some());
+        let text = gemini_hint.as_deref().unwrap();
         assert!(
-            gemini_hint
-                .as_deref()
-                .is_some_and(|text| text.contains("/connect gemini --rekey"))
+            text.contains("/connect"),
+            "hint should mention /connect: {text}"
+        );
+        assert!(
+            text.contains("Alt+Enter"),
+            "hint should mention Alt+Enter: {text}"
+        );
+        assert!(
+            text.contains("Gemini"),
+            "hint should mention Gemini: {text}"
+        );
+        assert!(
+            !text.contains("--rekey"),
+            "hint must not mention --rekey: {text}"
+        );
+        assert!(
+            !text.contains("/connect gemini"),
+            "hint must not mention /connect gemini: {text}"
         );
         assert_eq!(turn_auth_hint(None, "Gemini"), None);
         assert_eq!(turn_auth_hint(Some(&local_id), "Local"), None);

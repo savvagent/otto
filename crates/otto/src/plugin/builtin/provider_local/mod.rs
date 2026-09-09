@@ -1,7 +1,7 @@
 //! `internal:provider-local` — keyless Ollama shim.
 //!
 //! Unlike the other provider shims, this one needs no credentials. On
-//! `HostStarting` (and on `/connect local`) the plugin builds an in-process
+//! `HostStarting` (and when the picker dispatches `connect local`) the plugin builds an in-process
 //! [`otto_mcp::ProviderClient`] and emits
 //! [`otto_plugin::Effect::RegisterProvider`]. The health-check is a
 //! no-op; failures surface on the first turn.
@@ -31,8 +31,8 @@ pub(crate) struct ProviderLocalPlugin {
     /// Sticky bit set when a previous build attempt failed; the slash and
     /// hook re-entry then take the "endpoint unreachable" branch instead of
     /// repeatedly retrying a known-bad build and emitting `RegisterProvider`
-    /// for a dead client. Cleared on a successful build, so `/connect local`
-    /// after the user starts `ollama serve` can succeed.
+    /// for a dead client. Cleared on a successful build, so reconnecting via
+    /// `/connect` and picking Local after the user starts `ollama serve` can succeed.
     last_build_failed: bool,
     /// Set to `true` while this provider is the host's active provider.
     active: bool,
@@ -90,7 +90,7 @@ impl ProviderLocalPlugin {
     /// the call always tries to build a client. Returns
     /// [`ProviderBuildOutcome::Unavailable`] when the builder fails
     /// (Ollama not running) — not an error, the user can start
-    /// `ollama serve` and run `/connect local` later. `provider_local` has
+    /// `ollama serve` and reconnect by opening `/connect` and picking Local. `provider_local` has
     /// no API key concept, so this is the only "not available" case; a
     /// [`ProviderBuildOutcome::Rejected`] here would only occur if Ollama's
     /// `/api/tags` itself returned an auth/quota-shaped error, which
@@ -133,8 +133,8 @@ impl ProviderLocalPlugin {
     /// success.
     ///
     /// A previously-failed build short-circuits this call. The user can
-    /// retry via `/connect local`, which clears the sticky bit on success
-    /// once `ollama serve` is reachable.
+    /// reconnect by opening `/connect` and picking Local, which clears the
+    /// sticky bit on success once `ollama serve` is reachable.
     fn try_connect_local(&mut self) -> Option<()> {
         if self.client.is_some() {
             return Some(());
@@ -275,9 +275,10 @@ impl BuiltinProviderPlugin for ProviderLocalPlugin {
 mod tests {
     use super::*;
 
-    /// Local is keyless, so the "no-creds" path doesn't apply. `/connect local`
-    /// builds a client and emits `RegisterProvider` when Ollama is reachable,
-    /// or `PushNote` when the build fails.
+    /// Local is keyless, so the "no-creds" path doesn't apply. The picker
+    /// dispatches `connect local` which builds a client and emits
+    /// `RegisterProvider` when Ollama is reachable, or `PushNote` when the
+    /// build fails.
     #[tokio::test]
     async fn connect_emits_register_or_push_note() {
         let mut p = ProviderLocalPlugin::new();

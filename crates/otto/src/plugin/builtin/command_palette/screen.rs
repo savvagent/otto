@@ -117,9 +117,10 @@ impl Screen for PaletteScreen {
         }
         // Align description column across rows by padding the slash-name
         // span to the widest name in the filtered list (with a 12-char
-        // floor + 2 cols of breathing room). Without this, names longer
-        // than the old fixed `{:<12}` width — `/connect anthropic`,
-        // `/connect gemini`, … — collide with their descriptions.
+        // floor + 2 cols of breathing room). The internal `connect <id>`
+        // namespace is filtered out at palette-build time (in
+        // `effects.rs::build_palette_commands`), so the dynamic width
+        // only needs to accommodate the remaining (shorter) command names.
         let filtered = self.filtered();
         let name_col_width = filtered
             .iter()

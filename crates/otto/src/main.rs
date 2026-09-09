@@ -110,7 +110,7 @@ pub(crate) enum WorkerMsg {
     /// Sent if `run_turn_streaming` returned an error.
     Error(String),
     /// Sent if `run_turn_streaming` returned an authentication error from a
-    /// provider, so the main loop can additionally render a `--rekey` hint.
+    /// provider, so the main loop can additionally render a recovery hint.
     TurnAuthError {
         message: String,
         provider_display_name: String,
