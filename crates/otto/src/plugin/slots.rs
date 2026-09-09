@@ -49,14 +49,20 @@ impl<'a> SlotRouter<'a> {
             };
             // Non-blocking acquire: the slot render runs on the TUI's redraw
             // path (`ui::compute_home_frame_data`, awaited immediately before
-            // `terminal.draw`), so a blocking `.lock().await` here stalls the
-            // redraw and every keypress behind it. It can also deadlock: the
-            // render path holds the registry read-lock while acquiring this
-            // plugin `Mutex`, so a task holding the plugin lock and waiting on
-            // `registry.write()` (tokio `RwLock` is write-preferring) would
-            // wedge the loop outright. If the plugin is momentarily locked,
-            // skip it this frame — it renders on the next one. Mirrors the
-            // deliberate `try_lock` in `self_update::render_slot`.
+            // `terminal.draw`), and that path holds the plugin-registry read
+            // lock across this acquire. A blocking `.lock().await` here would
+            // therefore stall the redraw and every keypress behind it — and,
+            // because tokio's `RwLock` is write-preferring, would stall every
+            // task queued for `registry.write()` behind that read guard too.
+            // If the plugin is momentarily locked, skip it this frame — it
+            // renders on the next one. Mirrors the deliberate `try_lock` in
+            // `self_update::render_slot`.
+            //
+            // Ordering invariant worth preserving: every current acquirer of a
+            // plugin `Mutex` takes the registry lock first (or holds none at
+            // all), never the reverse. Taking a plugin `Mutex` and then
+            // awaiting `registry.write()` would close an AB-BA cycle against
+            // this path; keep new call sites on the same order.
             let Ok(plugin) = handle.try_lock() else {
                 tracing::trace!(
                     plugin_id = %pid.as_str(),

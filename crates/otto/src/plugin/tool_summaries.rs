@@ -49,10 +49,13 @@ impl ToolSummaryRouter {
         let pid = indexes_guard.tool_summaries.get(name)?;
         let handle = registry_guard.get(pid)?;
         // Non-blocking: this runs on the TUI's redraw path, awaited from
-        // `ui::compute_home_frame_data` just before `terminal.draw`. A
-        // blocking acquire here stalls the redraw and can deadlock (see the
-        // matching note in `slots::SlotRouter::render`). Skip the summary this
-        // frame if the plugin is momentarily locked.
+        // `ui::compute_home_frame_data` just before `terminal.draw`, and the
+        // registry read guard above is held across this acquire. A blocking
+        // acquire here would stall the redraw and — tokio's `RwLock` being
+        // write-preferring — everything queued for `registry.write()` behind
+        // that guard (see the matching note, and the lock-ordering invariant,
+        // in `slots::SlotRouter::render`). Skip the summary this frame if the
+        // plugin is momentarily locked.
         let Ok(plugin) = handle.try_lock() else {
             tracing::trace!(
                 tool = name,

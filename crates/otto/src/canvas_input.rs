@@ -7,6 +7,16 @@
 //! types — so the built-in shortcuts (Esc / Tab / BackTab / Ctrl-J /
 //! Ctrl-K / Ctrl-O) and plugin `OnFocusedCanvas` keybinding dispatch sit
 //! together in one place instead of being spread through the event loop.
+//!
+//! The portable-event indirection is a plugin-ABI boundary, not a
+//! convenience: `KeyEventPortable` and `MouseEventPortable` are owned by
+//! the `otto-plugin` crate (`types.rs` / `content.rs`), and plugins
+//! receive them by contract — `KeyScope::OnFocusedCanvas` routing takes a
+//! `&KeyEventPortable`, and raw dispatch reaches renderers as
+//! `InputEvent::Key` / `InputEvent::Mouse`. So the crossterm → portable
+//! translation stays required no matter how many front-ends otto has;
+//! collapsing this module back into inline crossterm handling in `main.rs`
+//! would push crossterm types up against that ABI.
 
 use otto_plugin::{
     ContentBlockId, InputEvent, KeyCodePortable, KeyEventPortable, MouseEventPortable,

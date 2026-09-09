@@ -228,10 +228,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Build the shared application state: resolve tool binaries, bootstrap the
-/// provider-pool host, build `App`, install the plugin runtime, and align
-/// startup state/notes. Used by the ratatui TUI (`run_app`); contains no
-/// terminal-specific setup.
 /// The `Send` result of the network half of bootstrap, handed back from the
 /// background Tokio worker to the UI thread. A named struct (rather than a bare
 /// 4-tuple) so the two `String`/`Vec<String>`-family members can't be
