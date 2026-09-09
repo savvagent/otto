@@ -9,7 +9,6 @@
 pub mod catalog;
 pub mod picker;
 pub mod screen;
-pub mod xterm_colors;
 
 use async_trait::async_trait;
 use otto_plugin::{

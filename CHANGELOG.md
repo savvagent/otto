@@ -8,6 +8,14 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Removed
+
+- The experimental `eframe`/`egui` native GUI front-end and its `otto gui` entry point, along with
+  the `eframe`, `egui`, and `egui-file-dialog` dependencies. `otto gui` no longer launches a
+  window — the `gui` argument is simply ignored and the TUI launches as usual; the ratatui TUI is
+  unchanged and is now otto's only front-end. The removed code stays recoverable from git history.
+  (#94)
+
 ## 0.26.4 - 2026-09-08
 
 ### Added

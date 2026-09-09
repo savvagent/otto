@@ -39,7 +39,6 @@ mod app;
 mod canvas_input;
 mod config_file;
 mod creds;
-mod egui_app;
 mod mcp_config_writer;
 mod mcp_oauth;
 mod migration;
@@ -180,15 +179,6 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     init_tracing();
 
-    // `otto gui` launches the experimental native egui front-end
-    // (v0.19.0 migration, in progress) instead of the ratatui TUI. Every
-    // other invocation runs the TUI exactly as before. `eframe::run_native`
-    // owns the main thread for the lifetime of the window; we are inside
-    // `#[tokio::main]`, so spawned turn workers use `Handle::current()`.
-    if std::env::args().nth(1).as_deref() == Some("gui") {
-        return egui_app::run().map_err(|e| anyhow::anyhow!("egui front-end failed: {e}"));
-    }
-
     let (mut app, host_slot, project_root, tool_bins) = bootstrap_app_and_host().await?;
 
     let mut terminal = tui::init()?;
@@ -238,19 +228,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Build the shared application state: resolve tool binaries, bootstrap the
-/// provider-pool host, build `App`, install the plugin runtime, and align
-/// startup state/notes. Shared by the ratatui TUI (`run_app`) and the egui
-/// front-end (`egui_app::run`); contains no terminal/window-specific setup.
-/// Send-only result of the network half of bootstrap (the provider-pool host
-/// build). Carries no `App` (which is `!Send`), so it can be produced on a
-/// background Tokio worker and handed back to the UI thread — see the GUI's
-/// `GuiApp` bootstrap in `egui_app`.
 /// The `Send` result of the network half of bootstrap, handed back from the
 /// background Tokio worker to the UI thread. A named struct (rather than a bare
 /// 4-tuple) so the two `String`/`Vec<String>`-family members can't be
 /// transposed at a decode site.
-#[allow(dead_code)]
 pub(crate) struct HostBoot {
     /// The started provider-pool host, if startup connected successfully.
     pub host: Option<Arc<Host>>,
@@ -390,9 +371,12 @@ pub(crate) fn build_tool_bins() -> ToolBins {
 }
 
 /// The network-bearing half of bootstrap: build the provider-pool host. Owns
-/// its arguments and returns only `Send` data, so the GUI can run it on a
-/// background Tokio worker without dragging the `!Send` `App` across threads.
-/// `App` is built afterward on the UI thread by [`build_app_with_host`].
+/// its arguments and returns only `Send` data ([`HostBoot`]), which is why it
+/// can be split from the `!Send` `App` construction in [`build_app_with_host`]
+/// at all. Nothing exploits that today: [`bootstrap_app_and_host`] is the sole
+/// caller and awaits both halves back to back on one task, so the split is
+/// currently a property of the types rather than something the scheduling
+/// depends on.
 pub(crate) async fn bootstrap_host_only(
     project_root: PathBuf,
     tool_bins: ToolBins,
@@ -408,9 +392,9 @@ pub(crate) async fn bootstrap_host_only(
     .await
 }
 
-/// Full bootstrap: build the host (network) then `App` (local), run
-/// sequentially on one thread. Used by the ratatui TUI path; the GUI runs the
-/// two halves separately (host off-thread, `App` on the UI thread).
+/// Full bootstrap: build the host (network) then `App` (local), awaited
+/// sequentially on one task. This is the only caller of either half, and the
+/// ratatui TUI path in `main` is the only caller of this.
 pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path::PathBuf, ToolBins)>
 {
     let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -431,8 +415,8 @@ pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path
 
 /// The local, `!Send` half of bootstrap: construct `App`, install the plugin
 /// runtime, and wrap the (already-built) host in a `HostSlot`. No network I/O
-/// happens here — only local manifest/plugin work — so it is safe to run on
-/// the GUI's UI thread without freezing the window.
+/// happens here — only local manifest/plugin work — so it stays fast enough to
+/// await inline on the task that goes on to drive the TUI.
 pub(crate) async fn build_app_with_host(
     initial: HostBoot,
     project_root: std::path::PathBuf,

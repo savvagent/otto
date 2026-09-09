@@ -92,31 +92,7 @@ cargo build
 
 # Run the TUI. With nothing configured, it boots disconnected.
 cargo run -p otto
-
-# Or launch the experimental native GUI (egui) instead of the TUI.
-cargo run -p otto -- gui
 ```
-
-> **Experimental GUI (v0.19.0, in progress).** `otto gui` opens a
-> native `eframe`/`egui` window that reuses the exact same host, plugin
-> runtime, and turn machinery as the TUI — it paints the conversation log,
-> the plugin header/tips/footer slots, and a prompt that submits streaming
-> turns. It is being built alongside the ratatui TUI, which remains the
-> default and is unchanged. Screens and modals now work: the
-> theme/model/language/connect/plugins/changelog pickers open and operate
-> via slash commands (`/theme`, `/model`, `/language`, `/connect`,
-> `/plugins`, `/changelog`, …). The active screen is painted as an egui
-> overlay — centered modal, full-screen, or bottom sheet — with chrome,
-> tips, and a dimmed backdrop, and keyboard input routes to it. `Ctrl-O`
-> from the home prompt opens a file picker; the chosen path is spliced into
-> the prompt as an `@<path>` reference. `/lsp` (the LSP-installer's
-> multi-select picker) is now driven by portable keys end-to-end.
-> Plugin-bound home accelerators (the command
-> palette's `/` chord and any plugin keybindings) are **not** routed in the
-> GUI yet — open those screens by their slash command, or use the TUI. Also
-> still **not** wired up in the GUI (deferred to a later plan):
-> high-fidelity markdown rendering (the changelog renders as line-based
-> text) and inline canvases (render as placeholders).
 
 If the bundled tool servers (`otto-tool-fs`, `otto-tool-bash`,
 `otto-tool-grep`) aren't on `$PATH` and aren't sitting next to the

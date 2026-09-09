@@ -63,16 +63,6 @@ blitz-html = "=0.3.0-alpha.4"
 blitz-paint = "=0.3.0-alpha.4"
 blitz-traits = "=0.3.0-alpha.4"
 
-# Native GUI front-end (v0.19.0 egui migration). Default features keep the
-# glow backend plus x11 + wayland windowing, which are required to open a
-# window on Linux — do NOT set default-features = false without re-adding
-# those windowing features.
-eframe = "0.32"
-egui = "0.32"
-# Native GUI front-end file picker widget. Pinned to a 0.32-compatible
-# release; 0.12+ requires egui 0.33 or 0.34. Bumping egui is a separate
-# concern (Plan 5).
-egui-file-dialog = "=0.11.0"
 anyrender = "0.10"
 anyrender_vello_cpu = "0.12"
 peniko = "0.6"

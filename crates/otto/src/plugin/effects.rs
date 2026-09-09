@@ -663,12 +663,11 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         // seeds the preview below and `PaletteScreen` clears it again on
         // Esc / empty-result Enter / no-arg Enter — so it owns the draft
         // from the first frame. It may therefore only open over an empty
-        // prompt: both front-ends already refuse to emit
-        // `OpenScreen { id: "palette" }` while text is present (the TUI
-        // routes `/` to the palette only on an empty prompt; the egui
-        // trigger requires a bare `/` and clears it). This guard keeps a
-        // future plugin/hook-driven open from seizing and destroying a
-        // real draft, and is purely defensive today.
+        // prompt: the TUI already refuses to emit
+        // `OpenScreen { id: "palette" }` while text is present, because it
+        // routes `/` to the palette only on an empty prompt. This guard
+        // keeps a future plugin/hook-driven open from seizing and
+        // destroying a real draft, and is purely defensive today.
         if app
             .input_textarea
             .lines()
@@ -1337,17 +1336,6 @@ mod tests {
             app.input_textarea.lines(),
             &["/bash ".to_string()],
             "PrefillInput must install the literal text as a single line"
-        );
-        assert_eq!(
-            app.take_pending_prefill().as_deref(),
-            Some("/bash "),
-            "PrefillInput must also stage the text on the pending_prefill bridge \
-             that the egui prompt drains"
-        );
-        assert_eq!(
-            app.take_pending_prefill(),
-            None,
-            "take_pending_prefill is one-shot: draining the bridge leaves it empty",
         );
     }
 
@@ -3153,8 +3141,8 @@ mod tests {
     /// "palette" }` while the textarea holds a real draft must neither
     /// overwrite that draft nor push a palette screen — the effects layer
     /// refuses the open instead of letting the palette seize the user's
-    /// text. Both front-ends already gate their palette opener on an empty
-    /// prompt, so this guards a future plugin/hook-driven open.
+    /// text. The TUI already gates its palette opener on an empty prompt, so
+    /// this guards a future plugin/hook-driven open.
     #[tokio::test]
     async fn palette_open_is_refused_over_non_empty_prompt() {
         use crate::plugin::manifests::Indexes;
@@ -3206,11 +3194,6 @@ mod tests {
             app.input_textarea.lines(),
             &draft[..],
             "palette open over a non-empty prompt must not alter the draft"
-        );
-        assert_eq!(
-            app.take_pending_prefill(),
-            None,
-            "a refused palette open must not stage a PrefillInput"
         );
         assert!(
             app.screen_stack.is_empty(),
