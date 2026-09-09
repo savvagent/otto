@@ -34,19 +34,24 @@ Remove the whole `crates/otto/src/egui_app/` directory (`mod.rs`, `view.rs`, `co
 
 Remove `eframe`, `egui`, `egui-file-dialog`, and `futures` from `crates/otto/Cargo.toml` and from `[workspace.dependencies]` in the root `Cargo.toml`, along with the comment blocks that explain their GUI-specific pins (the eframe default-features warning and the `egui-file-dialog` version pin note). `futures` goes with them because `grep` over `crates/otto/src` finds zero uses outside `egui_app` — it was added for the foreign-executor `block_on` in the synchronous egui paint pass.
 
-`image` stays: it is used by `ui.rs` for canvas rendering and is a transitive dep of `ratatui-image` and `blitz-paint`.
+`image` stays: it is used by `frame_to_dynamic_image` in `crates/otto/src/app.rs:152-176` and is a transitive dep of `ratatui-image` and `blitz-paint`. (`ui.rs` renders through `ratatui_image`, not `image` directly.)
 
 ### 3. Remove the GUI-only accommodation in shared state
 
 `App::prefill_input` (`crates/otto/src/app.rs:1972-1985`) does two things: it replaces `input_textarea` (what the TUI reads) and it stages the same text on `pending_prefill`, a one-shot bridge that exists solely because the egui shell keeps its prompt buffer outside `App` (`OttoApp::prompt`). With egui gone, the bridge has no consumer.
 
-Remove the `pending_prefill` field, its initializer, and `App::take_pending_prefill`, and drop the two bridge assertions from `prefill_input_replaces_textarea_contents` (`crates/otto/src/plugin/effects.rs:1342-1352`). `prefill_input` itself stays — the TUI depends on it, and the palette's prompt-preview behavior from #80 must not regress.
+Remove the `pending_prefill` field, its initializer, and `App::take_pending_prefill`. `prefill_input` itself stays — the TUI depends on it, and the palette's prompt-preview behavior from #80 must not regress.
+
+`take_pending_prefill` has **two** test call sites, both of which must come out, and they are not equivalent:
+
+- `crates/otto/src/plugin/effects.rs:1342-1352`, in `prefill_input_replaces_textarea_contents` — two assertions that the bridge is staged and that draining it is one-shot. Pure bridge coverage; delete both and keep the test's `input_textarea` assertions, which are what actually prove `Effect::PrefillInput` reaches the prompt.
+- `crates/otto/src/plugin/effects.rs:3211-3215`, in the refused-palette-open test — `assert_eq!(app.take_pending_prefill(), None, "a refused palette open must not stage a PrefillInput")`. This one guards the #80 surface this spec names as the highest regression risk, so deleting it needs a reason rather than a compile error. The reason: the same test already asserts `app.input_textarea.lines() == &draft[..]` at `:3205-3209` with the message "palette open over a non-empty prompt must not alter the draft". Once the bridge is gone, `input_textarea` is the only thing a prefill could touch, so that surviving assertion covers the full property. Delete the bridge assertion; do **not** delete the draft assertion above it, and do not weaken the test to compensate.
 
 ### 4. Update prose that describes a two-front-end world
 
 - `README.md`: drop the `cargo run -p otto -- gui` line and the "Experimental GUI (v0.19.0, in progress)" block (~L96-118).
 - Doc comments naming the GUI as a second caller: `crates/otto/src/canvas_input.rs:1-9` (module doc), `crates/otto/src/plugin/effects.rs:668`, `:1345`, `crates/otto/src/plugin/builtin/themes/xterm_colors.rs:8-10`, and `crates/otto/src/main.rs:243-248` (`bootstrap_app_and_host`'s "shared by the TUI and the egui front-end" framing).
-- `crates/otto/src/main.rs`'s `HostBoot` doc block explains the struct's `Send`-only shape by reference to the GUI's off-thread bootstrap. `HostBoot` and `bootstrap_host_only` are still used by the TUI path (`main.rs:414-435`) and stay; only the rationale prose changes. The `#[allow(dead_code)]` on `HostBoot` should be re-evaluated once the GUI's field reads are gone.
+- `crates/otto/src/main.rs:241-252` currently holds **three** stacked doc comments where there should be two. `:241-244` documents `bootstrap_app_and_host` ("Shared by the ratatui TUI (`run_app`) and the egui front-end"); `:245-248` is an orphan second `HostBoot` summary that exists only to explain the GUI's off-thread bootstrap ("see the GUI's `GuiApp` bootstrap in `egui_app`"); `:249-252` is the real `HostBoot` doc block and is GUI-free already. Reword `:241-244` to drop the second front-end, delete `:245-248` outright rather than rewording it, and leave `:249-252` alone. `HostBoot` and `bootstrap_host_only` are still used by the TUI path (`main.rs:414-435`) and stay; the `#[allow(dead_code)]` on `HostBoot` (`:253`) should be re-evaluated once the GUI's field reads are gone.
 - `docs/superpowers/specs/2026-05-26-v0.19.0-egui-frontend-design.md`: flip its status to record that the migration was abandoned, citing #94. The five plans and two specs stay in place — they are the historical record of shipped work, and this repo has no archive directory.
 
 ### 5. Let the compiler find the rest
@@ -75,7 +80,9 @@ Remove the `pending_prefill` field, its initializer, and `App::take_pending_pref
 
 ## Public-interface changes
 
-**Breaking, and deliberate** (Non-Negotiable Rule 6). `otto gui` is a documented developer-facing entry point in `README.md`, and removing it removes a way to launch the program. It is not an SPP wire-format, tool-schema, plugin-ABI, or on-disk-format change — no transcript, keyring entry, `StreamEvent`, `ToolDef`, or slash command is affected, and no plugin can observe the difference.
+**Breaking, and deliberate.** `otto gui` is a documented developer-facing entry point in `README.md`, and removing it removes a way to launch the program.
+
+Strictly, it is *not* one of Non-Negotiable Rule 6's enumerated surfaces: no SPP wire type, `ProviderHandler`/`ProviderClient` method, tool MCP schema, plugin ABI surface, slash command, README-documented env var, or on-disk transcript/keyring format is affected, and no plugin can observe the difference. Rule 6 is therefore not triggered by its own letter, and the plan should not cite it as if a listed surface changed. This spec nonetheless applies Rule 6's *treatment* — named here, flagged to the architecture review, called out in `CHANGELOG.md`, reflected in the version bump — because a CLI entry point someone's shell history or script may invoke is user-visible in the way the rule exists to protect. That is the conservative call and it costs nothing pre-1.0.
 
 Per this repo's pre-1.0 SemVer convention (`CHANGELOG.md`), a breaking change is a **MINOR** bump. The release cut after this PR merges is therefore `v0.27.0`, not a patch on `v0.26.3`. `CHANGELOG.md` gets a `### Removed` entry naming `otto gui` explicitly so the removal is discoverable by anyone whose muscle memory or script invokes it.
 
@@ -100,7 +107,7 @@ The GUI was documented as experimental and in-progress from the day it shipped, 
 
 `crates/otto` builds and ships one front-end — the ratatui TUI — with no egui code, no egui dependencies, and no GUI-shaped accommodations left in shared state, and with TUI behavior unchanged.
 
-- [ ] `crates/otto/src/egui_app/` does not exist, and `rg egui crates/` returns no hits outside `docs/`.
+- [ ] `crates/otto/src/egui_app/` does not exist, and `rg 'egui|eframe' crates/ -g '*.rs' -g '*/Cargo.toml'` returns no hits. (Do **not** grep bare `egui` across all of `crates/` — `crates/otto/locales/pt.toml` contains the substring inside ordinary Portuguese words at `:80`, `:81`, `:240`, `:242` (`Prosseguindo`, `seguinte`), which have nothing to do with the GUI and must not be touched.)
 - [ ] `eframe`, `egui`, `egui-file-dialog`, and `futures` appear in neither `Cargo.toml`, and `Cargo.lock` no longer resolves `eframe`/`egui`/`egui-file-dialog`.
 - [ ] `cargo build`, `cargo build --workspace --all-targets`, `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo fmt --all --check` are all green.
 - [ ] `cargo run -p otto` launches the TUI, renders the home view, and `/` opens the command palette with the prompt preview from #80 still working — verified by hand, since CI cannot.
