@@ -26,7 +26,18 @@ jobs:
   release-pr:
     name: Release-plz PR
     runs-on: ubuntu-latest
-    if: github.repository_owner == 'savvagent'
+    # DISABLED pending release-plz#2789 (see RELEASING.md). While the
+    # automation is non-functional this job still ran on every push to
+    # main, opening `chore: release vX.Y.Z` PRs that nobody could merge —
+    # and an unmergeable release PR sitting open implies a pending release
+    # that has often already shipped by the manual route, which is how
+    # #90 ended up open alongside the manual #91 for a version that had
+    # already tagged via #93.
+    #
+    # Re-enable by restoring:
+    #   if: github.repository_owner == 'savvagent'
+    # once release-plz#2789 ships, per the RELEASING.md checklist.
+    if: false
     permissions:
       contents: write
       pull-requests: write
