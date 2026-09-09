@@ -806,6 +806,8 @@ async fn build_palette_commands(
         .collect();
     drop(idx);
     entries.sort_by(|a, b| a.0.cmp(&b.0));
+    entries
+        .retain(|(name, _)| !crate::plugin::builtin::connect::is_internal_connect_namespace(name));
 
     let reg = reg_handle.read().await;
     let mut commands = Vec::with_capacity(entries.len());
@@ -2313,6 +2315,61 @@ mod tests {
             "no plugin-owned palette command should have needs_arg=true \
              now that /view and /edit are gone: {by_name:?}"
         );
+    }
+
+    /// Regression test: the command palette must list `/connect` (the
+    /// entry-point slash) but must NOT list any internal `connect <id>`
+    /// slashes (`connect anthropic`, `connect gemini`, …). Those belong
+    /// to the private picker-dispatch namespace and would clutter the
+    /// palette with redundant entries the user never invokes directly.
+    #[tokio::test]
+    async fn palette_hides_internal_connect_slashes() {
+        use crate::plugin::manifests::Indexes;
+        use crate::plugin::register_builtins;
+        use crate::plugin::registry::PluginRegistry;
+        use std::collections::BTreeMap;
+        use std::sync::Arc;
+
+        let set = register_builtins(
+            Arc::new(tokio::sync::RwLock::new(None)),
+            Arc::new(tokio::sync::RwLock::new(BTreeMap::new())),
+            Arc::new(tokio::sync::RwLock::new(
+                crate::plugin::builtin::user_hooks::discovery::HooksIndex::default(),
+            )),
+            "test-session".into(),
+            std::path::PathBuf::from("/tmp"),
+            Arc::new(tokio::sync::RwLock::new(std::path::PathBuf::from(
+                "/t.json",
+            ))),
+            crate::McpManagerSeed::default(),
+            vec![],
+        );
+        let registry = PluginRegistry::new(set);
+        let indexes = Indexes::build(&registry).await.expect("indexes build");
+        let registry = std::sync::Arc::new(tokio::sync::RwLock::new(registry));
+        let indexes = std::sync::Arc::new(tokio::sync::RwLock::new(indexes));
+
+        let commands = build_palette_commands(&registry, &indexes).await;
+        let names: Vec<String> = commands.into_iter().map(|c| c.name).collect();
+
+        // The `/connect` entry-point must still appear.
+        assert!(
+            names.contains(&"connect".to_string()),
+            "palette must still list `/connect`; got {names:?}"
+        );
+        // None of the internal `connect <id>` provider slashes may appear.
+        for hidden in [
+            "connect anthropic",
+            "connect gemini",
+            "connect openai",
+            "connect deepseek",
+            "connect local",
+        ] {
+            assert!(
+                !names.contains(&hidden.to_string()),
+                "palette must not list `{hidden}`; got {names:?}"
+            );
+        }
     }
 
     /// Regression test for the `/connect` picker only showing Ollama.
