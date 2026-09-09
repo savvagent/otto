@@ -1,12 +1,12 @@
-//! Shell-agnostic key + mouse dispatch for focused canvases.
+//! Key + mouse dispatch for focused canvases.
 //!
-//! Both the ratatui TUI (`main.rs`) and the egui GUI
-//! (`egui_app/widgets/canvas.rs`) translate their native events to
-//! `KeyEventPortable` / `MouseEventPortable` and call the helpers here.
-//! The bodies are the same logic the TUI used to keep inline; the move
-//! lets the GUI reuse them without duplicating built-in shortcuts
-//! (Esc / Tab / BackTab / Ctrl-J / Ctrl-K / Ctrl-O) or plugin
-//! `OnFocusedCanvas` keybinding dispatch.
+//! The ratatui TUI (`main.rs`) translates its crossterm events to
+//! `KeyEventPortable` / `MouseEventPortable` and calls the helpers here.
+//! The bodies are the same logic `main.rs` used to keep inline; they live
+//! in their own module — behind portable events rather than crossterm
+//! types — so the built-in shortcuts (Esc / Tab / BackTab / Ctrl-J /
+//! Ctrl-K / Ctrl-O) and plugin `OnFocusedCanvas` keybinding dispatch sit
+//! together in one place instead of being spread through the event loop.
 
 use otto_plugin::{
     ContentBlockId, InputEvent, KeyCodePortable, KeyEventPortable, MouseEventPortable,

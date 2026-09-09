@@ -230,12 +230,8 @@ async fn main() -> Result<()> {
 
 /// Build the shared application state: resolve tool binaries, bootstrap the
 /// provider-pool host, build `App`, install the plugin runtime, and align
-/// startup state/notes. Shared by the ratatui TUI (`run_app`) and the egui
-/// front-end (`egui_app::run`); contains no terminal/window-specific setup.
-/// Send-only result of the network half of bootstrap (the provider-pool host
-/// build). Carries no `App` (which is `!Send`), so it can be produced on a
-/// background Tokio worker and handed back to the UI thread — see the GUI's
-/// `GuiApp` bootstrap in `egui_app`.
+/// startup state/notes. Used by the ratatui TUI (`run_app`); contains no
+/// terminal-specific setup.
 /// The `Send` result of the network half of bootstrap, handed back from the
 /// background Tokio worker to the UI thread. A named struct (rather than a bare
 /// 4-tuple) so the two `String`/`Vec<String>`-family members can't be

@@ -663,12 +663,11 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         // seeds the preview below and `PaletteScreen` clears it again on
         // Esc / empty-result Enter / no-arg Enter — so it owns the draft
         // from the first frame. It may therefore only open over an empty
-        // prompt: both front-ends already refuse to emit
-        // `OpenScreen { id: "palette" }` while text is present (the TUI
-        // routes `/` to the palette only on an empty prompt; the egui
-        // trigger requires a bare `/` and clears it). This guard keeps a
-        // future plugin/hook-driven open from seizing and destroying a
-        // real draft, and is purely defensive today.
+        // prompt: the TUI already refuses to emit
+        // `OpenScreen { id: "palette" }` while text is present, because it
+        // routes `/` to the palette only on an empty prompt. This guard
+        // keeps a future plugin/hook-driven open from seizing and
+        // destroying a real draft, and is purely defensive today.
         if app
             .input_textarea
             .lines()
