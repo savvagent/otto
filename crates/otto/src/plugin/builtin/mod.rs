@@ -81,14 +81,15 @@ pub mod user_agents;
 /// `settings.json` files. PreToolUse gating + observe-only events.
 pub mod user_hooks;
 
+/// `internal:user-skills` — discovers Claude-Code-compatible skills from
+/// `.otto/skills/` / `.claude/skills/` and exposes them under progressive
+/// disclosure via the in-process `skill` tool.
+pub mod user_skills;
+
 /// `internal:user-slash-commands` — discovers user-authored slash commands
 /// from `.otto/commands/` / `.claude/commands/` and dispatches them
 /// with templating expansion.
 pub mod user_slash_commands;
-
-/// `internal:user-skills` — discovers repo-authored skills and exposes
-/// them via `/skills`.
-pub mod user_skills;
 
 /// `internal:tool-bash-summary` — renders one-line summaries for the
 /// `tool-bash` `run` tool.

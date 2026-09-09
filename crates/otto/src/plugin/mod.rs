@@ -133,8 +133,9 @@ pub(crate) fn register_builtins(
         Box::new(builtin::themes::ThemesPlugin::new()),
         Box::new(builtin::tool_bash_summary::ToolBashSummaryPlugin::new()),
         Box::new(builtin::user_agents::UserAgentsPlugin::new()),
-        Box::new(builtin::user_skills::UserSkillsPlugin::with_project_root(
+        Box::new(builtin::user_skills::UserSkillsPlugin::with_roots(
             project_root.clone(),
+            dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(".")),
         )),
         Box::new(builtin::user_slash_commands::UserSlashCommandsPlugin::new(
             trust_levels,
