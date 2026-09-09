@@ -3088,6 +3088,10 @@ mod tests {
         let mut entries: Vec<String> = idx.slash.keys().cloned().collect();
         drop(idx);
         entries.sort();
+        assert!(
+            !entries.is_empty(),
+            "the builtin slash index must be non-empty for the seed assertion below"
+        );
 
         let expected_first_command = format!("/{}", entries[0]);
 
