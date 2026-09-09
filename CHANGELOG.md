@@ -8,6 +8,25 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.26.4 - 2026-09-08
+
+### Added
+
+- The inline `/` command palette now mirrors the currently-highlighted slash command into the
+  prompt input: pressing `/` over an empty prompt opens the palette and immediately seeds the
+  prompt with the first matching command, typing and arrow-navigation keep the prompt in sync with
+  the highlighted row (falling back to `/<filter>` when nothing matches), and closing or running a
+  command clears the staged text. The palette only ever opens over an empty prompt, so an
+  in-progress draft is never overwritten. Both the ratatui TUI and the egui front-end are covered.
+  (#80)
+
+### Fixed
+
+- The DeepSeek provider's `list_models` call (used by connect-time validation) now classifies
+  non-2xx `/models` responses by HTTP status into the matching error kind instead of always
+  reporting a network error, so a rejected or expired key surfaces the same `--rekey` recovery
+  path as turn-time authentication failures. (#89)
+
 ## 0.26.3 - 2026-09-08
 
 ### Fixed
