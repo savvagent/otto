@@ -343,9 +343,13 @@ pub fn render(
     // Ghost-completion overlay: the remainder of the highlighted palette
     // row's name, painted dim immediately after the cursor. Advisory only
     // — never written into `textarea`'s real, submittable buffer. See
-    // `paint_ghost_completion` for the safety conditions.
+    // `paint_ghost_completion` for the safety conditions. The screen
+    // derives its answer from `prompt_line` (the textarea's own current
+    // content), not from its own internal state — see
+    // `Screen::ghost_completion`'s doc comment.
+    let prompt_line = textarea.lines().first().map(String::as_str).unwrap_or("");
     if let Some((top_screen, _)) = app.screen_stack.top() {
-        if let Some(ghost) = top_screen.ghost_completion() {
+        if let Some(ghost) = top_screen.ghost_completion(prompt_line) {
             paint_ghost_completion(
                 frame.buffer_mut(),
                 prompt_block_value.inner(chunks[4]),
@@ -1209,11 +1213,19 @@ fn prompt_block(palette: Palette) -> Block<'static> {
 /// itself has no test precedent in this file and pulling this logic out
 /// avoids inventing one.
 ///
-/// Safety conditions, both required:
+/// Safety conditions, all required:
+/// - `inner` is clamped to `buf`'s own area before anything else runs. A
+///   degenerate or off-buffer `inner` (e.g. a squeezed layout on a very
+///   short terminal, where `Block::inner` can clamp `y` to the frame's
+///   bottom edge) would otherwise reach `Buffer::set_stringn`, whose
+///   underlying cell write panics on an out-of-area index — not gated
+///   behind `debug_assertions`. Clamping turns that into a safe no-op.
+///   (Caught in PR review for issue #118: a reachable panic on short
+///   terminals, e.g. mid-resize while the palette is open.)
 /// - `cursor.0 == 0` and `lines.len() == 1`: the cursor is on the
 ///   textarea's one and only logical line.
-/// - `line_fits`: that line's full character count is within `inner`'s
-///   width. This is the actual no-wrap proof — `WrapMode::WordOrGlyph`
+/// - `line_fits`: that line's full character count is within the clamped
+///   `inner`'s width. This is the actual no-wrap proof — `WrapMode::WordOrGlyph`
 ///   cannot have moved the cursor's visual column away from its logical
 ///   column unless the line was wider than the available width, so
 ///   checking `cursor.0 == 0 && lines.len() == 1` alone is NOT sufficient:
@@ -1228,6 +1240,10 @@ fn paint_ghost_completion(
     ghost: &str,
     style: Style,
 ) {
+    let inner = inner.intersection(buf.area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
     let (cursor_row, cursor_col) = cursor;
     let single_line = lines.len() == 1;
     let line_fits = lines
@@ -2646,5 +2662,56 @@ mod tests {
             ghost_style(),
         );
         assert_eq!(cells_to_string(&buf, 0, 8..10), "nn");
+    }
+
+    /// Regression for a reachable panic a security review caught: on a
+    /// squeezed layout (a very short terminal), `Block::inner` can clamp
+    /// the prompt's interior rect's `y` to the frame's own bottom edge —
+    /// one row past the buffer's actual area. Without clamping `inner` to
+    /// `buf.area` first, `Buffer::set_stringn` would panic (its cell write
+    /// indexes unconditionally, not gated behind `debug_assertions`). Here
+    /// `inner` is deliberately one row below `buf`'s 4-row area; this must
+    /// not panic, and must not touch the buffer at all.
+    #[test]
+    fn paint_ghost_completion_does_not_panic_when_inner_is_outside_the_buffer() {
+        let buf_area = Rect::new(0, 0, 20, 4);
+        let mut buf = Buffer::empty(buf_area);
+        let out_of_buffer_inner = Rect::new(0, 4, 20, 1);
+        paint_ghost_completion(
+            &mut buf,
+            out_of_buffer_inner,
+            (0, 3),
+            &["/co".to_string()],
+            "nnect",
+            ghost_style(),
+        );
+        for y in 0..buf_area.height {
+            for x in 0..buf_area.width {
+                assert_eq!(buf[(x, y)].symbol(), " ");
+            }
+        }
+    }
+
+    /// A degenerate zero-height `inner` (still within `buf`'s area, e.g. a
+    /// layout constraint that collapsed to nothing) must also be a safe
+    /// no-op rather than reaching the cursor/width arithmetic below.
+    #[test]
+    fn paint_ghost_completion_does_not_panic_on_zero_height_inner() {
+        let buf_area = Rect::new(0, 0, 20, 4);
+        let mut buf = Buffer::empty(buf_area);
+        let zero_height_inner = Rect::new(0, 1, 20, 0);
+        paint_ghost_completion(
+            &mut buf,
+            zero_height_inner,
+            (0, 3),
+            &["/co".to_string()],
+            "nnect",
+            ghost_style(),
+        );
+        for y in 0..buf_area.height {
+            for x in 0..buf_area.width {
+                assert_eq!(buf[(x, y)].symbol(), " ");
+            }
+        }
     }
 }

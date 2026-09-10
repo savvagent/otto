@@ -384,3 +384,42 @@ type).
   sufficient and this reads as visual noise in practice, the fix is a follow-up removing the overlay
   call in `ui.rs` and the trait method's only caller; the trait method itself can stay (harmless
   dead default) or be removed in the same pass.
+
+### Resolved during PR review (post-implementation)
+
+- **Reachable panic on short terminals, fixed.** `paint_ghost_completion` did not validate that
+  `inner` was actually within the target `Buffer`'s own area. On a squeezed layout (a very short
+  terminal, or mid-resize while the palette is open), `Block::inner` can clamp `inner.y` to the
+  frame's bottom edge — one row past the buffer's real area — and `Buffer::set_stringn`'s
+  underlying cell write panics on an out-of-area index (not gated behind `debug_assertions`). Fixed
+  by clamping `inner = inner.intersection(buf.area)` and returning early if the clamped rect has
+  zero width or height, before any of the cursor/width arithmetic runs. Two regression tests pin
+  this: an `inner` rect entirely outside `buf`'s area, and a zero-height `inner` inside it.
+- **`Screen::ghost_completion` gained a `prompt: &str` parameter.** The original signature,
+  `fn ghost_completion(&self) -> Option<String>`, let `PaletteScreen` derive the returned suffix's
+  length from its own `self.filter` field — correct only because the screen is also careful to keep
+  the real, on-screen prompt text exactly equal to `/` + `self.filter` at all times
+  (`prompt_preview`). Nothing in the trait's contract enforced or even stated that coupling, so a
+  future implementer (native or, once WIT support exists, WASM) could return a suffix computed
+  against internal state that has drifted from what's actually on the prompt line, painting ghost
+  text over real characters. The signature now takes `prompt: &str` — the runtime's own
+  authoritative view of the current prompt line, threaded in from `render()`'s `textarea.lines()`
+  — and `PaletteScreen`'s implementation derives the suffix length from `prompt` (stripped of its
+  leading `/`) rather than `self.filter`. `self.filter` and `prompt` are still expected to agree
+  while this screen owns the prompt; the fix is that a divergence between them now degrades to a
+  wrong-but-plausible ghost string at worst, never one painted past what `prompt` actually contains.
+- **CHANGELOG wording narrowed.** The original entry said the trait addition was "for plugin authors
+  who want the same overlay on their own screens" without qualification. `crates/otto-plugin-wasm`'s
+  WIT interface (`plugin-interactive.wit`) does not expose `ghost-completion`, so WASM plugins
+  inherit the trait's `None` default regardless of what they'd want — the claim only holds for
+  native (in-process) screen implementers today. Reworded to say so explicitly; adding WIT support
+  is a follow-up, not part of this change.
+- **Manual terminal verification could not be completed in the implementing session's environment.**
+  `tmux send-keys` reached the allocated pty correctly (confirmed via an isolated raw-mode read
+  test), but otto's own `crossterm`-based event loop never observed the keys — `crossterm`'s Unix
+  input backend opens `/dev/tty` directly rather than reading stdin, and in that sandbox `/dev/tty`
+  did not resolve to the tmux-allocated pty. This is an environment characteristic of the sandbox
+  the implementing session ran in, not a defect in this change (the diff touches no input-handling
+  or plugin-registry code). Flagged in the PR for a human reviewer's visual check before merge;
+  automated coverage (unit tests directly asserting `paint_ghost_completion`'s buffer output, cell
+  by cell) substitutes where the interactive check could not run.

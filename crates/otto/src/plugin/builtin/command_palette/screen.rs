@@ -376,14 +376,24 @@ impl Screen for PaletteScreen {
     ///   the highlighted name in full, the suffix is empty; rendering it
     ///   would be a visual no-op worth skipping explicitly rather than
     ///   leaving to coincidence.
-    fn ghost_completion(&self) -> Option<String> {
+    ///
+    /// Per the trait's contract, the suffix length is derived from `prompt`
+    /// (the runtime's own authoritative on-screen text) rather than from
+    /// `self.filter` — even though the two are expected to always agree
+    /// while this screen owns the prompt (`prompt_preview` sets the prompt
+    /// to exactly `/` + `self.filter`), deriving from `prompt` means a
+    /// divergence between them degrades to a wrong-but-plausible ghost
+    /// string at worst, never a ghost painted over characters `prompt`
+    /// doesn't actually contain.
+    fn ghost_completion(&self, prompt: &str) -> Option<String> {
         let filtered = self.filtered();
         let (_, cmd) = filtered.get(self.cursor)?;
-        let filter_lower = self.filter.to_ascii_lowercase();
-        if !cmd.name.to_ascii_lowercase().starts_with(&filter_lower) {
+        let typed = prompt.strip_prefix('/').unwrap_or(prompt);
+        let typed_lower = typed.to_ascii_lowercase();
+        if !cmd.name.to_ascii_lowercase().starts_with(&typed_lower) {
             return None;
         }
-        let suffix: String = cmd.name.chars().skip(self.filter.chars().count()).collect();
+        let suffix: String = cmd.name.chars().skip(typed.chars().count()).collect();
         (!suffix.is_empty()).then_some(suffix)
     }
 }
@@ -1163,7 +1173,10 @@ mod tests {
     async fn ghost_completion_shows_the_remainder_of_a_prefix_match() {
         let mut p = fixture();
         p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
-        assert_eq!(p.ghost_completion(), Some("lear".to_string()));
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("lear".to_string())
+        );
     }
 
     /// An empty filter is trivially a prefix match against every row (every
@@ -1172,7 +1185,10 @@ mod tests {
     #[tokio::test]
     async fn ghost_completion_with_empty_filter_shows_full_highlighted_name() {
         let p = fixture();
-        assert_eq!(p.ghost_completion(), Some("clear".to_string()));
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("clear".to_string())
+        );
     }
 
     /// `filtered()` is a substring match, so the highlighted row is not
@@ -1187,7 +1203,7 @@ mod tests {
         for ch in "cl".chars() {
             p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
         }
-        assert_eq!(p.ghost_completion(), None);
+        assert_eq!(p.ghost_completion(&p.prompt_preview()), None);
     }
 
     /// When the typed filter already equals the highlighted name in full,
@@ -1199,7 +1215,7 @@ mod tests {
         for ch in "clear".chars() {
             p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
         }
-        assert_eq!(p.ghost_completion(), None);
+        assert_eq!(p.ghost_completion(&p.prompt_preview()), None);
     }
 
     /// With nothing highlighted there is no row to complete against.
@@ -1210,7 +1226,7 @@ mod tests {
             p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
         }
         assert!(p.filtered().is_empty());
-        assert_eq!(p.ghost_completion(), None);
+        assert_eq!(p.ghost_completion(&p.prompt_preview()), None);
     }
 
     /// Navigation changes which row is highlighted, so the ghost text must
@@ -1219,8 +1235,14 @@ mod tests {
     #[tokio::test]
     async fn ghost_completion_follows_navigation() {
         let mut p = fixture();
-        assert_eq!(p.ghost_completion(), Some("clear".to_string()));
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("clear".to_string())
+        );
         p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        assert_eq!(p.ghost_completion(), Some("demo".to_string()));
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("demo".to_string())
+        );
     }
 }

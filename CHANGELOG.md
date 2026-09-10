@@ -18,8 +18,10 @@ boundary changes and PATCH captures fixes).
   ghost text is never part of the prompt's real, submittable content. When the highlighted row only
   substring-matches what's typed (not a prefix), no ghost text renders and the existing `tips()`
   row remains the only disambiguation signal, unchanged. Adds `Screen::ghost_completion` as a new,
-  additive, default-`None` method on the plugin `Screen` trait (`crates/otto-plugin`) for plugin
-  authors who want the same overlay on their own screens. (#118)
+  additive, default-`None` method on the plugin `Screen` trait (`crates/otto-plugin`) for native
+  screen authors who want the same overlay on their own screens — not yet exposed through the WASM
+  plugin ABI's WIT interface, so third-party WASM plugins inherit the default (no ghost text) for
+  now. (#118)
 
 ## 0.28.1 - 2026-09-10
 

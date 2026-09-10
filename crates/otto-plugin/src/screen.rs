@@ -56,7 +56,18 @@ pub trait Screen: Send {
     /// (the default) means: no ghost text. This is advisory only — it is
     /// never written into the prompt's editable buffer, so it can never be
     /// deleted, submitted, or otherwise treated as real input.
-    fn ghost_completion(&self) -> Option<String> {
+    ///
+    /// `prompt` is the runtime's own authoritative view of what's currently
+    /// on the prompt line (the same text driving the textarea render).
+    /// Implementations must derive the returned suffix from `prompt`
+    /// itself, not from separately-tracked internal state — a screen that
+    /// computes the suffix length against its own filter/cursor state
+    /// instead of `prompt` risks painting ghost text over real characters
+    /// the moment that internal state drifts from what's actually
+    /// on-screen. The runtime does not (and cannot generically) verify
+    /// this on the implementer's behalf.
+    fn ghost_completion(&self, prompt: &str) -> Option<String> {
+        let _ = prompt;
         None
     }
 }
