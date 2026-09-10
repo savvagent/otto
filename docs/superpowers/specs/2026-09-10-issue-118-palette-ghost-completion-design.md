@@ -106,17 +106,28 @@ touches the prompt's own rect. Ghost text has to be painted into the prompt's re
 new step, inserted directly after the textarea render call and before the screen-stack paint:
 
 ```rust
+let block = prompt_block(&palette); // factored out of the inline builder below
+textarea.set_block(block.clone());
+// ... existing set_style / set_cursor_line_style / measure calls, unchanged ...
 frame.render_widget(&textarea, chunks[4]);
 
 if let Some((top_screen, _)) = app.screen_stack.top() {
     if let Some(ghost) = top_screen.ghost_completion() {
         let (cursor_row, cursor_col) = textarea.cursor();
-        // Single-line assumption: see "Scope > Out" and Risks. `.lines()`
-        // is checked (not just `cursor_row == 0`) so a palette-driven
-        // prefill that ever grows a second line degrades to "no ghost"
-        // rather than painting at the wrong row.
-        if cursor_row == 0 && textarea.lines().len() == 1 {
-            let inner = prompt_inner_rect(chunks[4]);
+        let single_line = textarea.lines().len() == 1;
+        // `line_fits` proves the line cannot have wrapped onto a second
+        // visual row: if the whole logical line's char count is within
+        // the interior width, `WrapMode::WordOrGlyph` has nothing to wrap.
+        // This is the actual no-wrap guarantee — `cursor_row == 0` and
+        // `lines().len() == 1` alone do NOT detect wrapping, because both
+        // report the *logical* line/row, unchanged by soft-wrapping a
+        // long logical line across multiple *visual* rows. See Risks.
+        let inner = block.inner(chunks[4]);
+        let line_fits = textarea
+            .lines()
+            .first()
+            .is_some_and(|l| l.chars().count() <= inner.width as usize);
+        if cursor_row == 0 && single_line && line_fits {
             let x = inner.x.saturating_add(cursor_col as u16);
             if x < inner.x + inner.width {
                 let max_width = (inner.x + inner.width - x) as usize;
@@ -133,10 +144,16 @@ if let Some((top_screen, _)) = app.screen_stack.top() {
 }
 ```
 
-`prompt_inner_rect` is a small new helper that reproduces the same `Block` geometry already used to
-build `textarea`'s block (`borders(ALL)` + `padding(Padding::horizontal(1))`,
-`ui.rs:247-252`) via `Block::inner`, so the ghost text's interior rect can never drift from the
-textarea's own — there is exactly one place that defines "where the prompt's text starts."
+`prompt_block(&palette) -> Block` is factored out of the inline block-builder `render()` already
+constructs (`borders(ALL)` + `padding(Padding::horizontal(1))` + border styling,
+`ui.rs:247-252`) so there is exactly **one** place that defines the prompt's block geometry —
+`textarea.set_block(...)` and the ghost overlay's `block.inner(chunks[4])` both derive from the
+same `Block` value in the same call to `render()`, rather than two independently-written
+`Block::borders(ALL).padding(Padding::horizontal(1))` literals that a later edit to one (a
+conditional border, an added title) could silently leave the other out of sync with. An earlier
+draft of this spec proposed a standalone `prompt_inner_rect` helper reproducing the geometry
+independently; a design critique correctly flagged that as two sources of truth with nothing
+forcing them to agree, so this revision derives both uses from one shared value instead.
 
 `Buffer::set_stringn` (not `set_string`) is used because it takes an explicit max-width and clips
 rather than panicking or overflowing the buffer if the ghost text would run past the block's right
@@ -176,8 +193,11 @@ a textarea edit does not.
 **Out:**
 - Multi-line / wrapped prompt text. The palette always drives the prompt with a single line (`/` +
   append-only filter characters, no newlines — `PaletteScreen::on_key`'s `Char`/`Backspace` arms).
-  The overlay explicitly checks `textarea.lines().len() == 1` and no-ops otherwise instead of
-  attempting to compute a wrapped cursor's on-screen row; see Risks.
+  The overlay's `line_fits` check (Approach > 3) proves the single logical line has not soft-wrapped
+  onto a second visual row — checking `lines().len() == 1` alone is not sufficient, since
+  `WrapMode::WordOrGlyph` wrapping is purely a rendering concern that leaves both `lines().len()`
+  and `textarea.cursor()`'s reported row unchanged (a design critique caught this: see Risks). The
+  overlay no-ops rather than attempting to compute a wrapped cursor's on-screen row.
 - Wide (double-width, e.g. CJK) characters in the ghost text or the typed filter. Slash command
   names are ASCII by construction (`PaletteCommand::name` comes from `SlashSpec.name`, which the
   plugin manifest format constrains to command-token syntax); this is not a currently reachable
@@ -193,10 +213,14 @@ a textarea edit does not.
 ## Public-interface changes
 
 **Additive.** `Screen::ghost_completion` is a new trait method on the plugin ABI
-(`crates/otto-plugin`) with a default implementation (`None`) — every existing `impl Screen for
-...` block, in this repo or in a third-party WASM/native plugin, continues to compile and behave
-identically without any change. No SPP wire format, tool schema, `ProviderHandler`/
-`ProviderClient` method, slash-command name, env var, or on-disk transcript/keyring format changes.
+(`crates/otto-plugin`) with a default implementation (`None`) — every existing native `impl Screen
+for ...` block in this repo continues to compile and behave identically without any change.
+(WASM plugins do not currently implement `Screen`'s `render`/`on_key`/`tips` surface across the
+WASM boundary at all — `crates/otto-plugin-wasm` only has them declare a `ScreenSpec` id and
+request `Effect::OpenScreen` — so there is nothing on that side for this addition to break either;
+the claim above is scoped to native implementers because that's the only surface that exists
+today.) No SPP wire format, tool schema, `ProviderHandler`/`ProviderClient` method, slash-command
+name, env var, or on-disk transcript/keyring format changes.
 
 Per the versioning convention (`CHANGELOG.md` header; pre-1.0 `0.MINOR.PATCH`), this is a **feature
 addition to the plugin ABI**, which warrants a MINOR bump, not a PATCH — see the implementation
@@ -283,16 +307,27 @@ type).
 
 ## Risks & Open Questions
 
-- **Wrap correctness is unverified, not proven safe.** The `textarea.lines().len() == 1` guard
-  means a multi-line prompt degrades to "no ghost text" rather than corrupting the render, but it is
-  a real functional gap if a future screen wants ghost text on a wrapped, multi-line prompt. Flagged
-  as a known limitation rather than solved; not in scope here (see Scope > Out).
-  Cursor and text can be simple, because
-  the palette's prompt content is always `/` + append-only filter characters with no wrapping in any
-  currently reachable terminal width used in this repo's tests — but this is worth the architecture
-  reviewer's attention specifically, since it is the one place this change reads two independent
-  pieces of state (`textarea.cursor()` and `top_screen.ghost_completion()`) and assumes they agree
-  on "what row and column is being edited."
+- **Resolved during spec critique: the original wrap guard didn't detect wrapping.** An earlier
+  draft guarded only on `cursor_row == 0 && textarea.lines().len() == 1`. Both are *logical*
+  line/row properties; `WrapMode::WordOrGlyph` soft-wrapping a long logical line across multiple
+  *visual* rows changes neither — so that guard would have passed identically whether the single
+  logical line rendered on one visual row or several, and painted the ghost overlay at the wrong
+  screen position the moment a palette-driven prompt (or a future `ghost_completion`-adopting
+  screen with a longer, space-containing line) actually wrapped. The revised `line_fits` check
+  (Approach > 3) closes this by proving the logical line's char count fits within the interior
+  width — the actual condition under which `WordOrGlyph` cannot have wrapped it — rather than
+  inferring non-wrapping from properties that don't imply it. No functional gap remains for the
+  palette's own prompt shape (single line, no spaces, append-only); a future multi-line adopter is
+  still out of scope (see Scope > Out) but now fails safe for the right reason.
+- **The two block-geometry call sites are now unified, not merely documented as coupled.** An
+  earlier draft had `prompt_inner_rect` reproduce the textarea's `Block` construction
+  independently; the revision in Approach > 3 derives both `textarea.set_block(...)` and the
+  overlay's `block.inner(chunks[4])` from one `prompt_block(&palette)` value per `render()` call, so
+  there is no second literal that could drift out of sync. Still worth the architecture reviewer's
+  attention: it's the one place this change reads two pieces of per-frame state
+  (`textarea.cursor()` and `top_screen.ghost_completion()`) and assumes they describe the same
+  frame's prompt content — true by construction since both are read within the same synchronous
+  `render()` call, but worth an explicit second look given it's new plumbing.
 - **This is new visual behavior with no dedicated visual regression test** — `cargo test` proves the
   cell(s) `set_stringn` wrote land where expected, not that the ghost text is visually distinguishable
   from real prompt text on every themed palette. The manual terminal check in the implementation
