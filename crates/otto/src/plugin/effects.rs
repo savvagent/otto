@@ -663,7 +663,8 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         // seeds a bare `/` below, `PaletteScreen` echoes the typed filter
         // into it on every keystroke, and clears it again on Esc /
         // empty-result Enter / no-arg Enter / backspace past the slash. It
-        // owns the draft from the first frame, and may therefore only open over an empty
+        // owns the draft from the first frame, and may therefore only
+        // open over an empty
         // prompt: the TUI already refuses to emit
         // `OpenScreen { id: "palette" }` while text is present, because it
         // routes `/` to the palette only on an empty prompt. This guard
@@ -697,8 +698,7 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         let screen = PaletteScreen::with_commands(commands);
         // Seed the prompt with the palette's preview — a bare `/`, since a
         // freshly built screen has an empty filter — so the prompt and the
-        // sheet agree from the first frame. This call is unchanged by #96;
-        // the behavior change lives entirely in `prompt_preview`.
+        // sheet agree from the first frame.
         let preview = screen.prompt_preview();
         app.prefill_input(preview);
         let screen: Box<dyn otto_plugin::Screen> = Box::new(screen);

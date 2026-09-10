@@ -211,6 +211,7 @@ modal-title       = "कमांड पैलेट"
 no-commands       = "(कोई कमांड उपलब्ध नहीं)"
 no-matches        = "(कोई मेल खाता कमांड नहीं)"
 tips              = "↑/↓ नेविगेट · फ़िल्टर के लिए टाइप करें · Enter चलाएं · Esc रद्द"
+tips-run          = "↑/↓ नेविगेट · फ़िल्टर के लिए टाइप करें · Enter %{cmd} चलाएं · Esc रद्द"
 
 [picker.prompt-keybindings]
 modal-title       = "प्रॉम्प्ट कीबाइंडिंग"

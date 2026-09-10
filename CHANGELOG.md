@@ -41,6 +41,9 @@ boundary changes and PATCH captures fixes).
   leading `/` now closes the palette, since that character is no longer something the palette owns
   on your behalf. The palette's own `> <filter>` header is gone — it duplicated the prompt one row
   below it — and a filter matching no commands now says so instead of leaving the list blank.
+  The palette's tips row now names the command Enter would run, so the pending command is still
+  stated somewhere: command matching is a substring match over every enabled plugin's slash
+  commands, so the highlighted row is not always the command you are partway through typing.
   Reverses the prompt-mirroring behavior added in 0.26.4. (#96)
 
 ## 0.26.4 - 2026-09-08

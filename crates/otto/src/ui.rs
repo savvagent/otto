@@ -1683,11 +1683,18 @@ mod tests {
 
     /// Paint a real `PaletteScreen` through the real `paint_screen` and
     /// look at the resulting cells. The palette's own unit tests check the
-    /// `Vec<StyledLine>` it emits; this checks what actually lands on the
-    /// terminal, which is where the sheet, the prompt row beneath it, and
-    /// the host's `tips()` overpaint interact.
+    /// `Vec<StyledLine>` it emits; this checks where those lines actually
+    /// land, which is what the reserved-row arithmetic in `render` is for:
+    /// the host overpaints the sheet's last row with `tips()` *after* the
+    /// paragraph, so the selected row has to stay above it.
+    ///
+    /// Scope: this paints the sheet only. The prompt textarea is painted
+    /// by `ui()`, not `paint_screen`, so it is not in this buffer — the
+    /// absence of the `> <filter>` header is asserted here, but that the
+    /// filter still reaches the prompt is covered by the palette's own
+    /// `prompt_preview` tests, not by this one.
     #[tokio::test]
-    async fn palette_paints_over_the_prompt_without_a_filter_header() {
+    async fn palette_sheet_paints_no_filter_header() {
         use crate::plugin::builtin::command_palette::screen::{PaletteCommand, PaletteScreen};
         use otto_plugin::KeyCodePortable;
 
@@ -1735,19 +1742,77 @@ mod tests {
             text.contains("\u{25b6} /changelog"),
             "the highlighted row must paint its marker:\n{text}"
         );
-        // The host overpaints the sheet's last row with tips(); the marker
-        // must not be sitting on it.
+    }
+
+    /// The painted counterpart to `screen.rs`'s height sweep: with a list
+    /// long enough to overflow the sheet and the cursor walked to the end,
+    /// the window anchors the selected row on its *last* row — which is
+    /// exactly the row the host would overpaint with `tips()` if the
+    /// reserved-row arithmetic were off by one.
+    ///
+    /// The short-list case cannot test this: the marker lands on the
+    /// sheet's second row for any value of the constant.
+    #[tokio::test]
+    async fn palette_selected_row_paints_above_the_tips_row_when_scrolled() {
+        use crate::plugin::builtin::command_palette::screen::{PaletteCommand, PaletteScreen};
+        use otto_plugin::KeyCodePortable;
+
+        let mut screen = PaletteScreen::with_commands(
+            (0..30)
+                .map(|i| PaletteCommand {
+                    name: format!("cmd{i:02}"),
+                    description: format!("cmd{i:02} description"),
+                    needs_arg: false,
+                })
+                .collect(),
+        );
+        for _ in 0..29 {
+            screen
+                .on_key(KeyEventPortable {
+                    code: KeyCodePortable::Down,
+                    modifiers: otto_plugin::KeyMods::default(),
+                })
+                .await
+                .expect("palette handles Down");
+        }
+
+        // Derive the tips needle from the screen itself: rust_i18n's locale
+        // is process-global and other tests in this binary switch it, so a
+        // hardcoded English string would be a latent flake.
+        let tips_text: String = screen.tips()[0]
+            .spans
+            .iter()
+            .map(|s| s.text.clone())
+            .collect();
+        let tips_needle = tips_text
+            .split(' ')
+            .next()
+            .expect("tips line is non-empty")
+            .to_string();
+
+        let buffer = render_paint_screen(
+            &screen,
+            &ScreenLayout::BottomSheet { height: 12 },
+            Palette::for_theme(Theme::Dark),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = buffer_text(&buffer);
+
         let marker_row = text
             .lines()
-            .position(|l| l.contains("\u{25b6}"))
-            .expect("marker row");
+            .position(|l| l.contains('\u{25b6}'))
+            .unwrap_or_else(|| panic!("the selected row must paint:\n{text}"));
         let tips_row = text
             .lines()
-            .position(|l| l.contains("navigate"))
-            .expect("tips row");
+            .position(|l| l.contains(&tips_needle))
+            .unwrap_or_else(|| panic!("the tips row must paint:\n{text}"));
         assert!(
             marker_row < tips_row,
-            "the selected row {marker_row} must paint above the tips row {tips_row}:\n{text}"
+            "selected row {marker_row} must paint above the tips row {tips_row}:\n{text}"
+        );
+        assert!(
+            text.contains("/cmd29"),
+            "the row the cursor is on must be visible:\n{text}"
         );
     }
 

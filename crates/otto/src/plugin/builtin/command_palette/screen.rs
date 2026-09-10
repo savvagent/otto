@@ -80,6 +80,7 @@ impl PaletteScreen {
     ///
     /// The empty-filter case (`/`) and the no-match case (`/<filter>`) both
     /// fall out of this rather than needing their own branches.
+    #[must_use]
     pub fn prompt_preview(&self) -> String {
         format!("/{}", self.filter)
     }
@@ -115,11 +116,14 @@ impl Screen for PaletteScreen {
             });
             return lines;
         }
+        // Computed once: `render` runs at >=20Hz and `filtered` allocates
+        // both a lowercased needle and a Vec on every call.
+        let filtered = self.filtered();
         // A filter matching nothing needs its own empty state, and it has to
         // return here — before the windowing arithmetic — so the blank
         // spacer row below doesn't land above it. Without the old header
         // this state would otherwise render as a blank rectangle.
-        if self.filtered().is_empty() {
+        if filtered.is_empty() {
             lines.push(StyledLine::plain(""));
             lines.push(StyledLine {
                 spans: vec![StyledSpan {
@@ -137,7 +141,6 @@ impl Screen for PaletteScreen {
         // namespace is filtered out at palette-build time (in
         // `effects.rs::build_palette_commands`), so the dynamic width
         // only needs to accommodate the remaining (shorter) command names.
-        let filtered = self.filtered();
         let name_col_width = filtered
             .iter()
             .map(|(_, c)| c.name.chars().count())
@@ -334,14 +337,50 @@ impl Screen for PaletteScreen {
                     ])])
                 }
             }
+            // Everything else is inert, and deliberately so: the prompt is
+            // an *echo* of `self.filter`, not an editable buffer. The
+            // filter is append-only (plus the backspace above), so there is
+            // no cursor within it for Left/Right/Home/End/Delete/Ctrl-W to
+            // address. Do not read the backspace rationale above as a
+            // general principle and wire these up without first giving the
+            // filter a cursor position of its own.
             _ => Ok(vec![]),
         }
     }
 
+    /// The tips row names the command `Enter` will actually dispatch.
+    ///
+    /// This is load-bearing, not decoration. `filtered` matches on
+    /// `name.contains(filter)` — a substring, not a prefix — over slash
+    /// commands contributed by *any* enabled plugin, including third-party
+    /// ones. So the highlighted row is not necessarily the command whose
+    /// name the user is partway through typing: a plugin registering
+    /// `acl-export` captures the highlight for someone typing `cl` on
+    /// their way to `clear`, and `RunSlash` is applied with no further
+    /// confirmation.
+    ///
+    /// Until #96 the prompt itself showed the resolved name, which was the
+    /// signal that the pending command was not the one being typed. Now
+    /// that the prompt echoes the raw filter, that signal has to live
+    /// somewhere, and this row is the right place: the host paints it last
+    /// (`ui.rs::paint_screen`), so it survives even at sheet heights too
+    /// short to show the `\u{25b6}` row at all.
     fn tips(&self) -> Vec<StyledLine> {
-        vec![StyledLine::plain(
-            rust_i18n::t!("picker.command-palette.tips").to_string(),
-        )]
+        let filtered = self.filtered();
+        match filtered.get(self.cursor) {
+            Some((_, cmd)) => vec![StyledLine::plain(
+                rust_i18n::t!(
+                    "picker.command-palette.tips-run",
+                    cmd = format!("/{}", cmd.name)
+                )
+                .to_string(),
+            )],
+            // Nothing is highlighted, so there is nothing for `Enter` to
+            // name — fall back to the generic affordance line.
+            None => vec![StyledLine::plain(
+                rust_i18n::t!("picker.command-palette.tips").to_string(),
+            )],
+        }
     }
 }
 
@@ -954,6 +993,87 @@ mod tests {
             [Effect::PrefillInput { text }] => assert_eq!(text, "/"),
             other => panic!("expected a single PrefillInput, got: {other:?}"),
         }
+    }
+
+    /// Navigation still drives selection. The old code proved this
+    /// incidentally, because `Down` emitted a `PrefillInput` naming the new
+    /// row; now that it emits nothing, assert the coupling directly.
+    #[tokio::test]
+    async fn navigation_still_drives_what_enter_dispatches() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        let effs = p.on_key(key(KeyCodePortable::Enter)).await.unwrap();
+        match effs.first() {
+            Some(Effect::Stack(children)) => match &children[2] {
+                Effect::RunSlash { name, .. } => assert_eq!(name, "exit"),
+                other => panic!("expected RunSlash for the third row, got {other:?}"),
+            },
+            other => panic!("expected Stack, got {other:?}"),
+        }
+    }
+
+    /// The tips row names what `Enter` will dispatch, so the pending
+    /// command is stated somewhere even though the prompt now echoes only
+    /// the raw filter.
+    #[tokio::test]
+    async fn tips_name_the_command_enter_will_run() {
+        let mut p = fixture();
+        assert!(
+            p.tips()[0].spans.iter().any(|s| s.text.contains("/clear")),
+            "tips should name the highlighted command, got: {:?}",
+            p.tips()
+        );
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        assert!(
+            p.tips()[0].spans.iter().any(|s| s.text.contains("/demo")),
+            "tips should follow the highlight, got: {:?}",
+            p.tips()
+        );
+    }
+
+    /// The case the tips row exists for. `filtered` is a substring match
+    /// over commands contributed by any enabled plugin, so a plugin can
+    /// register a name that captures the highlight from the builtin the
+    /// user is typing toward. The prompt shows what they typed; the tips
+    /// row must show what would actually run.
+    #[tokio::test]
+    async fn tips_name_a_plugin_command_that_captures_the_highlight() {
+        // Sorts before "clear" and contains "cl".
+        let mut p =
+            PaletteScreen::with_commands(vec![cmd("acl-export", false), cmd("clear", false)]);
+        for ch in "cl".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert_eq!(
+            p.prompt_preview(),
+            "/cl",
+            "the prompt echoes what was typed"
+        );
+        let tips = p.tips();
+        let text: String = tips[0].spans.iter().map(|s| s.text.clone()).collect();
+        assert!(
+            text.contains("/acl-export"),
+            "tips must name the command that would actually run, got: {text}"
+        );
+    }
+
+    /// With nothing highlighted there is no command to name, so the tips
+    /// row falls back to the generic affordance line rather than naming a
+    /// stale command.
+    #[tokio::test]
+    async fn tips_fall_back_when_nothing_is_highlighted() {
+        let mut p = fixture();
+        for ch in "xyz".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert!(p.filtered().is_empty());
+        let text: String = p.tips()[0].spans.iter().map(|s| s.text.clone()).collect();
+        assert_eq!(
+            text,
+            rust_i18n::t!("picker.command-palette.tips").to_string(),
+            "with nothing highlighted the tips row must be the generic line"
+        );
     }
 
     /// Backspace past the leading `/` closes the palette and clears the

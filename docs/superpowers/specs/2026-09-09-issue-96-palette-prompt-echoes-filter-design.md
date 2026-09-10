@@ -67,7 +67,15 @@ This frees a row in the sheet's fixed height, so the windowing budget drops from
 
 The blank spacer row is kept unconditionally even though the header it used to separate is gone. Making it conditional on `hint` being empty is circular — `hint` is derived from `hidden_above`/`hidden_below`, which depend on `capacity`, which would then depend on `hint`. Reserving the row unconditionally is what keeps that arithmetic non-recursive, so it stays; with no header above it, the scroll hint simply becomes the sheet's first line.
 
-### 5. A no-match empty state
+### 5. The tips row names what `Enter` will run
+
+Removing the resolved name from the prompt removes a confirmation signal, and the independent security pass rated that a real risk rather than a cosmetic one. `filtered` matches on `name.contains(filter)` — a substring, not a prefix — over slash commands contributed by *any* enabled plugin, including third-party WASM and native ones. A plugin can therefore register a name that both contains a common builtin's prefix and sorts ahead of it: `acl-export` captures the highlight from someone typing `cl` on the way to `clear`, and `Effect::RunSlash` is applied with no further gate.
+
+Before this change the prompt read `/acl-export`, which was the second, unmistakable signal that `Enter` would not run what was being typed. That signal has to live somewhere. `Screen::tips` already takes `&self`, so it can name the highlighted command without any new plumbing: the row reads `Enter run /acl-export`. The host paints it last (`ui.rs::paint_screen`), which means it survives even at sheet heights too short to render the `▶` row at all — so it also covers the degenerate-height case below, where the marker is overpainted.
+
+When nothing is highlighted there is no command to name and the row falls back to the generic affordance line.
+
+### 6. A no-match empty state
 
 With `commands` non-empty and `filtered()` empty, trace the current `render`: the `commands.is_empty()` early return is not taken, the window is `0..0`, `hidden_above`/`hidden_below` are both `0` so the hint is blank, and the row loop emits nothing. Today the sheet still shows something, because `lines[0]` is the `> xyz` header. Remove the header and that state renders as a blank rectangle above the prompt with only the host's `tips()` row painted.
 
@@ -78,7 +86,7 @@ So change 4 requires a matching empty state: when `filtered()` is empty but `com
 **In:**
 - `crates/otto/src/plugin/builtin/command_palette/screen.rs` — `prompt_preview` returns the literal filter; `Up`/`Down` stop emitting `PrefillInput`; `Backspace` on an empty filter closes the palette; `render` drops the `> <filter>` header, reserves two chrome rows instead of three, and gains a no-match empty state.
 - `crates/otto/src/plugin/effects.rs` — the `"palette"` `open_screen` branch comment (`:662`) and the guard test's doc comment (`:3195-3197`), both of which say the palette "mirrors its selection into the prompt"; no logic change. Its test `palette_open_screen_prefills_prompt_with_first_command` (`:3083-3193`) hard-asserts the old seed and must be renamed, with the seed assertion at `:3131-3147` rewritten to expect `/`. Only that assertion changes — the second half of the test presses `Esc` and asserts the stack empties and the prompt clears, which is regression coverage worth keeping. This is the one cross-file test coupling.
-- `crates/otto/locales/{en,es,pt,hi}.toml` — a new `picker.command-palette.no-matches` key in each.
+- `crates/otto/locales/{en,es,pt,hi}.toml` — new `picker.command-palette.no-matches` and `picker.command-palette.tips-run` keys in each.
 - `docs/superpowers/specs/2026-09-08-issue-80-slash-command-input-design.md` — a superseded-by note on the one assumption #96 overturns. Its `> **Status:**` stays IMPLEMENTED; it accurately records what #92 shipped.
 - `CHANGELOG.md` — a `Fixed` entry referencing #96. The existing v0.26.4 entry describing #92's behavior is left alone; the new entry supersedes it rather than rewriting history.
 - Tests in `screen.rs`. `up_emits_prefill_input` (`:699-708`) and `down_emits_prefill_input` (`:710-722`) assert the behavior change 2 removes and must be inverted to assert no effects; their shared doc comment (`:668-669`) names `Up` and `Down` among the keys that emit `PrefillInput` and goes stale with them. Beyond that and the `prompt_preview_*` rewrite, three existing render tests are affected by the capacity change and must be updated deliberately rather than left to pass or fail by accident:
@@ -123,6 +131,7 @@ While the command palette is open, the prompt input shows exactly what the user 
 - [ ] `Enter` on an argument-taking command still closes the palette and leaves `/<cmd> ` in the prompt.
 - [ ] `Esc` still closes the palette and clears the prompt.
 - [ ] The sheet renders no `> <filter>` header.
+- [ ] The tips row names the command `Enter` would dispatch, including when a substring match has put a command other than the one being typed under the highlight.
 - [ ] A command list longer than the sheet windows around the cursor with the `▶` row visible at every cursor position, across a sweep of region heights — not just one.
 
 ## Error Handling & Edge Cases
@@ -130,7 +139,7 @@ While the command palette is open, the prompt input shows exactly what the user 
 - **Empty command list.** The prompt shows `/` and the sheet shows the existing `no-commands` body. The early return in `render` precedes the windowing arithmetic, so the capacity change cannot affect it.
 - **No filtered match.** The prompt shows `/<filter>`; the sheet shows the new `no-matches` body. `Enter` here still takes the empty-result path: close and clear.
 - **Cursor at a list edge.** `Up` at the top and `Down` at the bottom are no-ops for both cursor and prompt.
-- **A degenerate sheet height.** `capacity` is `.max(1)`. This is not panic-protection — a capacity of `0` would yield a valid empty slice, not a panic. What `.max(1)` does at `height ≤ 2` is force one command row into a budget with no room for it, so the host's `tips()` overpaints the `▶` row. That boundary is real but pre-existing, and this change *improves* it: the broken range shrinks from `height ≤ 3` to `height ≤ 2`. `bottom_sheet_rect` can legitimately produce such heights (see its own test `bottom_sheet_with_no_room_above_the_prompt_is_empty`, `ui.rs:2226-2233`), so the guard test sweeps heights rather than pinning one.
+- **A degenerate sheet height.** `capacity` is `.max(1)`. This is not panic-protection — a capacity of `0` would yield a valid empty slice, not a panic. What `.max(1)` does at `height ≤ 2` is force one command row into a budget with no room for it, so the host's `tips()` overpaints the `▶` row. That boundary is real but pre-existing, and this change *improves* it: the broken range shrinks from `height ≤ 3` to `height ≤ 2`. `bottom_sheet_rect` can legitimately produce such heights (see its own test `bottom_sheet_with_no_room_above_the_prompt_is_empty`, `ui.rs:2226-2233`), so the guard test sweeps heights rather than pinning one. The tips row mitigates the consequence: it is painted by the host regardless, so even when the `▶` row is swallowed the pending command is still named.
 
 ## Risks & Open Questions
 

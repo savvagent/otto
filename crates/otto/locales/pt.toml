@@ -211,6 +211,7 @@ modal-title       = "Paleta de comandos"
 no-commands       = "(nenhum comando disponível)"
 no-matches        = "(nenhum comando corresponde)"
 tips              = "↑/↓ navegar · digite para filtrar · Enter executar · Esc cancelar"
+tips-run          = "↑/↓ navegar · digite para filtrar · Enter executar %{cmd} · Esc cancelar"
 
 [picker.prompt-keybindings]
 modal-title       = "Atalhos do prompt"
