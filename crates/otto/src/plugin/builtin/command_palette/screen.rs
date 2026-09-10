@@ -238,9 +238,24 @@ impl Screen for PaletteScreen {
                 Ok(vec![])
             }
             KeyCodePortable::Backspace => {
-                self.filter.pop();
+                // Backspacing past the leading `/` closes the palette. Now
+                // that the prompt is a literal echo of what was typed, a
+                // `/` that cannot be deleted would contradict that — and
+                // would leave backspace as the one editing key with no
+                // effect in a prompt the user believes they are editing.
+                // This is the codebase's own established intent: see the
+                // legacy helper's doc comment in `app.rs`, "the caller can
+                // use this to close the palette on Backspace past the
+                // leading `/`".
+                if self.filter.pop().is_none() {
+                    return Ok(vec![
+                        Effect::CloseScreen,
+                        Effect::PrefillInput {
+                            text: String::new(),
+                        },
+                    ]);
+                }
                 self.cursor = 0;
-                // Emit the updated preview.
                 Ok(vec![Effect::PrefillInput {
                     text: self.prompt_preview(),
                 }])
@@ -825,5 +840,35 @@ mod tests {
         assert_eq!(p.prompt_preview(), "/d");
         p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
         assert_eq!(p.prompt_preview(), "/");
+    }
+
+    /// Backspace on a non-empty filter edits, and does not close.
+    #[tokio::test]
+    async fn backspace_on_a_non_empty_filter_does_not_close() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        let effs = p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        assert!(
+            !effs.iter().any(|e| matches!(e, Effect::CloseScreen)),
+            "backspace over a typed character must not close, got: {effs:?}"
+        );
+        match effs.as_slice() {
+            [Effect::PrefillInput { text }] => assert_eq!(text, "/"),
+            other => panic!("expected a single PrefillInput, got: {other:?}"),
+        }
+    }
+
+    /// Backspace past the leading `/` closes the palette and clears the
+    /// prompt — otherwise the `/` would be undeletable.
+    #[tokio::test]
+    async fn backspace_past_the_slash_closes_and_clears() {
+        let mut p = fixture();
+        let effs = p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        match effs.as_slice() {
+            [Effect::CloseScreen, Effect::PrefillInput { text }] => {
+                assert!(text.is_empty(), "prompt should be cleared, got: {text:?}");
+            }
+            other => panic!("expected CloseScreen then an empty PrefillInput, got: {other:?}"),
+        }
     }
 }
