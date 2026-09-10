@@ -31,6 +31,18 @@ boundary changes and PATCH captures fixes).
   unchanged and is now otto's only front-end. The removed code stays recoverable from git history.
   (#94)
 
+### Fixed
+
+- While the `/` command palette is open, the prompt input now echoes what you typed rather than
+  the command currently highlighted in the list. Typing `/co` leaves `/co` in the prompt instead
+  of replacing it with `/connect`, arrow keys move the selection without rewriting the prompt, and
+  opening the palette seeds a bare `/` instead of the first command in the list. The resolved
+  command reaches the prompt only when you select it, which is unchanged. Backspacing past the
+  leading `/` now closes the palette, since that character is no longer something the palette owns
+  on your behalf. The palette's own `> <filter>` header is gone — it duplicated the prompt one row
+  below it — and a filter matching no commands now says so instead of leaving the list blank.
+  Reverses the prompt-mirroring behavior added in 0.26.4. (#96)
+
 ## 0.26.4 - 2026-09-08
 
 ### Added

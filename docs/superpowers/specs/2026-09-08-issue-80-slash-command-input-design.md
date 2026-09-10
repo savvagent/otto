@@ -77,7 +77,7 @@ None. This is an internal TUI/GUI behavior change using existing plugin effects.
 
 ## Assumptions
 
-- Showing the highlighted command name in the prompt means showing the full slash command path (`/connect`, `/clear`, etc.), not just the raw typed filter, because the acceptance criteria explicitly mention the currently highlighted command.
+- ~~Showing the highlighted command name in the prompt means showing the full slash command path (`/connect`, `/clear`, etc.), not just the raw typed filter, because the acceptance criteria explicitly mention the currently highlighted command.~~ **Superseded by `savvagent/otto#96`.** This assumption was correct about #80's acceptance criteria — they did explicitly ask for the highlighted command — but the behavior it produced was reversed a day after shipping: the prompt now echoes the typed filter, and the resolved command reaches it only on selection. See `docs/superpowers/specs/2026-09-09-issue-96-palette-prompt-echoes-filter-design.md`. The rest of this spec still describes what #92 shipped and stays IMPLEMENTED.
 - Clearing the prompt when the palette closes without selecting an argument-taking command is the least surprising behavior because today's prompt is effectively empty after the palette exits, and leaving the preview text behind would look like a staged command the user never confirmed.
 - Using `Effect::PrefillInput` is preferable to new effect or trait surface area because it already updates both the in-memory textarea and the egui pending-prefill bridge.
 - Matching egui's existing lone-`/` trigger rule in the TUI is preferable to storing/restoring arbitrary draft text, because it avoids a new preview-lifecycle state machine while preventing prompt data loss.
