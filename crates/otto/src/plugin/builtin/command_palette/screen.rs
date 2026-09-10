@@ -155,7 +155,7 @@ impl Screen for PaletteScreen {
         // `capacity`, which would then derive from `hint`.
         //
         // `.max(1)` is a floor, not panic-protection — a capacity of 0
-        // yields a valid empty slice. What it does at `height == 0` is
+        // yields a valid empty slice. What it does at `height <= 1` is
         // force one row into a budget with no room for it; that boundary
         // is pre-existing.
         let capacity = (region.height as usize).saturating_sub(1).max(1);
