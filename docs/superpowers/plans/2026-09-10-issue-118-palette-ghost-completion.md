@@ -157,38 +157,40 @@ effect.
         override the trait method).
       Run `cargo test -p otto` and confirm these fail (compile error or wrong buffer content) before
       implementing.
-- [ ] Add the `prompt_inner_rect` helper near `bottom_sheet_rect` (`:1191`) — same
-      file-organization pattern (small `Rect`-computing helpers grouped together):
-      ```rust
-      /// The interior rect of the prompt textarea's own block — same
-      /// `borders(ALL)` + `padding(Padding::horizontal(1))` geometry built
-      /// in `render()` (see the `textarea.set_block(...)` call), pulled out
-      /// so the ghost-text overlay's coordinates can never drift from the
-      /// textarea's actual rendered interior.
-      fn prompt_inner_rect(area: Rect) -> Rect {
-          Block::default()
-              .borders(Borders::ALL)
-              .padding(Padding::horizontal(1))
-              .inner(area)
-      }
-      ```
-      Note in a code comment (or in the commit body) that if the textarea's block geometry in
-      `render()` (`:247-252`) is ever changed (different borders/padding), this helper must change
-      with it — there is no compiler-enforced link between the two, only this comment. Consider
-      whether it is easy to instead have `render()` compute `textarea`'s block once, call
-      `.inner(chunks[4])` on it before moving it into `set_block`, and pass the resulting `Rect`
-      into this new code path — if that removes the duplication cleanly without restructuring
-      unrelated code, prefer it over the duplicated-geometry helper; if it requires reordering
-      unrelated rendering steps, keep the helper and the comment instead. Use your judgment reading
-      the actual surrounding code; the spec's version (the standalone helper) is the fallback, not
-      a mandate.
-- [ ] Add the overlay block from the spec's "Approach > 3" directly after
-      `frame.render_widget(&textarea, chunks[4]);`, using `app.screen_stack.top()`,
-      `top_screen.ghost_completion()`, `textarea.cursor()`, `textarea.lines().len() == 1`, and
-      `frame.buffer_mut().set_stringn(...)` exactly as specified. Style:
+- [ ] Factor the existing inline `Block::default().borders(Borders::ALL).border_style(...)
+      .padding(Padding::horizontal(1))` builder at `ui.rs:247-252` into a `fn prompt_block(palette:
+      Palette) -> Block` (or take the border style components it needs — match whatever the actual
+      surrounding code makes cleanest) placed near `bottom_sheet_rect` (`:1191`). Replace the inline
+      builder at `:247-252` with a call to it, so `textarea.set_block(prompt_block(palette))`
+      produces the exact same `Block` as before (no behavior change to today's render — verify with
+      `cargo test -p otto` before adding anything new). **This is a mandatory design fix from the
+      spec's critique round, not optional:** a spec critique caught that an earlier draft proposed a
+      *second*, independently-written `Block::borders(ALL).padding(horizontal(1))` literal for the
+      ghost overlay's interior-rect computation — two sources of truth with nothing forcing them to
+      stay identical. Do not reintroduce that shape (a standalone `prompt_inner_rect` helper with a
+      duplicated `Block` literal); derive the overlay's interior rect from the same `Block` value
+      via `.inner(chunks[4])` instead.
+- [ ] Add the overlay block from the spec's revised "Approach > 3" directly after
+      `frame.render_widget(&textarea, chunks[4]);`, computing `let inner =
+      block.inner(chunks[4]);` from the `Block` value `prompt_block` returned (reused, not
+      rebuilt), then using `app.screen_stack.top()`, `top_screen.ghost_completion()`,
+      `textarea.cursor()`, `textarea.lines().len() == 1`, and `frame.buffer_mut().set_stringn(...)`
+      exactly as specified. **Also mandatory from the critique round:** guard on `line_fits` —
+      `textarea.lines().first().is_some_and(|l| l.chars().count() <= inner.width as usize)` — in
+      addition to (not instead of) `cursor_row == 0 && textarea.lines().len() == 1`. The critique
+      found that `cursor_row`/`lines().len()` alone report *logical* line/row and do not change when
+      `WrapMode::WordOrGlyph` soft-wraps a long logical line across multiple *visual* rows — so that
+      guard alone would silently paint the ghost text at the wrong screen position the moment a
+      wrapped prompt reached it. `line_fits` proves no wrap occurred by checking the actual
+      condition wrapping depends on (line width vs. available width), not a proxy for it. Style:
       `palette.base_style().fg(palette.muted)` — matches this file's existing muted-text
       convention (see the `no-matches`/`no-commands` styling and the Assumptions section of the
       spec for why no `Modifier::DIM`).
+- [ ] Add at least one test exercising a filter long enough (relative to a narrow test-terminal
+      width) that `line_fits` would be false if the check were only `cursor_row == 0 &&
+      textarea.lines().len() == 1` — i.e. a regression test for the specific gap the critique found,
+      not just the common short-filter case. Assert no ghost text renders in that case even though
+      `ghost_completion()` itself returns `Some(...)`.
 - [ ] Host-swap `RwLock` check (Non-Negotiable Rule 7 / Load-Bearing Invariant 3): confirm this
       function (`ui.rs::render`) does not hold `app`'s `Arc<RwLock<Option<Arc<Host>>>>` guard and
       does not `.await` anywhere in or near the new code — `render` is a synchronous ratatui draw
