@@ -1556,10 +1556,6 @@ mod tests {
     use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
 
-    fn one_span_line(text: &str) -> StyledLine {
-        StyledLine::plain(text)
-    }
-
     fn rline(text: &str) -> Line<'static> {
         Line::from(vec![Span::raw(text.to_string())])
     }
@@ -1955,8 +1951,8 @@ mod tests {
         let buffer = render_paint_screen(
             &FakeScreen {
                 id: "splash".into(),
-                body: vec![one_span_line("fake splash body")],
-                tips: vec![one_span_line("fake splash tips")],
+                body: vec![StyledLine::plain("fake splash body")],
+                tips: vec![StyledLine::plain("fake splash tips")],
             },
             &ScreenLayout::Fullscreen { hide_chrome: false },
             palette(),
@@ -1994,8 +1990,8 @@ mod tests {
         let buffer = render_paint_screen(
             &FakeScreen {
                 id: "plugins.manager".into(),
-                body: vec![one_span_line("fullscreen body")],
-                tips: vec![one_span_line("fullscreen tips")],
+                body: vec![StyledLine::plain("fullscreen body")],
+                tips: vec![StyledLine::plain("fullscreen tips")],
             },
             &ScreenLayout::Fullscreen { hide_chrome: false },
             palette(),
@@ -2120,7 +2116,7 @@ mod tests {
     #[test]
     fn footer_turn_state_lines_idle_are_unchanged() {
         let _lock = locale_lock();
-        let turn_state = vec![one_span_line("idle")];
+        let turn_state = vec![StyledLine::plain("idle")];
         let palette = palette();
 
         let out = footer_center_lines(&turn_state, Some(0), None, None, 0, palette);
@@ -2152,7 +2148,7 @@ mod tests {
         let _lock = locale_lock();
         let idle = rust_i18n::t!("footer.idle").to_string();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![one_span_line(&idle)];
+        let turn_state = vec![StyledLine::plain(&idle)];
 
         let out = footer_center_lines(&turn_state, Some(0), None, Some(3), 0, palette());
         let rendered = joined_ratatui(&out[0]);
@@ -2238,7 +2234,7 @@ mod tests {
     fn footer_turn_state_lines_skip_empty_leader_before_attaching_spinner() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine { spans: vec![] }, one_span_line(&working)];
+        let turn_state = vec![StyledLine { spans: vec![] }, StyledLine::plain(&working)];
 
         let out = footer_center_lines(&turn_state, Some(1), Some(3), None, 0, palette());
         assert!(out[0].spans.is_empty());

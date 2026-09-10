@@ -93,7 +93,7 @@ impl Plugin for ToolTaskSummaryPlugin {
         Some(vec![
             StyledSpan::colored("task ", ThemeColor::Fg),
             StyledSpan::colored(agent, ThemeColor::Accent),
-            StyledSpan::colored(" · ", ThemeColor::Muted),
+            StyledSpan::muted(" · "),
             StyledSpan::colored(format!("\"{desc}\""), ThemeColor::Success),
         ])
     }
@@ -115,16 +115,13 @@ impl Plugin for ToolTaskSummaryPlugin {
         let line_count = trimmed.lines().count();
         let first_line = trimmed.lines().next().unwrap_or("");
         let snippet = truncate(first_line, RESULT_MAX_CHARS);
-        let mut spans = vec![StyledSpan::colored(snippet, ThemeColor::Muted)];
+        let mut spans = vec![StyledSpan::muted(snippet)];
         if line_count > 1 {
-            spans.push(StyledSpan::colored(
-                format!(
-                    " (+{} more line{})",
-                    line_count - 1,
-                    if line_count > 2 { "s" } else { "" }
-                ),
-                ThemeColor::Muted,
-            ));
+            spans.push(StyledSpan::muted(format!(
+                " (+{} more line{})",
+                line_count - 1,
+                if line_count > 2 { "s" } else { "" }
+            )));
         }
         Some(spans)
     }

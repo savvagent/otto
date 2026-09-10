@@ -162,9 +162,8 @@ impl StyledSpan {
     ///
     /// Exactly [`Self::colored(text, ThemeColor::Muted)`](Self::colored), and kept as
     /// its own name deliberately: `Muted` is the default for descriptions, hints, empty
-    /// states and label text, and accounts for roughly half of all colored spans across
-    /// otto's own screens. `muted(t)` states that intent; `colored(t, ThemeColor::Muted)`
-    /// states a mechanism. It is redundant by construction and still worth keeping — the
+    /// states and label text — the colour a span takes when no other choice was made.
+    /// `muted(t)` states that intent; `colored(t, ThemeColor::Muted)` states a mechanism. It is redundant by construction and still worth keeping — the
     /// same argument does not extend to `Warning`/`Error`/`Accent`, which are each chosen
     /// per-site against a real alternative and so read correctly through
     /// [`Self::colored`].

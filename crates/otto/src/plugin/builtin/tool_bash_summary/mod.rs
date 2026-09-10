@@ -77,22 +77,16 @@ impl Plugin for ToolBashSummaryPlugin {
         let mut spans = vec![
             StyledSpan::colored("exit ", ThemeColor::Fg),
             StyledSpan::colored(out.exit_code.to_string(), ThemeColor::Success),
-            StyledSpan::colored(format!(" in {}ms", out.elapsed_ms), ThemeColor::Muted),
+            StyledSpan::muted(format!(" in {}ms", out.elapsed_ms)),
         ];
         if out.timed_out {
             spans.push(StyledSpan::colored(" (timed out)", ThemeColor::Warning));
         }
         if out.stdout_truncated {
-            spans.push(StyledSpan::colored(
-                " (stdout truncated)",
-                ThemeColor::Muted,
-            ));
+            spans.push(StyledSpan::muted(" (stdout truncated)"));
         }
         if out.stderr_truncated {
-            spans.push(StyledSpan::colored(
-                " (stderr truncated)",
-                ThemeColor::Muted,
-            ));
+            spans.push(StyledSpan::muted(" (stderr truncated)"));
         }
         Some(spans)
     }

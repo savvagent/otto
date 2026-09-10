@@ -53,16 +53,13 @@ impl Plugin for ToolGrepSummaryPlugin {
             StyledSpan::colored("'", ThemeColor::Fg),
         ];
         if let Some(path) = input.path {
-            spans.push(StyledSpan::colored(
-                format!(" in {path}"),
-                ThemeColor::Muted,
-            ));
+            spans.push(StyledSpan::muted(format!(" in {path}")));
         }
         if input.case_insensitive {
-            spans.push(StyledSpan::colored(" -i", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" -i"));
         }
         if input.multiline {
-            spans.push(StyledSpan::colored(" --multiline", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" --multiline"));
         }
         Some(spans)
     }
@@ -80,7 +77,7 @@ impl Plugin for ToolGrepSummaryPlugin {
             StyledSpan::colored(" files", ThemeColor::Fg),
         ];
         if out.truncated {
-            spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" (truncated)"));
         }
         Some(spans)
     }

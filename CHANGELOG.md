@@ -14,11 +14,15 @@ boundary changes and PATCH captures fixes).
   `StyledSpan::plain`, `StyledSpan::colored`, `StyledSpan::muted`, `StyledLine::colored` and
   `StyledLine::muted`, alongside the existing `StyledLine::plain`. Each sets no background and no
   text modifiers; anything richer still builds the struct literal, which is unchanged and remains
-  public. This is additive plugin-ABI surface — third-party screens get the same shorthand, and
-  plugins compiled against the previous version are unaffected. Every builtin screen and
-  tool-summary plugin now goes through these constructors, which also removes eight file-local
-  copies of the same two-line function that had accumulated across the tree. Nothing renders
-  differently. (#117)
+  public. Every builtin screen and tool-summary plugin now goes through these constructors, which
+  also removes eight file-local copies of the same two-line function that had accumulated across
+  the tree. Nothing renders differently.
+
+  This is additive and affects in-tree Rust consumers of `otto-plugin` only. WASM plugin authors
+  are unchanged either way: they bind against `otto-plugin-wit`, where `styled-span` / `styled-line`
+  are WIT `record`s that cannot carry associated functions at all, and they build the generated
+  `wit::StyledSpan` — a different type, with a `Reset` sentinel rather than an `Option` for `fg`.
+  Guest-side ergonomics remain an open gap. (#117)
 
 ## 0.27.1 - 2026-09-10
 

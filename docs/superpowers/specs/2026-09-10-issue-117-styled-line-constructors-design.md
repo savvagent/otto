@@ -96,6 +96,12 @@ The issue names only the `StyledLine` pair. Taken literally that collapses shape
 - **No modifier-carrying constructors** (`bold`, `dim`, …) and no builder chain. The 19 sites that set modifiers set them conditionally or several at once (`TextMods { bold: is_cursor, ..Default::default() }`) and are better served by the struct literal, which stays available. Adding a builder now would be designing for a caller that does not exist.
 - **No `bg` parameter.** Exactly one literal in the whole workspace sets a background, and it is a WASM round-trip test fixture. A constructor taking `Option<ThemeColor>` for `bg` would be worse at every call site than the literal it replaces.
 - **No `From`/`Into` impls** (e.g. `impl From<&str> for StyledLine`). Inference-driven conversions make the color decision invisible at the call site, which is the opposite of what this change is for.
+### Who this actually helps
+
+Worth stating precisely, because it is easy to get wrong: **WASM plugin authors get nothing from this change.** They depend on `otto-plugin-wit`, not `otto-plugin` (see `crates/otto-plugin-wasm/tests/fixtures-src/*/Cargo.toml`), and they build the *generated* `wit::StyledSpan` — a different type whose `fg` is a `ThemeColor` with a `Reset` sentinel rather than an `Option`. `otto-plugin` is also `publish = false` (`release-plz.toml:3`), so it is not consumable from crates.io either.
+
+The beneficiaries are `crates/otto` and any future in-tree Rust consumer of these types. The guest-side gap is real and unaddressed: `crates/otto-plugin-wasm/tests/fixtures-src/interactive/src/lib.rs:113` is a *ninth* reinvention of this helper, written against the WIT bindings, spelling out all five `TextMods` fields. If that is worth closing, the seam is a documented snippet in `docs/plugins/authoring.md` or a small guest-side helper crate — **not** `otto-plugin`, and emphatically not by promoting the WIT `record`s to `resource`s, which would be a breaking change for a cosmetic gain.
+
 - **No change to the WIT surface.** `crates/otto-plugin-wit/wit/shared.wit:171-180` declares `styled-span` / `styled-line` as pure data records with no associated functions; constructors are native-Rust ergonomics for `otto-plugin` consumers. `otto-plugin-wasm/src/convert.rs` is untouched.
 
 ## Public-interface impact

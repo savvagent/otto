@@ -81,10 +81,10 @@ impl Plugin for ToolFsSummaryPlugin {
                 let mut out = vec![
                     StyledSpan::colored("write_file ", ThemeColor::Fg),
                     StyledSpan::colored(input.path, ThemeColor::Success),
-                    StyledSpan::colored(format!(" ({line_count} lines)"), ThemeColor::Muted),
+                    StyledSpan::muted(format!(" ({line_count} lines)")),
                 ];
                 if input.create_dirs {
-                    out.push(StyledSpan::colored(" --create-dirs", ThemeColor::Muted));
+                    out.push(StyledSpan::muted(" --create-dirs"));
                 }
                 Some(out)
             }
@@ -95,7 +95,7 @@ impl Plugin for ToolFsSummaryPlugin {
                     StyledSpan::colored(input.path, ThemeColor::Success),
                 ];
                 if input.recursive {
-                    out.push(StyledSpan::colored(" --recursive", ThemeColor::Muted));
+                    out.push(StyledSpan::muted(" --recursive"));
                 }
                 Some(out)
             }
@@ -107,10 +107,7 @@ impl Plugin for ToolFsSummaryPlugin {
                 ];
                 if let Some(root) = input.root {
                     if root != "." {
-                        out.push(StyledSpan::colored(
-                            format!(" in {root}"),
-                            ThemeColor::Muted,
-                        ));
+                        out.push(StyledSpan::muted(format!(" in {root}")));
                     }
                 }
                 Some(out)
@@ -126,7 +123,7 @@ impl Plugin for ToolFsSummaryPlugin {
                 let line_count = out.content.lines().count();
                 Some(vec![
                     StyledSpan::colored(pretty_bytes(out.bytes), ThemeColor::Success),
-                    StyledSpan::colored(format!(" · {line_count} lines"), ThemeColor::Muted),
+                    StyledSpan::muted(format!(" · {line_count} lines")),
                 ])
             }
             "write_file" => {
@@ -143,7 +140,7 @@ impl Plugin for ToolFsSummaryPlugin {
                     StyledSpan::colored(" entries", ThemeColor::Fg),
                 ];
                 if out.truncated {
-                    spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
+                    spans.push(StyledSpan::muted(" (truncated)"));
                 }
                 Some(spans)
             }
@@ -154,7 +151,7 @@ impl Plugin for ToolFsSummaryPlugin {
                     StyledSpan::colored(" matches", ThemeColor::Fg),
                 ];
                 if out.truncated {
-                    spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
+                    spans.push(StyledSpan::muted(" (truncated)"));
                 }
                 Some(spans)
             }

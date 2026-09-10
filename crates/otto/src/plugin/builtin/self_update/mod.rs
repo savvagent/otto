@@ -134,8 +134,8 @@ fn opt_out_active() -> bool {
 }
 
 /// Build a `PushNote` effect carrying a plain (un-styled) text line.
-/// Centralised so each call site doesn't repeat the `StyledSpan`
-/// scaffolding.
+/// Kept for the `Effect::PushNote` wrapper, not for the line itself —
+/// `StyledLine::plain` is what used to be spelled out here by hand.
 fn note_effect(text: String) -> Effect {
     Effect::PushNote {
         line: StyledLine::plain(text),

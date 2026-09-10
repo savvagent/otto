@@ -73,12 +73,12 @@ impl Plugin for ToolWebSummaryPlugin {
                 let out: FetchOutput = serde_json::from_str(result_text).ok()?;
                 let mut spans = vec![
                     StyledSpan::colored(out.status.to_string(), ThemeColor::Success),
-                    StyledSpan::colored(" · ", ThemeColor::Muted),
+                    StyledSpan::muted(" · "),
                     StyledSpan::colored(out.content.len().to_string(), ThemeColor::Success),
                     StyledSpan::colored(" chars", ThemeColor::Fg),
                 ];
                 if out.truncated {
-                    spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
+                    spans.push(StyledSpan::muted(" (truncated)"));
                 }
                 Some(spans)
             }
@@ -87,7 +87,7 @@ impl Plugin for ToolWebSummaryPlugin {
                 Some(vec![
                     StyledSpan::colored(out.results.len().to_string(), ThemeColor::Success),
                     StyledSpan::colored(" results via ", ThemeColor::Fg),
-                    StyledSpan::colored(out.backend, ThemeColor::Muted),
+                    StyledSpan::muted(out.backend),
                 ])
             }
             _ => None,
