@@ -8,6 +8,19 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Added
+
+- The `/` command palette prompt now shows the remainder of the highlighted command as dim,
+  non-editable "ghost" text immediately after the cursor, whenever that command's name is a
+  literal prefix completion of what's typed (e.g. typing `/co` toward `connect` shows the `nnect`
+  remainder dimmed). Restores the predictive signal the prompt lost when #96 made it echo raw
+  keystrokes instead of the resolved command name — without reintroducing #96's defect, since the
+  ghost text is never part of the prompt's real, submittable content. When the highlighted row only
+  substring-matches what's typed (not a prefix), no ghost text renders and the existing `tips()`
+  row remains the only disambiguation signal, unchanged. Adds `Screen::ghost_completion` as a new,
+  additive, default-`None` method on the plugin `Screen` trait (`crates/otto-plugin`) for plugin
+  authors who want the same overlay on their own screens. (#118)
+
 ## 0.28.1 - 2026-09-10
 
 ### Fixed
