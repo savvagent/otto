@@ -1,4 +1,4 @@
-# Claude Code parity for this repo's `.github/skills/` skills — design
+# Porting this repo's `.github/skills/` skills to Claude Code — design
 
 Date: 2026-09-10
 Status: pending review
@@ -28,10 +28,10 @@ content gap needs closing.
 
 ## Premise corrections
 
-The issue frames the choice as **port (copy) vs. symlink**. Both premises survive only partially,
-and the reason is content, not mechanism:
+The issue frames the choice as **port (copy) vs. symlink**. Two corrections, both about content
+rather than mechanism:
 
-1. **A raw symlink imports instructions that are wrong for the host agent.**
+1. **A symlink is not viable, because the canonical body is host-specific.**
    `.github/skills/otto-development/SKILL.md` is written *for the orchestrating GitHub Copilot
    CLI*, and says so explicitly at `SKILL.md:360-361`: "This skill is written for the
    *orchestrating* GitHub Copilot CLI's `task` tool — the CLI agent running this skill — **not
@@ -40,238 +40,239 @@ and the reason is content, not mechanism:
    (`:384-388`), `read_agent` for collecting background results (`:388`), `ask_user` for the
    security-review output contract (`:400-406`), and "the orchestrating CLI's own `sql` tool and
    its session-scoped `todos` table" for progress tracking (`:349`). `agent-prompts.md` repeats
-   `agent_type:` in all ten dispatch templates. Symlinked verbatim, a Claude Code session would
+   `agent_type:` across all ten dispatch templates. Symlinked verbatim, a Claude Code session would
    read ~100KB of workflow whose every dispatch step names a tool it does not have — and whose own
-   text tells it that it is not the intended reader.
-2. **A full copy is not the only alternative to a symlink.** The issue treats "port" as
-   copy-and-adapt, which for an 82KB `SKILL.md` plus a 20KB `agent-prompts.md` means maintaining a
-   second copy of the repo's most-edited process document. The drift risk is not hypothetical: the
-   Copilot original is what gets edited when the workflow changes.
-3. **`creating-github-issues` has none of problem 1.** It is 7KB of plain `gh issue` / `gh label`
-   invocations with no host-agent-specific tooling at all — it is already host-agnostic and would
-   symlink cleanly. The asymmetry matters for the decision below.
+   text tells it that it is not the intended reader. (Secondary, but real: a committed symlink
+   needs `core.symlinks=true` to materialise on a Windows checkout, and this repo ships and tests
+   on Windows.)
+2. **Porting means adapting, and the adaptation is small and bounded.** "Port" here is not a
+   verbatim copy — a copy of `otto-development` would be as unusable as the symlink, for the same
+   reason. It means the content itself rewritten so a Claude Code session reads instructions naming
+   Claude Code's own tools. Measured against the canonical files, that adaptation is **61 lines out
+   of ~1,465**: 30 in `SKILL.md`, 31 in `agent-prompts.md`, and **zero** in
+   `creating-github-issues/SKILL.md`, which is already fully host-neutral (plain `gh issue` /
+   `gh label` invocations). So ~96% of the ported text is identical to the canonical text, which is
+   what makes the drift problem tractable rather than fatal.
 
 ## Approach
 
-**Decision: Claude-Code-native adapter stubs that delegate to the canonical `.github/skills/` body.**
-Not raw symlinks, not full copies.
+**Decision: port the skills — adapted copies under `.claude/skills/`, with the divergence from the
+canonical recorded exactly and verified in CI.**
 
-Each skill gets a small, committed, real file:
+The deliverables a Claude Code session actually reads:
 
 ```
-.claude/skills/otto-development/SKILL.md        (new, adapter stub)
-.claude/skills/creating-github-issues/SKILL.md  (new, adapter stub)
+.claude/skills/otto-development/SKILL.md          (ported: adapted for Claude Code)
+.claude/skills/otto-development/agent-prompts.md  (ported: adapted for Claude Code)
+.claude/skills/creating-github-issues/SKILL.md    (ported: no adaptation needed)
 ```
 
-A stub contains exactly three things:
+Each is a complete, self-sufficient skill. A reader follows it start to finish without consulting
+`.github/skills/` and without applying any mental translation — which is the definition of "works"
+this design is built to satisfy.
 
-1. **Claude Code frontmatter** — `name` and `description` copied verbatim from the canonical skill,
-   so Claude Code's trigger matching behaves identically to Copilot's. No `tools:`/`model:` key:
-   both workflows need the full toolset and strong reasoning, and the existing
-   `rust-engineer`/`tui-engineer` pins are not a precedent to follow here (a `model: sonnet` pin on
-   `otto-development` would cap the orchestrator of a full autonomous run).
-2. **A canonical-body pointer** — a machine-checkable `> **Canonical body:**` line naming
-   `.github/skills/<name>/SKILL.md` (and `agent-prompts.md` for `otto-development`), with an
-   instruction to read it before acting. This is the single source of truth; the ~100KB spine is
-   never duplicated.
-3. **A host-agent translation table** (`otto-development` only) — the Copilot→Claude Code mapping
-   for every mechanism the canonical body names, so the delegation is actually actionable rather
-   than leaving the reader to guess:
+### What the adaptation changes
 
-   | Canonical body says | In Claude Code |
-   | --- | --- |
-   | `task` tool call | `Agent` tool call |
-   | `agent_type: "general-purpose"` | `subagent_type: "general-purpose"` |
-   | `agent_type: "task"` | `subagent_type: "general-purpose"` — Copilot's generic worker has no distinct counterpart |
-   | `agent_type: "rubber-duck"` (spec/plan critique) | `subagent_type: "general-purpose"` — no built-in equivalent; the critique prompt carries the role |
-   | `agent_type: "code-review"` | the `/code-review` skill, or `subagent_type: "general-purpose"` with the canonical template |
-   | `agent_type: "security-review"` | the built-in `security-review` skill |
-   | `agent_type: "explore"` | `subagent_type: "Explore"` |
-   | `agent_type: "research"` | `subagent_type: "Explore"` |
-   | `mode: "sync"` | a single `Agent` call — it returns the report |
-   | `mode: "background"` | several `Agent` calls in one message; results arrive as task notifications |
-   | `read_agent` | the task-completion notification, or `SendMessage` to the named agent |
-   | the `sql` tool's `todos` table | `TodoWrite` |
-   | `ask_user` | `AskUserQuestion` — still overridden for autonomy per the canonical body |
+Only host-mechanism references. The workflow itself — every Non-Negotiable Rule, phase gate,
+fix-loop cap, review requirement, repo convention and load-bearing invariant — is host-neutral and
+is carried across unchanged.
 
-   Those thirteen rows cover the canonical body's full seven-value `agent_type` enum
-   (`SKILL.md:370-371`). One mechanism needs a decision rather than a mapping: the canonical
-   "Model selection" paragraph (`SKILL.md:390-393`) reaches for `reasoning_effort`, which Claude
-   Code's `Agent` tool does not have. The stub resolves it as — `model: "haiku"` for a mechanical
-   1–2-file task; for integration or design-judgment work omit `model` to inherit the session
-   default, passing `model: "opus"` explicitly where that default is known to be weaker (an omitted
-   `model` resolves to the agent definition's model, then the configured default subagent model, and
-   only then the parent's, so omission alone does not guarantee strong reasoning); and every
-   `reasoning_effort` instruction is satisfied by that choice.
+| Canonical (Copilot CLI) | Ported (Claude Code) |
+| --- | --- |
+| the `task` tool | the `Agent` tool |
+| `agent_type: "general-purpose"` / `"task"` | `subagent_type: "general-purpose"` |
+| `agent_type: "rubber-duck"` (spec/plan critique) | `subagent_type: "general-purpose"` — no built-in equivalent, so the critique prompt carries the role |
+| `agent_type: "code-review"` | `subagent_type: "general-purpose"` with the canonical review template, or the `/code-review` skill |
+| `agent_type: "security-review"` | the built-in `security-review` skill |
+| `agent_type: "explore"` / `"research"` | `subagent_type: "Explore"` |
+| `mode: "sync"` | a single `Agent` call — it returns the report |
+| `mode: "background"` | several `Agent` calls in one message; results arrive as task notifications |
+| `read_agent` | the task-completion notification, or `SendMessage` to the named agent |
+| the `sql` tool's `todos` table | `TodoWrite` |
+| `ask_user` | `AskUserQuestion` (still overridden for autonomy) |
+| `model: "claude-haiku-4.5"` / `reasoning_effort:` | `model: "haiku"` for mechanical tasks; omit `model` for design-judgment work — and pass `model: "opus"` where the session default is known to be weaker, since an omitted `model` resolves to the agent definition's model, then the configured default subagent model, and only then the parent's. There is no `reasoning_effort` parameter. |
 
-   The table deliberately maps only to **built-in** Claude Code agent types and skills. A
-   contributor's personal `~/.claude/agents/` collection may well contain `rust-pro`,
-   `architect-reviewer`, `code-reviewer` or `security-auditor` — the canonical body notes at
-   `SKILL.md:366-368` that no such catalog exists in Copilot's enum, and in Claude Code they exist
-   only if that contributor installed them. The stub mentions them as an optional upgrade, never as
-   a requirement, so the mapping holds in a fresh clone.
+Two sections need rewriting rather than substituting: "How dispatch works in this environment"
+(`SKILL.md:358-410`), whose whole subject is the Copilot dispatch mechanism, and the review-trio
+table (`:685-689`), whose `agent_type` column changes meaning. Both are rewritten to describe
+Claude Code's mechanics directly.
 
-**Why not raw symlinks.** They cannot carry the translation table (premise correction 1) — the one
-thing that makes the canonical body usable from Claude Code. They also need `core.symlinks=true` to
-materialise on a Windows checkout, and this repo ships and tests on Windows.
+**What must NOT be translated.** `SKILL.md:671-678` and `:1024` reference **GitHub's Copilot
+pull-request reviewer** — the `copilot-pull-request-reviewer` bot added via `gh pr edit
+--add-reviewer`. That is a real GitHub feature, unrelated to the Copilot CLI, and it stays exactly
+as written in the port. A blind `s/Copilot/Claude/` would corrupt a working instruction into a
+broken one; this is called out because it is the single most likely way to get the port wrong.
 
-**Why not full copies.** An 82KB + 20KB duplicate of the repo's most-edited process document, with
-drift on every workflow edit and no mechanical way to keep the two honest beyond a byte-comparison
-that the intended Claude-Code adaptations would immediately break.
+The ported files also keep `name` and `description` **byte-for-byte** from the canonical, so both
+hosts trigger on exactly the same requests, and carry a short "ported from" note directing a
+contributor to edit the canonical and re-port rather than editing the port in place.
 
-**Why the same mechanism for `creating-github-issues`** even though it would symlink cleanly: one
-uniform, self-explaining mechanism across `.claude/skills/` beats two mechanisms chosen per skill,
-and its stub still earns its keep by carrying the frontmatter Claude Code matches on plus the
-pointer the parity check verifies. Its stub needs no translation table (nothing to translate).
+### Drift prevention: regenerate and compare
 
-**Drift prevention** — `.github/scripts/check-claude-skill-stubs.sh`, run by CI's existing `lint`
-job and runnable locally. It asserts, for every directory under `.github/skills/`:
+The port is a second copy, so drift is the whole risk. It is handled mechanically rather than by
+convention.
 
-- a `.claude/skills/<name>/SKILL.md` exists (so a future Copilot skill cannot be added without
-  being reachable from Claude Code);
-- that stub's `name:` and `description:` frontmatter match the canonical skill's byte-for-byte
-  after stripping optional wrapping quotes (so trigger behaviour cannot silently diverge);
-- **every** path the stub's `> **Canonical body:**` line names exists — for `otto-development` that
-  is both `SKILL.md` and `agent-prompts.md`, not just the first (so a rename or move of either
-  canonical file fails CI instead of leaving a dangling instruction).
+`.github/scripts/check-claude-skill-ports.sh`, run by CI's existing `lint` job, holds a committed
+record of the intended divergence — one expected-diff file per ported file, under
+`.github/skills/<name>/claude-port/`. For each ported file the check recomputes
+`diff canonical ported` and compares it against the committed expected diff. Any difference fails
+the build. Concretely:
 
-Claude-Code-native skills with no canonical counterpart (`rust-engineer`, `tui-engineer`) are not
-iterated and need no marker.
+- **Canonical edited, port not updated** → the recomputed diff no longer matches the expected diff
+  → red, naming the file and telling the contributor to re-port and refresh the expected diff.
+- **Port edited directly** → same failure, from the other side.
+- **Both updated together, expected diff refreshed** → green. This is the intended workflow.
+- **A new skill added under `.github/skills/` with no port** → red (a missing port directory is a
+  missing expected diff).
+- **`name`/`description` drifted between canonical and port** → red, and reported specifically
+  rather than as an opaque diff mismatch, because that is the failure that silently changes which
+  requests each host triggers on.
 
-`.github/scripts/` does not exist yet and the repo currently contains no `.sh` file anywhere. There
-is, however, a precedent for CI *guards*: `.github/workflows/wit-dep-guard.yml` and
-`wit-portability-guard.yml` are inline `run:` bash blocks with `set -euo pipefail` and GitHub
-`::error::` annotations. This check follows their style but lives in a standalone script rather than
-inline YAML, so a contributor can run it locally before pushing. Three further consequences, settled
-here rather than left to the implementer: the script opens with `set -euo pipefail`; CI invokes it as
-`bash .github/scripts/check-claude-skill-stubs.sh` so the git executable bit is never
-load-bearing (it is set anyway, for local ergonomics); and a new `.gitattributes` pins `*.sh text
-eol=lf` so a `core.autocrlf=true` clone does not produce a CRLF shebang that fails locally with a
-confusing error.
+The expected-diff files are generated, reviewable artifacts: they are exactly the ~61-line
+adaptation, so a reviewer reads the port's entire divergence from the canonical in one place, and
+any *unintended* divergence shows up as a diff-of-diffs in code review.
+
+`creating-github-issues` needs no adaptation, so its expected diff contains only the "ported from"
+note. That makes the check strictest exactly where adaptation is absent: any change to that
+canonical body must be mirrored immediately.
+
+Claude-Code-native skills with no canonical counterpart (`rust-engineer`, `tui-engineer`) have no
+port directory and are not iterated.
+
+`.github/scripts/` does not exist yet and the repo contains no `.sh` file, though there is a
+precedent for CI *guards*: `.github/workflows/wit-dep-guard.yml` and `wit-portability-guard.yml`
+are inline `run:` bash blocks with `set -euo pipefail` and GitHub `::error::` annotations. This
+check follows their style but lives in a standalone script so a contributor can run it locally.
+Three consequences settled here: the script opens with `set -euo pipefail`; CI invokes it as `bash
+.github/scripts/check-claude-skill-ports.sh` so the git executable bit is never load-bearing (it is
+set anyway); and a new `.gitattributes` pins `*.sh text eol=lf` so a `core.autocrlf=true` clone does
+not produce a CRLF shebang.
 
 ## Scope
 
 **In:**
 
-- `.claude/skills/otto-development/SKILL.md` — adapter stub with frontmatter, canonical pointer
-  (both `SKILL.md` and `agent-prompts.md`), and the host-agent translation table.
-- `.claude/skills/creating-github-issues/SKILL.md` — adapter stub with frontmatter and canonical
-  pointer.
-- `.github/scripts/check-claude-skill-stubs.sh` — the parity + frontmatter-match + pointer-target
-  check.
-- `.github/workflows/ci.yml` — one step in the existing `lint` job invoking that script.
+- `.claude/skills/otto-development/SKILL.md` and `agent-prompts.md` — ported, adapted.
+- `.claude/skills/creating-github-issues/SKILL.md` — ported, no adaptation needed.
+- `.github/skills/<name>/claude-port/*.diff` — the committed expected divergences.
+- `.github/scripts/check-claude-skill-ports.sh` — the regenerate-and-compare check, plus the
+  `name`/`description` assertion.
+- `.github/workflows/ci.yml` — one step in the existing `lint` job.
 - `.gitattributes` (new) — `*.sh text eol=lf`.
-- `CLAUDE.md`'s "Claude Code skills" section — the two-directory layout, the adapter-stub mechanism
-  and why, the parity check, and the revised precedence rule.
+- `CLAUDE.md`'s "Claude Code skills" section — the two-directory layout, the port mechanism, the
+  edit-canonical-then-re-port workflow, the check, and the revised precedence rule.
 
 **Out:**
 
-- Editing either canonical `.github/skills/` body. They stay Copilot-authoritative; the translation
-  lives in the stub. (A future change may choose to make the canonical bodies host-neutral — that is
-  a separate decision, not a side-effect of this one.)
-- Stubs for `rust-engineer` / `tui-engineer` in the other direction (no Copilot counterpart is
-  wanted; Copilot is not the agent used for TUI/Rust review here).
+- Editing the canonical `.github/skills/` bodies. They remain Copilot-authoritative and are the
+  source the port is derived from. (Making them host-neutral so both hosts could share one text is
+  a plausible future change; it would remove the need for a port at all, and it is not this
+  change.)
+- Reverse-direction ports of `rust-engineer` / `tui-engineer` into `.github/skills/`.
 - Any change to personal-skill policy (`CLAUDE.md:91`) — personal skills stay in `~/.claude/skills/`.
-- A generic "skill format converter". Two skills, one of which needs no conversion at all, does not
-  justify tooling.
+- A general-purpose skill-format converter. Two skills, one needing no conversion, does not justify
+  one.
 - Any product code, crate, or public-interface change.
 
 ## Public-interface changes
 
-**None.** This touches `.claude/skills/`, `.github/scripts/`, `.github/workflows/ci.yml` and
-`CLAUDE.md` only. No SPP wire-format type, no `ProviderHandler`/`ProviderClient` method, no tool MCP
-schema, no plugin ABI surface, no slash command, no env var, and no on-disk transcript/keyring
-format is added, renamed, or removed (Non-Negotiable Rule 6 is not engaged). No crate gains a
-dependency edge.
+**None.** This touches `.claude/skills/`, `.github/skills/*/claude-port/`, `.github/scripts/`,
+`.github/workflows/ci.yml`, `.gitattributes` and `CLAUDE.md` only. No SPP wire-format type, no
+`ProviderHandler`/`ProviderClient` method, no tool MCP schema, no plugin ABI surface, no slash
+command, no env var, and no on-disk transcript/keyring format is added, renamed, or removed
+(Non-Negotiable Rule 6 is not engaged). No crate gains a dependency edge.
 
 ## Assumptions
 
-- **Claude Code reads a skill's body from `SKILL.md` and follows in-repo file references it names.**
-  The stub delegates rather than inlines. Basis: skills bundling companion files is the established
-  shape (`otto-development` itself bundles `agent-prompts.md`), and the reading agent has full
-  filesystem access. If a future Claude Code version required the whole body inline, the stub is the
-  only file that would need to change.
+- **A ported skill must be self-sufficient.** The port is read start to finish with no reference
+  back to `.github/skills/`. This is the requirement that ruled out a pointer-stub design (a small
+  file delegating to the canonical body plus a translation table): it works only if the reader
+  reliably follows a pointer out of `.claude/skills/` and then holds a mapping in mind across 82KB,
+  and "adapted so it works" is the stated goal.
 - **`description` verbatim reuse is correct.** The canonical descriptions are already written as
-  trigger conditions ("Use when developing any feature or fix in the otto repository…"), which is
-  exactly what Claude Code matches on. Rewriting them would make the two hosts trigger differently
-  on the same request, which is the drift this change exists to prevent.
-- **The check belongs in the existing `lint` job, not a new job.** It is a sub-second shell check;
-  a dedicated runner would cost more in queue time than it saves in clarity.
-- **Bash is acceptable in `.github/scripts/`.** The repo's "Rust-only" rule (`PRD.md`, `CLAUDE.md`)
-  governs the shipped product; `.github/workflows/` already runs bash, and a shell script keeps the
-  check locally runnable without adding a crate whose tests would run on every `cargo test`.
-- **No `tools:` frontmatter key on either stub.** Both workflows need file edits, `git`/`gh`, cargo
-  and dispatch; enumerating a `tools:` allowlist could only under-grant.
-- **Release line is a PATCH.** Per `CHANGELOG.md`'s stated convention (MINOR for features and
-  breaking boundary changes, PATCH for fixes), repo tooling and contributor docs with no runtime
-  behaviour change is a PATCH: `v0.28.1` from the current `0.28.0`.
-- **AC-2's "including its `agent-prompts.md` companion file" is satisfied by reference, not by
-  placement.** The issue asks that `otto-development` be available to Claude Code "including its
-  `agent-prompts.md` companion file". Under this design that file is *named and required* by the
-  stub and *validated* by the parity check, but stays at
-  `.github/skills/otto-development/agent-prompts.md` rather than being copied under
-  `.claude/skills/`. That is the whole point of a single canonical body — but it is a
-  reinterpretation of the AC's literal wording, so the PR body states it explicitly rather than
-  leaving whoever closes the issue to compare phrasing.
+  trigger conditions, which is what Claude Code matches on. Rewriting them would make the two hosts
+  trigger differently on the same request.
+- **The expected-diff format is `diff -u` with a stable invocation.** Hunk headers carry line
+  numbers, so an unrelated canonical edit shifts them and fails the check. That is intended: a
+  canonical edit should force a re-read of the port, not be silently absorbed.
+- **The translation table above is complete for the current canonical text.** It covers all seven
+  `agent_type` values, both `mode` values, `read_agent`, the `todos` table, `ask_user`, and model
+  selection. If a future canonical edit introduces a new host-specific mechanism, the check fails
+  (the diff changes) and the porter extends the table then.
+- **Built-in Claude Code mechanisms only.** A contributor's `~/.claude/agents/` may provide
+  `rust-pro`, `architect-reviewer`, `code-reviewer` or `security-auditor`; the port mentions these
+  as an optional upgrade for the review trio, never a requirement, so it holds in a fresh clone.
+- **The check belongs in the existing `lint` job**, immediately after `actions/checkout@v4` — it
+  needs no toolchain, so a failure surfaces in seconds rather than after a clippy build.
+- **Bash in `.github/scripts/` is acceptable.** The "Rust-only" rule governs the shipped product;
+  `.github/workflows/` already runs bash, and a script keeps the check locally runnable without
+  adding a crate whose tests would run on every `cargo test`.
+- **Release line is a PATCH.** Per `CHANGELOG.md`'s convention (MINOR for features and breaking
+  boundary changes, PATCH for fixes), contributor-facing tooling and docs with no runtime behaviour
+  change is a PATCH: `v0.28.1` from the current `0.28.0`.
 
 ## Goal & Success Criteria
 
-A Claude Code session started in a fresh clone of this repo discovers, triggers and correctly
-executes the repo's own `otto-development` and `creating-github-issues` workflows, with one canonical
-copy of each workflow body and a CI check that keeps the two hosts from drifting apart.
+A Claude Code session started in a fresh clone discovers this repo's own `otto-development` and
+`creating-github-issues` skills and executes them correctly from the ported text alone, with the
+port's divergence from the canonical recorded exactly and enforced by CI.
 
-- `.claude/skills/otto-development/` and `.claude/skills/creating-github-issues/` each contain a
-  committed `SKILL.md` whose `name`/`description` match the canonical skill byte-for-byte.
-- Both stubs name existing canonical paths — all of them, `agent-prompts.md` included;
-  `otto-development`'s stub additionally maps every Copilot dispatch mechanism its canonical body
-  names to a built-in Claude Code equivalent.
-- `.github/scripts/check-claude-skill-stubs.sh` exits 0 on the committed tree, and exits non-zero
-  for each of its three failure modes (missing stub, mismatched frontmatter, dangling pointer) when
-  those are injected.
-- CI's `lint` job runs that script.
-- `CLAUDE.md`'s "Claude Code skills" section documents the layout, the mechanism, the check, and the
-  revised precedence rule.
-- Verified out-of-band (Phase 5): a fresh `git clone` of the merged trunk, listing the skills a
-  Claude Code session in it discovers, shows all four — and, because delegation (not discovery) is
-  this design's one untested assumption, the verification also confirms **execution**: a session
-  that triggers `otto-development` in that clone actually reads the canonical body rather than
-  acting off the stub alone.
+- All three ported files exist under `.claude/skills/`, each self-sufficient: no instruction in a
+  port names a tool Claude Code does not have, and no port requires reading `.github/skills/`.
+- Every host-mechanism reference in the translation table is adapted; the GitHub Copilot
+  *PR-reviewer* references at `SKILL.md:671-678` and `:1024` are **not** altered.
+- `name`/`description` in each port match the canonical byte-for-byte.
+- `.github/scripts/check-claude-skill-ports.sh` exits 0 on the committed tree and exits non-zero for
+  each failure mode: canonical edited without re-porting, port edited directly, missing port,
+  `name`/`description` drift.
+- CI's `lint` job runs the check.
+- `CLAUDE.md` documents the layout, the port mechanism, the edit-canonical-then-re-port workflow,
+  and the revised precedence rule.
+- Verified out-of-band (Phase 5): in a fresh clone of merged trunk, a Claude Code session lists all
+  four skills, and triggering `otto-development` yields a run that follows the ported workflow using
+  Claude Code's own dispatch mechanics.
 
 ## Error Handling & Edge Cases
 
-- **Canonical skill renamed or removed** → the parity check's pointer-target assertion fails CI
-  with the offending stub and path named. This is the intended failure: renaming a canonical skill
-  is a two-file change.
-- **New skill added to `.github/skills/` without a stub** → parity assertion fails, naming the
-  skill and the exact path to create.
-- **Frontmatter edited on one side only** → frontmatter-match assertion fails, printing both values.
-  Quoting differences alone (`description: "x"` vs `description: x`) do not fail, since the existing
-  `.claude/skills/` files quote and the `.github/skills/` ones do not.
-- **A description containing a `:` or `#`** → the extractor takes everything after the first `: `
-  on the `description:` line and does not treat `#` as a comment; both canonical descriptions
-  contain `—`, `(`, `.` and `/` and must survive unchanged.
-- **Multi-line / folded YAML description** → not supported by the extractor; both canonical
-  descriptions are single-line today. The script fails loudly (rather than silently comparing a
-  truncated value) if a `description:` line is absent or empty.
-- **CRLF checkout on Windows** → the script is CI-run on `ubuntu-latest`; local Windows runs under
-  Git Bash are best-effort. Trailing `\r` is stripped during extraction so a `core.autocrlf` clone
-  does not produce a spurious mismatch.
+- **Canonical renamed or moved** → the check cannot find it and fails naming both paths; the port
+  and its expected diff must be renamed with it.
+- **`.github/skills/` itself moved or emptied** → the check fails rather than reporting success over
+  zero skills. An empty iteration passing green is the drift class most likely to go unnoticed.
+- **A port directory with no expected diff, or an expected diff with no port** → fails, naming what
+  is missing.
+- **`name`/`description` drift** → reported as its own failure, not as an opaque diff mismatch,
+  since it is the failure that changes trigger behaviour.
+- **Missing or empty frontmatter key on either side** → fails loudly rather than comparing two empty
+  values, which would make the assertion vacuous. Frontmatter is read only from the leading `---`
+  fenced block, so an unindented `description:` in the body cannot stand in for a deleted key.
+- **CRLF checkout** → trailing `\r` is stripped when extracting frontmatter values, so a
+  `core.autocrlf=true` clone does not produce a spurious mismatch. The `.gitattributes` LF pin keeps
+  the script's own shebang intact.
+- **A canonical skill directory containing a companion file the port omits** → fails: a companion
+  the port lacks is a companion Claude Code can never read, and `agent-prompts.md` holds the
+  dispatch templates `otto-development` requires be pasted verbatim.
 - **`.claude/skills/` entry with no canonical counterpart** → ignored by design; the check iterates
   `.github/skills/`, so `rust-engineer` and `tui-engineer` are untouched.
 
 ## Risks & Open Questions
 
-- **The translation table is a maintained artifact.** If Claude Code renames a built-in agent type
-  or skill, the table goes stale and nothing in CI catches it (the check verifies paths and
-  frontmatter, not the semantic accuracy of a mapping). Mitigation: the table maps only to
-  long-lived built-ins and states that personal specialised agents are optional. Accepted risk.
-- **Delegation costs a file read.** A Claude Code run of `otto-development` reads the stub, then the
-  82KB canonical body — the same total it would read from a copy, plus one hop. No mitigation
-  needed; noted so it is not mistaken for an oversight.
-- **The canonical bodies still address Copilot in the second person.** A Claude Code reader gets
-  correct mechanics from the table but slightly odd prose ("this CLI's seven `agent_type`s"). Making
-  the canonical bodies host-neutral is the natural follow-up and is explicitly out of scope here.
-- **Open question, deliberately not blocking:** whether `CLAUDE.md`'s precedence rule should keep
-  saying `.github/skills/` governs. This design answers yes-with-a-clarification — the canonical
-  *body* governs, and the stub governs only the host-mechanism translation — because that is exactly
-  what the file layout now encodes.
+- **Two copies of a 103KB document is a real maintenance cost**, and the honest trade this design
+  makes. It is mitigated, not eliminated: the divergence is ~4% and recorded exactly, CI refuses to
+  let the copies drift, and the failure mode is a loud red build rather than a silently stale
+  workflow. The alternative that removes the cost entirely — making the canonical bodies
+  host-neutral so both hosts read one text — is the natural follow-up and is out of scope here.
+- **A canonical edit imposes work on the editor**, who must re-port and refresh the expected diff.
+  That is the cost of the port being self-sufficient. The check's failure message states the exact
+  two commands needed.
+- **The adaptation is judgement, not mechanism.** Substituting `agent_type` values is mechanical;
+  rewriting "How dispatch works in this environment" is not. A future canonical rewrite of that
+  section needs a human to re-adapt it, and the check can only tell them that it changed, not
+  whether their re-adaptation is good.
+- **`reasoning_effort` has no Claude Code equivalent**, so the canonical's effort-tuning guidance is
+  approximated by model selection. A dispatch the canonical wanted at `"xhigh"` gets whatever the
+  session's model provides.
+- **Open question, deliberately not blocking:** whether the ported `agent-prompts.md` should keep
+  the canonical's `task tool:` YAML-ish block shape at all, or present dispatches as prose. The port
+  keeps the block shape with `Agent tool:` / `subagent_type:` fields, because the canonical body
+  refers to those templates by name and structure, and diverging structurally would widen the diff
+  far beyond the host-mechanism changes this port is meant to contain.
