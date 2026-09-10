@@ -39,7 +39,7 @@ The design that resolves both sides of this tension is a third one: echo the typ
 
 ## Approach
 
-Narrow the preview from "the highlighted command" to "what the user typed", let the sheet stop drawing its own copy of the filter, and close two gaps that only become reachable once the prompt is a literal echo.
+Narrow the preview from "the highlighted command" to "what the user typed", let the sheet stop drawing its own copy of the filter, and close the two gaps that only open up once the prompt is a literal echo — an undeletable leading `/`, and a sheet with nothing left to draw when the filter matches nothing.
 
 ### 1. `prompt_preview` becomes the literal filter
 
@@ -47,7 +47,7 @@ Narrow the preview from "the highlighted command" to "what the user typed", let 
 
 ### 2. Navigation stops touching the prompt
 
-`Up` and `Down` mutate `self.cursor` only and return `Ok(vec![])`, matching the sibling picker (`crates/otto/src/plugin/builtin/connect/screen.rs:214-222`). Moving the highlight is not an edit to the user's text, so it must not produce a `PrefillInput`. This is safe for rendering: the TUI main loop calls `terminal.draw(...)` unconditionally at the top of every iteration and polls events on a 50 ms timeout (`crates/otto/src/main.rs:3375-3392`, `:3598`), so the `▶` highlight repaints at ≥20 Hz whether or not a key produced an effect.
+`Up` and `Down` mutate `self.cursor` only and return `Ok(vec![])`, matching the sibling picker (`crates/otto/src/plugin/builtin/connect/screen.rs:213-223`). Moving the highlight is not an edit to the user's text, so it must not produce a `PrefillInput`. This is safe for rendering: the TUI main loop calls `terminal.draw(...)` unconditionally at the top of every iteration and polls events on a 50 ms timeout (`crates/otto/src/main.rs:3375-3392`, `:3598`), so the `▶` highlight repaints at ≥20 Hz whether or not a key produced an effect.
 
 `Char` continues to emit `Effect::PrefillInput { text: self.prompt_preview() }`, because that *is* an edit to the user's text.
 
@@ -71,27 +71,20 @@ The blank spacer row is kept unconditionally even though the header it used to s
 
 With `commands` non-empty and `filtered()` empty, trace the current `render`: the `commands.is_empty()` early return is not taken, the window is `0..0`, `hidden_above`/`hidden_below` are both `0` so the hint is blank, and the row loop emits nothing. Today the sheet still shows something, because `lines[0]` is the `> xyz` header. Remove the header and that state renders as a blank rectangle above the prompt with only the host's `tips()` row painted.
 
-So change 4 requires a matching empty state: when `filtered()` is empty but `commands` is not, render a muted `picker.command-palette.no-matches` line, mirroring the existing `no-commands` treatment. The key is added to all four catalogs (`crates/otto/locales/{en,es,pt,hi}.toml`) — `crates/otto/tests/locales.rs::every_locale_has_the_same_key_set_as_en` fails otherwise.
-
-### 6. Fix the cursor column in `prefill_input`
-
-`App::prefill_input` places the cursor with `l.len()` — **bytes**, not chars (`crates/otto/src/app.rs:1963-1974`). It should be `l.chars().count()`.
-
-This is a pre-existing bug, but it is in scope here because this change is what makes it routinely reachable. Under #92 the prompt held slash-command names, which are ASCII, so byte length and char count agreed; the only non-ASCII path was the no-match fallback. After this change the prompt is filled from arbitrary typed characters on every keystroke, so any multi-byte character a user types mis-places the cursor past the end of the line. Shipping change 1 without this would convert a latent bug into a routine one.
+So change 4 requires a matching empty state: when `filtered()` is empty but `commands` is not, render a muted `picker.command-palette.no-matches` line. This is an **early return**, placed and shaped exactly like the existing `commands.is_empty()` block (`screen.rs:106-117`) and taken before `name_col_width` and the windowing arithmetic. Pushing the line after the row loop instead would leave the blank spacer at `:163-164` ahead of it and render `["", no-matches]`. The key is added to all four catalogs (`crates/otto/locales/{en,es,pt,hi}.toml`) — `crates/otto/tests/locales.rs::every_locale_has_the_same_key_set_as_en` fails otherwise.
 
 ## Scope
 
 **In:**
 - `crates/otto/src/plugin/builtin/command_palette/screen.rs` — `prompt_preview` returns the literal filter; `Up`/`Down` stop emitting `PrefillInput`; `Backspace` on an empty filter closes the palette; `render` drops the `> <filter>` header, reserves two chrome rows instead of three, and gains a no-match empty state.
-- `crates/otto/src/app.rs` — `prefill_input` counts chars, not bytes, for the cursor column.
-- `crates/otto/src/plugin/effects.rs` — the `"palette"` `open_screen` branch comment; no logic change. Its test `palette_open_screen_prefills_prompt_with_first_command` (`:3082-3147`) hard-asserts the old seed and must be renamed and rewritten to expect `/` — this is the one cross-file test coupling.
+- `crates/otto/src/plugin/effects.rs` — the `"palette"` `open_screen` branch comment (`:662`) and the guard test's doc comment (`:3195-3197`), both of which say the palette "mirrors its selection into the prompt"; no logic change. Its test `palette_open_screen_prefills_prompt_with_first_command` (`:3083-3193`) hard-asserts the old seed and must be renamed, with the seed assertion at `:3131-3147` rewritten to expect `/`. Only that assertion changes — the second half of the test presses `Esc` and asserts the stack empties and the prompt clears, which is regression coverage worth keeping. This is the one cross-file test coupling.
 - `crates/otto/locales/{en,es,pt,hi}.toml` — a new `picker.command-palette.no-matches` key in each.
 - `docs/superpowers/specs/2026-09-08-issue-80-slash-command-input-design.md` — a superseded-by note on the one assumption #96 overturns. Its `> **Status:**` stays IMPLEMENTED; it accurately records what #92 shipped.
 - `CHANGELOG.md` — a `Fixed` entry referencing #96. The existing v0.26.4 entry describing #92's behavior is left alone; the new entry supersedes it rather than rewriting history.
-- Tests in `screen.rs`. Beyond the `prompt_preview_*` rewrite, three existing render tests are affected by the capacity change and must be updated deliberately rather than left to pass or fail by accident:
-  - `overflowing_list_windows_around_cursor_with_scroll_hint` (`:486-537`) — at `height: 6`, capacity goes 3 → 4, so its `/cmd03` and `↓17 more below` assertions both break.
-  - `list_exactly_filling_capacity_renders_every_row` (`:576-599`) — stays green but stops testing its boundary; the "exactly fills" case moves from 9 rows to 10. Its name, its `// capacity = height(12) - 3 = 9` comment, and its fixture all need updating, because silently passing for the wrong reason is worse than failing.
-  - `long_list_fits_shows_no_scroll_hint` (`:459-485`) — stale capacity comment.
+- Tests in `screen.rs`. `up_emits_prefill_input` (`:699-708`) and `down_emits_prefill_input` (`:710-722`) assert the behavior change 2 removes and must be inverted to assert no effects; their shared doc comment (`:668-669`) names `Up` and `Down` among the keys that emit `PrefillInput` and goes stale with them. Beyond that and the `prompt_preview_*` rewrite, three existing render tests are affected by the capacity change and must be updated deliberately rather than left to pass or fail by accident:
+  - `overflowing_list_windows_around_cursor_with_scroll_hint` (`:486-530`) — at `height: 6`, capacity goes 3 → 4, so its `/cmd03` and `↓17 more below` assertions both break.
+  - `list_exactly_filling_capacity_renders_every_row` (`:576-594`) — stays green but stops testing its boundary; the "exactly fills" case moves from 9 rows to 10. Its name, its `// capacity = height(12) - 3 = 9` comment, and its fixture all need updating, because silently passing for the wrong reason is worse than failing.
+  - `long_list_fits_shows_no_scroll_hint` (`:459-478`) — stale capacity comment.
 
 **Out:**
 - Selection behavior. `Enter` on a `requires_arg` command still closes and prefills `/<cmd> `; `Enter` on a no-arg command still clears and dispatches `RunSlash`; `Esc` and empty-result `Enter` still close and clear. This spec changes only what appears *before* selection.
@@ -131,7 +124,6 @@ While the command palette is open, the prompt input shows exactly what the user 
 - [ ] `Esc` still closes the palette and clears the prompt.
 - [ ] The sheet renders no `> <filter>` header.
 - [ ] A command list longer than the sheet windows around the cursor with the `▶` row visible at every cursor position, across a sweep of region heights — not just one.
-- [ ] A multi-byte character typed into the filter leaves the prompt cursor at the end of the text, not past it.
 
 ## Error Handling & Edge Cases
 
@@ -142,7 +134,9 @@ While the command palette is open, the prompt input shows exactly what the user 
 
 ## Risks & Open Questions
 
-- The windowing arithmetic in `render` is the delicate part of this change, not the preview logic. The reserved-row count is coupled to the number of chrome lines through `region.height`, and the comment explaining *why* the count is what it is must move with the constant, or the next reader will re-derive the old value. The guard is a test that sweeps region heights at several cursor positions and asserts the `▶` row is always present — the current test pins a single `height: 12` (`screen.rs:539-575`), which is not enough to catch an off-by-one at the boundary.
+- The windowing arithmetic in `render` is the delicate part of this change, not the preview logic. The reserved-row count is coupled to the number of chrome lines through `region.height`, and the comment explaining *why* the count is what it is must move with the constant, or the next reader will re-derive the old value. The guard is a test that sweeps region heights at several cursor positions and asserts the `▶` row is always present — the current test pins a single `height: 12` (`screen.rs:539-570`), which is not enough to catch an off-by-one at the boundary.
 - The substring/`Enter` mismatch documented in "The trade this accepts" is a real usability cost being accepted knowingly. If it generates complaints, the ghost-completion design is the answer, and it is a new issue rather than a revert.
+- **Investigated and deliberately not changed:** `App::prefill_input` sets the cursor column from `l.len()` — bytes, not chars (`crates/otto/src/app.rs:1963-1974`). Because this change feeds the prompt arbitrary typed characters on every keystroke rather than ASCII command names, that looked like a latent bug this change would make routine. It is not one: `CursorMove::Jump` clamps the column through `fit_col`, which is `min(col, line.chars().count())` (`tui-textarea-2-0.10.2/src/cursor.rs:271-273`, arm at `:373-377`), and byte length is always ≥ char count, so the cursor lands on exactly the char count today. The `l.len()` is therefore correct only by way of that clamp, which is worth knowing but is not this issue's business — changing it here would widen the diff for no behavior delta. Recorded so the next person does not re-derive it.
+
 - `prompt_preview` keeps its name but no longer previews the *command*. Its doc comment must be rewritten in the same commit, or it will read as stale against #92's spec.
 - This change reverses a behavior the reporter explicitly asked for one release earlier. If #96's intent was in fact something narrower, the whole change is misdirected — which is why the issue was rewritten in place and the reversal is called out at the top of this spec rather than buried.
