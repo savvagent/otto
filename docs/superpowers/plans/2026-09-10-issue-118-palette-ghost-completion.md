@@ -81,11 +81,15 @@ effect.
         assert `ghost_completion() == None` (empty-suffix suppression).
       - `ghost_completion_is_none_when_nothing_is_highlighted`: type a filter matching nothing
         (`xyz`), assert `ghost_completion() == None`.
-      - `ghost_completion_follows_navigation`: type `e` (matches multiple fixture rows containing
-        `e`), press `Down` to move the highlight, assert `ghost_completion()` changes to reflect
-        the newly highlighted row's suffix (or `None` if that row isn't a prefix match — pick
-        fixture rows where you know the answer; assert the concrete expected value, don't just
-        assert it changed).
+      - `ghost_completion_follows_navigation`: with an **empty filter** (every row is trivially a
+        prefix match, since every string starts with `""`), assert `ghost_completion() ==
+        Some("clear".to_string())` (cursor defaults to the first fixture row). Press `Down` once
+        (cursor moves `clear` → `demo`, fixture order is `clear, demo, exit, theme, zeta`) and
+        assert `ghost_completion() == Some("demo".to_string())`. This demonstrates a concrete
+        `Some` → `Some` transition driven by navigation alone, with no ambiguity about which fixture
+        rows are prefix matches (empty filter makes all of them prefix matches, unlike a non-empty
+        filter such as `e`, which matches every fixture row by substring but no row by prefix — do
+        not reuse `e` for this test, it cannot produce a `Some` value with this fixture).
       Run `cargo test -p otto` and confirm these fail to compile (no such method yet) — that
       compile failure *is* the "red" of this step's TDD; there is no way to get a runtime red for a
       brand-new method.
@@ -138,69 +142,71 @@ effect.
       `frame.render_widget(&textarea, chunks[4]);` (`:345`) and before the
       `if let Some((top_screen, layout)) = app.screen_stack.top()` block that calls `paint_screen`
       (`:385`).
-- [ ] Add a failing test first. `ui.rs` render tests in this file construct an `App`, populate
-      `screen_stack` with a test double, call `render`, and assert on `frame.buffer()` /
-      `terminal.backend().buffer()` content — follow the pattern of an existing test in this file
-      that opens a screen and inspects rendered cells (e.g. the `paint_screen_*` tests around
-      `:1944-2000` and the `bottom_sheet_*` tests) rather than inventing a new test harness shape.
-      Write:
-      - A test that opens a `PaletteScreen` (or a minimal test `Screen` impl overriding only
-        `ghost_completion` to return a known string, whichever matches this file's existing test
-        double conventions more closely — check for an existing mock `Screen` impl in this file's
-        `#[cfg(test)] mod tests` before writing a new one) with a known prompt string and asserts
-        the expected ghost characters appear in the buffer at
-        `textarea's inner x + prompt.chars().count()`, styled with `palette.muted` as the fg.
-      - A test that the overlay does **not** draw when `screen_stack` is empty (home screen, no
-        palette open) — buffer at the expected cell is unchanged from what plain textarea rendering
-        would produce.
-      - A test that the overlay does not draw when the top screen's `ghost_completion()` returns
-        `None` (e.g. a palette with an empty command list, or an existing screen type that doesn't
-        override the trait method).
-      Run `cargo test -p otto` and confirm these fail (compile error or wrong buffer content) before
-      implementing.
+- [ ] Note before writing anything: `render()` (`ui.rs:220`) has no existing test coverage in this
+      file — its only call site in the whole codebase is production code (`main.rs:3374`) — and the
+      `paint_screen_*`/`bottom_sheet_*` tests do **not** demonstrate a `render()`-level test harness
+      (`paint_screen` tests call `paint_screen` directly with a bare `&dyn Screen`, no `App`
+      involved; `bottom_sheet_*` tests call the pure geometry fn `bottom_sheet_rect` and assert
+      `Rect` equality, no buffer involved). Do not attempt to construct an `App` + `HomeFrameData`
+      and call `render()` in a test — there is no precedent for it in this file, and `App::new`
+      defaults `show_splash: true` (`app.rs:993`), which makes `render()`'s very first branch
+      (`ui.rs:230-233`) return a splash-screen buffer before touching the textarea or the overlay at
+      all. The plan avoids this problem entirely by extracting the guard-and-paint logic into a pure
+      function (next step) that takes a `Buffer` and primitives directly — no `App`/`Frame` needed —
+      mirroring the existing `footer_spinner_spans` test pattern in this file, which already builds
+      a bare `Buffer::empty(area)` and renders into it directly rather than going through a `Frame`.
 - [ ] Factor the existing inline `Block::default().borders(Borders::ALL).border_style(...)
-      .padding(Padding::horizontal(1))` builder at `ui.rs:247-252` into a `fn prompt_block(palette:
-      Palette) -> Block` (or take the border style components it needs — match whatever the actual
-      surrounding code makes cleanest) placed near `bottom_sheet_rect` (`:1191`). Replace the inline
-      builder at `:247-252` with a call to it, so `textarea.set_block(prompt_block(palette))`
-      produces the exact same `Block` as before (no behavior change to today's render — verify with
-      `cargo test -p otto` before adding anything new). **This is a mandatory design fix from the
-      spec's critique round, not optional:** a spec critique caught that an earlier draft proposed a
-      *second*, independently-written `Block::borders(ALL).padding(horizontal(1))` literal for the
-      ghost overlay's interior-rect computation — two sources of truth with nothing forcing them to
-      stay identical. Do not reintroduce that shape (a standalone `prompt_inner_rect` helper with a
-      duplicated `Block` literal); derive the overlay's interior rect from the same `Block` value
-      via `.inner(chunks[4])` instead.
-- [ ] Add the overlay block from the spec's revised "Approach > 3" directly after
-      `frame.render_widget(&textarea, chunks[4]);`, computing `let inner =
-      block.inner(chunks[4]);` from the `Block` value `prompt_block` returned (reused, not
-      rebuilt), then using `app.screen_stack.top()`, `top_screen.ghost_completion()`,
-      `textarea.cursor()`, `textarea.lines().len() == 1`, and `frame.buffer_mut().set_stringn(...)`
-      exactly as specified. **Also mandatory from the critique round:** guard on `line_fits` —
-      `textarea.lines().first().is_some_and(|l| l.chars().count() <= inner.width as usize)` — in
-      addition to (not instead of) `cursor_row == 0 && textarea.lines().len() == 1`. The critique
-      found that `cursor_row`/`lines().len()` alone report *logical* line/row and do not change when
-      `WrapMode::WordOrGlyph` soft-wraps a long logical line across multiple *visual* rows — so that
-      guard alone would silently paint the ghost text at the wrong screen position the moment a
-      wrapped prompt reached it. `line_fits` proves no wrap occurred by checking the actual
-      condition wrapping depends on (line width vs. available width), not a proxy for it. Style:
-      `palette.base_style().fg(palette.muted)` — matches this file's existing muted-text
-      convention (see the `no-matches`/`no-commands` styling and the Assumptions section of the
-      spec for why no `Modifier::DIM`).
-- [ ] Add at least one test exercising a filter long enough (relative to a narrow test-terminal
-      width) that `line_fits` would be false if the check were only `cursor_row == 0 &&
-      textarea.lines().len() == 1` — i.e. a regression test for the specific gap the critique found,
-      not just the common short-filter case. Assert no ghost text renders in that case even though
-      `ghost_completion()` itself returns `Some(...)`.
+      .padding(Padding::horizontal(1))` builder at `ui.rs:247-252` into `fn prompt_block(palette:
+      Palette) -> Block` (by value — `Palette` is `Copy`, and every other palette-consuming helper
+      in this file, e.g. `render_log`, already takes it by value; do not take `&Palette`), placed
+      near `bottom_sheet_rect` (`:1191`). Replace the inline builder at `:247-252` with a call to
+      it, so `textarea.set_block(prompt_block(palette))` produces the exact same `Block` as before
+      (no behavior change to today's render — verify with `cargo test -p otto` before adding
+      anything new). **This is a mandatory design fix from the spec's critique round, not
+      optional:** a spec critique caught that an earlier draft proposed a *second*,
+      independently-written `Block::borders(ALL).padding(horizontal(1))` literal for the ghost
+      overlay's interior-rect computation — two sources of truth with nothing forcing them to stay
+      identical. Do not reintroduce that shape; derive the overlay's interior rect from the same
+      `Block` value via `.inner(chunks[4])` instead.
+- [ ] Add `fn paint_ghost_completion(buf: &mut Buffer, inner: Rect, cursor: (usize, usize), lines:
+      &[String], ghost: &str, style: Style)` per the spec's revised "Approach > 3" (copy its doc
+      comment and body exactly — the doc comment records *why* `line_fits` is checked in addition to
+      `cursor.0 == 0 && lines.len() == 1`, which is load-bearing context for the next reader, not
+      decoration). Write its tests **first, failing**, directly against a bare `Buffer::empty(rect)`
+      (no `App`, no `Frame`, no `Screen` — see the note above) before writing the function body:
+      - Draws at the expected cell when the line fits: `inner = Rect::new(0, 0, 20, 1)`, `cursor =
+        (0, 2)`, `lines = ["/co".to_string()]`, `ghost = "nnect"` — assert the buffer cell at `(2,
+        0)` (i.e. `inner.x + cursor.1`) through `(6, 0)` spells `nnect`, styled with the passed-in
+        `style`.
+      - **Wrap-guard regression (the specific gap the plan critique found):** `inner = Rect::new(0,
+        0, 5, 1)` (width 5), `lines = ["/clearclearclear".to_string()]` (16 chars, exceeds width 5
+        — `line_fits` must be false), `cursor = (0, 16)`, `ghost = "x"` — assert the buffer is
+        **unchanged** (no write happened). This must be a real regression test: temporarily delete
+        the `line_fits` conjunct while running this test locally to confirm it then fails, then
+        restore the conjunct — do not leave a test in the plan's final diff that would pass whether
+        or not `line_fits` is checked.
+      - Does not draw when `lines.len() != 1` (two-line `lines` value) or `cursor.0 != 0` (cursor on
+        a later logical line) even when the single-line-equivalent case would fit.
+      - Clips via `max_width` rather than panicking or overflowing when `ghost` is longer than the
+        remaining space: `inner = Rect::new(0, 0, 10, 1)`, `cursor = (0, 8)` (2 cells free), `ghost =
+        "nnectnow"` — assert only the first 2 characters (`nn`) are written and no panic occurs.
+      Run `cargo test -p otto` and confirm these fail to compile (function doesn't exist yet) before
+      writing `paint_ghost_completion`'s body.
+- [ ] Implement `paint_ghost_completion`'s body per the spec, then wire it into `render()` directly
+      after `frame.render_widget(&textarea, chunks[4]);`: `if let Some((top_screen, _)) =
+      app.screen_stack.top() { if let Some(ghost) = top_screen.ghost_completion() {
+      paint_ghost_completion(frame.buffer_mut(), block.inner(chunks[4]), textarea.cursor(),
+      textarea.lines(), &ghost, palette.base_style().fg(palette.muted)); } }` — matches this file's
+      existing muted-text convention (see the `no-matches`/`no-commands` styling and the spec's
+      Assumptions section for why no `Modifier::DIM`). This wiring itself has no unit test (see the
+      note above); it is covered by the manual terminal check in Task 3.
 - [ ] Host-swap `RwLock` check (Non-Negotiable Rule 7 / Load-Bearing Invariant 3): confirm this
       function (`ui.rs::render`) does not hold `app`'s `Arc<RwLock<Option<Arc<Host>>>>` guard and
       does not `.await` anywhere in or near the new code — `render` is a synchronous ratatui draw
       callback, so this should be true by construction, but state it explicitly in the commit body
       per the plan format's requirement, since this file is one of the two named in the rule.
-- [ ] Run `cargo test -p otto`; expect the new tests green and no existing test's buffer
-      assertions disturbed (the overlay only draws when a screen with a non-`None`
-      `ghost_completion()` is on top, which no currently-shipped screen other than the palette
-      provides, so no other test's expected buffer content should change).
+- [ ] Run `cargo test -p otto`; expect `paint_ghost_completion`'s new tests green and no existing
+      test disturbed.
 - [ ] `cargo fmt --all` and commit: `git commit -m "otto: render palette ghost-completion after the prompt cursor"`.
 
 ## Task 3: Changelog, full verification, manual terminal check
