@@ -289,8 +289,7 @@ Agent tool:
 
 All three are dispatched in parallel — issue all three calls in the same message so they run
 concurrently and report back as task notifications — on every PR, with no size-based carve-out
-(Non-Negotiable Rules 4–5). Two are `Agent` calls; the security pass is the built-in
-`security-review` skill.
+(Non-Negotiable Rules 4–5). All three are `Agent` calls.
 
 ### Rust-expert pass — `subagent_type: "general-purpose"`
 
@@ -353,20 +352,34 @@ Agent tool:
     Report: Strengths, Issues (Critical / Important / Minor), Assessment.
 ```
 
-### Independent security review — the built-in `security-review` skill
+### Independent security review — `subagent_type: "general-purpose"`
 
 **Blind by construction.** This dispatch receives the diff and nothing else — no spec, no plan, no
-task brief, no PR-body summary, no implementer report (Non-Negotiable Rule 5). Keep the "do not
-read" instruction attached to the prompt. Per "How dispatch works in this environment" in SKILL.md,
-Claude Code's `security-review` skill has a mandatory table-plus-follow-up-question output contract;
-this dispatch's prompt tells it to skip the follow-up question so a fully autonomous run doesn't
-stall — you (the orchestrator) apply the fix-loop rule instead once its findings table comes back.
+task brief, no PR-body summary, no implementer report (Non-Negotiable Rule 5). That is why it is a
+`general-purpose` subagent and **not** the built-in `security-review` skill: a `Skill` invocation
+runs in the orchestrating session, which by this point holds all of the above, so the blindness
+would be a promise rather than a fact. A fresh subagent context makes it structural. Pass the diff
+by writing `gh pr diff <N>` to a file and naming that path in the prompt, or inline it — but never
+pass the spec, the plan, the brief, the PR body or an implementer report. The dispatched agent is
+free to invoke the `security-review` skill itself inside its own fresh context; that is where the
+skill form is safe.
+
+Keep the "do not read" instruction attached to the prompt. The severity-table output contract below
+is what this workflow requires of the pass; the prompt also tells it to skip the follow-up question
+so a fully autonomous run doesn't stall — you (the orchestrator) apply the fix-loop rule instead
+once its findings table comes back. See "How dispatch works in this environment" in SKILL.md.
 
 ```
-security-review skill (via the Skill tool), given this scope:
+Agent tool:
+  subagent_type: general-purpose
   description: "Security review: PR #<N>"
   prompt: |
     Perform an independent security review of PR #<N> in savvagent/otto.
+
+    You are acting as a read-only security specialist — `general-purpose` has no such specialty
+    built in, so this prompt carries the role. If the `security-review` skill is available to you,
+    you may invoke it here: you are a fresh context that has seen nothing but this prompt, which is
+    exactly where that skill is safe to run.
 
     Read ONLY the diff: `gh pr diff <N>`.
     Do NOT read the PR description, the issue, the spec, the plan, or any summary of intent. Your

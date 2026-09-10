@@ -81,8 +81,8 @@ These hold for every run of this skill, no exceptions, no fast-path carve-outs:
    otherwise-perfect commit that carries attribution is rejected and rewritten.
 4. **Every PR is reviewed by a Rust-expert pass, an architecture pass, and an independent security
    pass.** No PR opens, merges, or is pushed through the review loop without a dedicated Rust-review
-   dispatch, a dedicated architecture-review dispatch, AND a dedicated `security-review` dispatch
-   (Claude Code's built-in read-only `security-review` skill, invoked via the `Skill` tool)
+   dispatch, a dedicated architecture-review dispatch, AND a dedicated security-review dispatch
+   (`subagent_type: "general-purpose"`, given the PR diff and nothing else — see Rule 5)
    on record. Fast-path and trivial PRs included — there is no size-based carve-out. All three must
    pass (or their issues resolved) before merge. See "How dispatch works in this environment" below
    for exactly how each is invoked.
@@ -374,11 +374,18 @@ the product under development and populates its own `subagent_type` enum from di
 in the repo. A dispatch in this skill never means otto's `task` tool.
 
 Every dispatch in this skill is one `Agent` tool call: `subagent_type` (which agent to run),
-`description` (3–5 words), and `prompt` (the full body). Claude Code ships two built-in
-`subagent_type`s this skill uses — `general-purpose` (full toolset) and `Explore` (read-only search)
-— plus two built-in *skills* it invokes through the `Skill` tool rather than through
-`subagent_type`: `security-review` and `code-review`. Use this table everywhere `agent-prompts.md`
-names a role:
+`description` (3–5 words), and `prompt` (the full body). The two built-in `subagent_type`s **this
+skill uses** are `general-purpose` (full toolset) and `Explore` (read-only search); Claude Code
+defines others (`Plan`, plus whatever a contributor's plugins provide) and this skill needs none of
+them. Claude Code also ships `security-review` and `code-review` as built-in *skills*, invoked
+through the `Skill` tool rather than through `subagent_type` — but a `Skill` invocation runs **in the
+orchestrating session**, which by Phase 4 step 8 already holds the spec, the plan, the task brief,
+the PR body and every implementer report. That makes the skill form unusable for the mandatory
+security pass, which Non-Negotiable Rule 5 requires receive **only the PR diff**: so that pass is a
+`subagent_type: "general-purpose"` dispatch, and its isolation comes from the subagent's fresh
+context — structural, rather than a promise the orchestrator makes to itself. (`code-review` carries
+no such constraint and stays an acceptable substitute for the quality passes.) Use this table
+everywhere `agent-prompts.md` names a role:
 
 | Role in this skill                                            | Claude Code dispatch        | Why                                                                                                                     |
 | ----------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
@@ -386,7 +393,7 @@ names a role:
 | Implementer, spec compliance review, review-response (Phase 3 A/C, Phase 4 step 9) | `subagent_type: "general-purpose"`     | Needs the full toolset (edit files, run cargo, use git/gh) and high-quality reasoning.                                  |
 | Code quality review, final code review (Phase 3 E/H)               | `subagent_type: "general-purpose"` with the canonical review template, or the built-in `/code-review` skill | Wanted as a read-only diff reviewer reporting only high-confidence bugs/logic errors against a real change set. The template in `agent-prompts.md` is what makes a `general-purpose` agent behave that way, so paste it verbatim; `/code-review` on the same diff range is an acceptable substitute. |
 | Rust-expert pass, architecture pass (Phase 4 step 8 trio)          | `subagent_type: "general-purpose"`      | Needs to read `CLAUDE.md` + the Load-Bearing Invariants and reason about idiomatic Rust / crate boundaries, not just the diff. |
-| Independent security pass (Phase 4 step 8 trio)                    | the built-in `security-review` skill      | Claude Code's built-in read-only security specialist — mandatory per this skill's Non-Negotiable Rule 4, invoked explicitly for every PR. |
+| Independent security pass (Phase 4 step 8 trio)                    | `subagent_type: "general-purpose"`, blind-diff prompt      | Mandatory per this skill's Non-Negotiable Rule 4, on every PR. A subagent rather than the `security-review` skill because Rule 5 requires this pass see only the diff, and a fresh subagent context enforces that structurally where a `Skill` call in the orchestrator's own context cannot. The dispatched agent may invoke the `security-review` skill itself, inside its own fresh context. |
 | Ad-hoc codebase search / research                                  | `subagent_type: "Explore"`      | Read-only fan-out search across many files; returns the conclusion instead of file dumps.                              |
 
 A contributor's `~/.claude/agents/` may additionally define specialised reviewers (`rust-pro`,
@@ -420,12 +427,15 @@ effort dial.
 inline; a dispatched agent has no access to this session's context or files it hasn't been told
 about explicitly (it does have full repo filesystem/tool access, but not this conversation's memory).
 
-**The security review has a mandatory output contract** (defined in the built-in `security-review`
-skill itself — not something visible by reading this repo, so don't expect to find it in a repo
-file): after it completes, findings must be presented as a table using the severity emoji (🔴
-CRITICAL / 🟠 HIGH / 🟡 MEDIUM / ⚪ LOW), and the generic contract then calls for a follow-up question
-offering next actions. **This skill overrides the follow-up-question step for autonomy:** present
-the table as specified, but instead of blocking on `AskUserQuestion`, auto-resolve per the Phase 4
+**The security review has a mandatory output contract** — required by *this* workflow, not inherited
+from anywhere else, and carried by the Independent Security Review prompt in `agent-prompts.md`:
+findings must be presented as a table using the severity emoji (🔴 CRITICAL / 🟠 HIGH / 🟡 MEDIUM / ⚪
+LOW) with file:line refs and a concrete fix each, then an overall assessment. Claude Code's built-in
+`security-review` skill imposes the same table and then calls for a follow-up question offering next
+actions, so the override below applies whether the dispatched agent invokes that skill inside its own
+context or works from the prompt alone. **This skill overrides the follow-up-question step for
+autonomy:** present the table as specified, but instead of blocking on `AskUserQuestion`,
+auto-resolve per the Phase 4
 step 8 fix-loop rule below (Critical/High → fix now and re-review; Medium/Low → log in the per-task
 ledger and continue) so a fully autonomous run never stalls waiting on a human. If you are running
 this skill in guided/interactive mode with a human present, the `AskUserQuestion` step may be used
@@ -714,9 +724,9 @@ message, so they run concurrently and report back as task notifications), regard
 | ----------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Rust-expert pass                  | `subagent_type: "general-purpose"`      | Idiomatic Rust: ownership/lifetimes, error handling, no `unwrap()` outside tests, no panics on untrusted input, `Send + Sync` async seams, `rmcp`/tokio usage, test placement — against this repo's conventions. This project also carries a `.claude/skills/rust-engineer` skill; paste its checklist into the dispatch prompt as additional reference, but the dedicated review is still mandatory. |
 | Architecture pass                 | `subagent_type: "general-purpose"`      | Architectural consistency: the everything-is-MCP-shaped separation, crate boundaries (`otto-protocol` has no I/O; `otto-mcp` owns the provider/tool traits; `otto-host` owns the turn loop; `crates/otto` is a thin shell), the host-swap `RwLock` rule, the provider transport split, provider selection routed through `Host`'s pool APIs (not hardcoded around them), spec/plan alignment.                        |
-| Independent security pass         | the built-in `security-review` skill      | Security of the actual diff. **Receives ONLY the diff** — never the spec/plan/brief/PR-body summary (Non-Negotiable Rule 5). Weighs keyring/secret handling, `tool-bash`/`tool-web` sandboxing, and plugin ABI trust boundaries hardest. See the Independent Security Review template in `agent-prompts.md`, and the mandatory-output-contract override in "How dispatch works in this environment" above. |
+| Independent security pass         | `subagent_type: "general-purpose"`, blind-diff prompt      | Security of the actual diff. **Receives ONLY the diff** — never the spec/plan/brief/PR-body summary (Non-Negotiable Rule 5). Weighs keyring/secret handling, `tool-bash`/`tool-web` sandboxing, and plugin ABI trust boundaries hardest. See the Independent Security Review template in `agent-prompts.md`, and the mandatory-output-contract override in "How dispatch works in this environment" above. |
 
-Both `general-purpose` reviews the actual diff (commit range), not the summary. Treat their findings
+All three passes review the actual diff (commit range), not the summary. Treat their findings
 like any other review: Critical/Important must be fixed or explicitly dismissed before merge; all
 three must clear before merge (step 11).
 
@@ -1021,7 +1031,7 @@ Within each step you may calibrate effort to risk. You may NEVER eliminate a ste
 | Spec compliance review                                     | 1 reviewer dispatch reading actual commits                                                          | NEVER                                                  |
 | Quality review                                             | 1 `Agent` dispatch with the Code Quality Review template (or `/code-review`)                                                                      | NEVER                                                  |
 | Automated reviewer                                         | 1 `gh pr edit --add-reviewer …`                                                                     | Only if the repo has none configured                    |
-| Rust expert + architect + independent security review      | 1 parallel dispatch each (`general-purpose` ×2, blind-diff `security-review` skill)                 | NEVER                                                  |
+| Rust expert + architect + independent security review      | 1 parallel dispatch each (`general-purpose` ×3, the third blind-diff)                 | NEVER                                                  |
 | Review-response subagent                                   | 1 `general-purpose` `Agent` dispatch with PR# + ref                                                    | NEVER                                                  |
 | Branch + worktree cleanup                                  | `git branch -d` + `git worktree remove`                                                             | NEVER                                                  |
 | Record-as-shipped                                          | flip spec Status + tick plan boxes; `docs:` commit                                                  | NEVER                                                  |
