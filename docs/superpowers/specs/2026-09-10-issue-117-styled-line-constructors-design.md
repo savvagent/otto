@@ -1,7 +1,7 @@
 # Styled-text constructors in `otto-plugin` — design
 
 Date: 2026-09-10
-Status: DRAFT
+Status: IMPLEMENTED
 Related: `savvagent/otto#117`. Noted during review of `savvagent/otto#96` (shipped as PR #114).
 
 ## Problem
@@ -40,14 +40,18 @@ Shape A is concentrated in picker empty states — `command_palette/screen.rs` (
 
 Shape B is concentrated in label+value rows: `connect/screen.rs`'s `Search: ` prefix and its `No providers match <query>` line, `keybindings_view.rs`, the `themes`/`language`/`model`/`plugins_manager`/`mcp` footers, `plugin/tool_summaries.rs`, and `ui.rs`'s footer separator.
 
-### The pattern has already been reinvented six times
+### The pattern has already been reinvented eight times
 
-Six call sites do not hand-build the literal — they define a **private, file-local copy of the constructor this spec proposes**:
+Eight call sites do not hand-build the literal — they define a **private, file-local copy of the constructor this spec proposes**:
 
 - `tool_bash_summary/mod.rs:31`, `tool_fs_summary/mod.rs:34`, `tool_grep_summary/mod.rs:28`, `tool_task_summary/mod.rs:41`, `tool_web_summary/mod.rs:28` each define, character-for-character, `fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan`.
 - `home_footer/mod.rs:120-134` defines local `muted` and `accent` closures that are exactly `StyledSpan::muted` and `StyledSpan::colored(_, Accent)`.
 
+- `styled.rs`'s own `json_spans` helper `fn push(out, text, fg)` — the constructor reinvented inside the very module that should have exported it.
+
 Five identical copies of a two-line function in five sibling plugins is the strongest evidence available that the constructor belongs upstream in `otto-plugin`. This is not a hypothesis about what callers would want; it is what five callers already wrote.
+
+> **Found during implementation:** two more, bringing the total to eight. `self_update/mod.rs:139`'s `fn note_effect(text)` wraps `StyledLine::plain` inside an `Effect::PushNote`, and its doc comment states the motive outright — *"Centralised so each call site doesn't repeat the `StyledSpan` scaffolding."* `ui.rs`'s test module defines its own `fn span(text: &str)`. Both are folded into the new constructors; `note_effect` survives as a one-liner because the `Effect::PushNote` wrapper is still worth a name.
 
 ### Why this is worth changing
 
@@ -75,7 +79,7 @@ impl StyledLine {
 
 All six set `bg: None` and `modifiers: TextMods::default()`. `muted` is `colored(text, ThemeColor::Muted)`; each `StyledLine` constructor is a one-span line wrapping its `StyledSpan` counterpart; `StyledLine::plain`'s body becomes `Self { spans: vec![StyledSpan::plain(text)] }`, which is field-for-field what it builds today, keeping its signature and behavior unchanged.
 
-Then rewrite the 51 measured call sites and delete the six local reinventions.
+Then rewrite the 51 measured call sites and delete the local reinventions.
 
 ### Why `muted` earns a name of its own when `colored` already covers it
 

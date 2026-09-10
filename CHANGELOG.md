@@ -8,6 +8,18 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Added
+
+- `otto-plugin` gains constructors for the styled-text shape plugin screens build most often:
+  `StyledSpan::plain`, `StyledSpan::colored`, `StyledSpan::muted`, `StyledLine::colored` and
+  `StyledLine::muted`, alongside the existing `StyledLine::plain`. Each sets no background and no
+  text modifiers; anything richer still builds the struct literal, which is unchanged and remains
+  public. This is additive plugin-ABI surface — third-party screens get the same shorthand, and
+  plugins compiled against the previous version are unaffected. Every builtin screen and
+  tool-summary plugin now goes through these constructors, which also removes eight file-local
+  copies of the same two-line function that had accumulated across the tree. Nothing renders
+  differently. (#117)
+
 ## 0.27.1 - 2026-09-10
 
 ### Fixed
