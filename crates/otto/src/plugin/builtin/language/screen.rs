@@ -134,12 +134,7 @@ impl LanguagePickerScreen {
                         ..Default::default()
                     },
                 },
-                StyledSpan {
-                    text: format!("{native}{active_marker}"),
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                },
+                StyledSpan::muted(format!("{native}{active_marker}")),
             ],
         }
     }

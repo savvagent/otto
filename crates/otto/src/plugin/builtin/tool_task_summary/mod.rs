@@ -7,8 +7,7 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use serde::Deserialize;
 
@@ -35,15 +34,6 @@ impl ToolTaskSummaryPlugin {
 impl Default for ToolTaskSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -101,10 +91,10 @@ impl Plugin for ToolTaskSummaryPlugin {
             truncate(&input.description, DESCRIPTION_MAX_CHARS)
         };
         Some(vec![
-            span("task ", ThemeColor::Fg),
-            span(agent, ThemeColor::Accent),
-            span(" · ", ThemeColor::Muted),
-            span(format!("\"{desc}\""), ThemeColor::Success),
+            StyledSpan::colored("task ", ThemeColor::Fg),
+            StyledSpan::colored(agent, ThemeColor::Accent),
+            StyledSpan::colored(" · ", ThemeColor::Muted),
+            StyledSpan::colored(format!("\"{desc}\""), ThemeColor::Success),
         ])
     }
 
@@ -125,9 +115,9 @@ impl Plugin for ToolTaskSummaryPlugin {
         let line_count = trimmed.lines().count();
         let first_line = trimmed.lines().next().unwrap_or("");
         let snippet = truncate(first_line, RESULT_MAX_CHARS);
-        let mut spans = vec![span(snippet, ThemeColor::Muted)];
+        let mut spans = vec![StyledSpan::colored(snippet, ThemeColor::Muted)];
         if line_count > 1 {
-            spans.push(span(
+            spans.push(StyledSpan::colored(
                 format!(
                     " (+{} more line{})",
                     line_count - 1,
@@ -276,7 +266,7 @@ mod tests {
         assert_eq!(agent_span.fg, Some(ThemeColor::Accent));
     }
 
-    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     #[test]
     fn summarize_tool_call_span_colors_are_pinned() {

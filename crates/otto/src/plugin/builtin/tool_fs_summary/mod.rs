@@ -7,8 +7,8 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec, styled::pretty_bytes,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
+    styled::pretty_bytes,
 };
 use tool_fs::{
     GlobInput, GlobOutput, ListDirInput, ListDirOutput, ReadFileInput, ReadFileOutput,
@@ -28,15 +28,6 @@ impl ToolFsSummaryPlugin {
 impl Default for ToolFsSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -73,11 +64,11 @@ impl Plugin for ToolFsSummaryPlugin {
             "read_file" => {
                 let input: ReadFileInput = serde_json::from_value(args.clone()).ok()?;
                 let mut out = vec![
-                    span("read_file ", ThemeColor::Fg),
-                    span(input.path, ThemeColor::Success),
+                    StyledSpan::colored("read_file ", ThemeColor::Fg),
+                    StyledSpan::colored(input.path, ThemeColor::Success),
                 ];
                 if let Some(max) = input.max_bytes {
-                    out.push(span(
+                    out.push(StyledSpan::colored(
                         format!(" (max {})", pretty_bytes(max)),
                         ThemeColor::Muted,
                     ));
@@ -88,35 +79,38 @@ impl Plugin for ToolFsSummaryPlugin {
                 let input: WriteFileInput = serde_json::from_value(args.clone()).ok()?;
                 let line_count = input.content.lines().count();
                 let mut out = vec![
-                    span("write_file ", ThemeColor::Fg),
-                    span(input.path, ThemeColor::Success),
-                    span(format!(" ({line_count} lines)"), ThemeColor::Muted),
+                    StyledSpan::colored("write_file ", ThemeColor::Fg),
+                    StyledSpan::colored(input.path, ThemeColor::Success),
+                    StyledSpan::colored(format!(" ({line_count} lines)"), ThemeColor::Muted),
                 ];
                 if input.create_dirs {
-                    out.push(span(" --create-dirs", ThemeColor::Muted));
+                    out.push(StyledSpan::colored(" --create-dirs", ThemeColor::Muted));
                 }
                 Some(out)
             }
             "list_dir" => {
                 let input: ListDirInput = serde_json::from_value(args.clone()).ok()?;
                 let mut out = vec![
-                    span("list_dir ", ThemeColor::Fg),
-                    span(input.path, ThemeColor::Success),
+                    StyledSpan::colored("list_dir ", ThemeColor::Fg),
+                    StyledSpan::colored(input.path, ThemeColor::Success),
                 ];
                 if input.recursive {
-                    out.push(span(" --recursive", ThemeColor::Muted));
+                    out.push(StyledSpan::colored(" --recursive", ThemeColor::Muted));
                 }
                 Some(out)
             }
             "glob" => {
                 let input: GlobInput = serde_json::from_value(args.clone()).ok()?;
                 let mut out = vec![
-                    span("glob ", ThemeColor::Fg),
-                    span(input.pattern, ThemeColor::Success),
+                    StyledSpan::colored("glob ", ThemeColor::Fg),
+                    StyledSpan::colored(input.pattern, ThemeColor::Success),
                 ];
                 if let Some(root) = input.root {
                     if root != "." {
-                        out.push(span(format!(" in {root}"), ThemeColor::Muted));
+                        out.push(StyledSpan::colored(
+                            format!(" in {root}"),
+                            ThemeColor::Muted,
+                        ));
                     }
                 }
                 Some(out)
@@ -131,36 +125,36 @@ impl Plugin for ToolFsSummaryPlugin {
                 let out: ReadFileOutput = serde_json::from_str(result_text).ok()?;
                 let line_count = out.content.lines().count();
                 Some(vec![
-                    span(pretty_bytes(out.bytes), ThemeColor::Success),
-                    span(format!(" · {line_count} lines"), ThemeColor::Muted),
+                    StyledSpan::colored(pretty_bytes(out.bytes), ThemeColor::Success),
+                    StyledSpan::colored(format!(" · {line_count} lines"), ThemeColor::Muted),
                 ])
             }
             "write_file" => {
                 let out: WriteFileOutput = serde_json::from_str(result_text).ok()?;
                 Some(vec![
-                    span("wrote ", ThemeColor::Fg),
-                    span(pretty_bytes(out.bytes_written), ThemeColor::Success),
+                    StyledSpan::colored("wrote ", ThemeColor::Fg),
+                    StyledSpan::colored(pretty_bytes(out.bytes_written), ThemeColor::Success),
                 ])
             }
             "list_dir" => {
                 let out: ListDirOutput = serde_json::from_str(result_text).ok()?;
                 let mut spans = vec![
-                    span(out.entries.len().to_string(), ThemeColor::Success),
-                    span(" entries", ThemeColor::Fg),
+                    StyledSpan::colored(out.entries.len().to_string(), ThemeColor::Success),
+                    StyledSpan::colored(" entries", ThemeColor::Fg),
                 ];
                 if out.truncated {
-                    spans.push(span(" (truncated)", ThemeColor::Muted));
+                    spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
                 }
                 Some(spans)
             }
             "glob" => {
                 let out: GlobOutput = serde_json::from_str(result_text).ok()?;
                 let mut spans = vec![
-                    span(out.matches.len().to_string(), ThemeColor::Success),
-                    span(" matches", ThemeColor::Fg),
+                    StyledSpan::colored(out.matches.len().to_string(), ThemeColor::Success),
+                    StyledSpan::colored(" matches", ThemeColor::Fg),
                 ];
                 if out.truncated {
-                    spans.push(span(" (truncated)", ThemeColor::Muted));
+                    spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
                 }
                 Some(spans)
             }
@@ -328,7 +322,7 @@ mod tests {
         assert_eq!(path_span.fg, Some(ThemeColor::Success));
     }
 
-    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     fn pairs(spans: &[StyledSpan]) -> Vec<(&str, Option<ThemeColor>)> {
         spans.iter().map(|s| (s.text.as_str(), s.fg)).collect()

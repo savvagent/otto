@@ -212,12 +212,7 @@ impl Screen for PaletteScreen {
                             ..Default::default()
                         },
                     },
-                    StyledSpan {
-                        text: cmd.description.clone(),
-                        fg: Some(ThemeColor::Muted),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
+                    StyledSpan::muted(cmd.description.clone()),
                 ],
             });
         }

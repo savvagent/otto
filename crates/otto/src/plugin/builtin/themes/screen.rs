@@ -168,12 +168,7 @@ impl ThemePickerScreen {
                         ..Default::default()
                     },
                 },
-                StyledSpan {
-                    text: format!("{}{active_marker}", theme.display_name()),
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                },
+                StyledSpan::muted(format!("{}{active_marker}", theme.display_name())),
             ],
         }
     }

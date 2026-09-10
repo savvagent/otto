@@ -118,12 +118,7 @@ fn push_section(out: &mut Vec<StyledLine>, title: &str, rows: Vec<KeybindingRow>
                         ..Default::default()
                     },
                 },
-                StyledSpan {
-                    text: r.description,
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                },
+                StyledSpan::muted(r.description),
             ],
         });
     }

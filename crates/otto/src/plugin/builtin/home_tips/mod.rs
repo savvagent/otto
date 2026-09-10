@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, Region, SlotSpec, StyledLine, ThemeColor,
+    PluginKind, Region, SlotSpec, StyledLine,
 };
 
 /// TUI home-screen tips plugin.
@@ -76,7 +76,10 @@ impl Plugin for HomeTipsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `ThemeColor` is only referenced by the colour pins below, so it is imported
+    // here rather than at module scope where it would read as unused.
     use otto_plugin::ProviderId;
+    use otto_plugin::ThemeColor;
 
     #[test]
     fn renders_connecting_before_first_connect() {

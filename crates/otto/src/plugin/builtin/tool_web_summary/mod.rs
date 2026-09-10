@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use tool_web::{FetchInput, FetchOutput, SearchInput, SearchOutput};
 
@@ -22,15 +21,6 @@ impl ToolWebSummaryPlugin {
 impl Default for ToolWebSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -61,16 +51,16 @@ impl Plugin for ToolWebSummaryPlugin {
             "web_fetch" => {
                 let input: FetchInput = serde_json::from_value(args.clone()).ok()?;
                 Some(vec![
-                    span("fetch ", ThemeColor::Fg),
-                    span(input.url, ThemeColor::Success),
+                    StyledSpan::colored("fetch ", ThemeColor::Fg),
+                    StyledSpan::colored(input.url, ThemeColor::Success),
                 ])
             }
             "web_search" => {
                 let input: SearchInput = serde_json::from_value(args.clone()).ok()?;
                 Some(vec![
-                    span("search '", ThemeColor::Fg),
-                    span(input.query, ThemeColor::Success),
-                    span("'", ThemeColor::Fg),
+                    StyledSpan::colored("search '", ThemeColor::Fg),
+                    StyledSpan::colored(input.query, ThemeColor::Success),
+                    StyledSpan::colored("'", ThemeColor::Fg),
                 ])
             }
             _ => None,
@@ -82,22 +72,22 @@ impl Plugin for ToolWebSummaryPlugin {
             "web_fetch" => {
                 let out: FetchOutput = serde_json::from_str(result_text).ok()?;
                 let mut spans = vec![
-                    span(out.status.to_string(), ThemeColor::Success),
-                    span(" · ", ThemeColor::Muted),
-                    span(out.content.len().to_string(), ThemeColor::Success),
-                    span(" chars", ThemeColor::Fg),
+                    StyledSpan::colored(out.status.to_string(), ThemeColor::Success),
+                    StyledSpan::colored(" · ", ThemeColor::Muted),
+                    StyledSpan::colored(out.content.len().to_string(), ThemeColor::Success),
+                    StyledSpan::colored(" chars", ThemeColor::Fg),
                 ];
                 if out.truncated {
-                    spans.push(span(" (truncated)", ThemeColor::Muted));
+                    spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
                 }
                 Some(spans)
             }
             "web_search" => {
                 let out: SearchOutput = serde_json::from_str(result_text).ok()?;
                 Some(vec![
-                    span(out.results.len().to_string(), ThemeColor::Success),
-                    span(" results via ", ThemeColor::Fg),
-                    span(out.backend, ThemeColor::Muted),
+                    StyledSpan::colored(out.results.len().to_string(), ThemeColor::Success),
+                    StyledSpan::colored(" results via ", ThemeColor::Fg),
+                    StyledSpan::colored(out.backend, ThemeColor::Muted),
                 ])
             }
             _ => None,
@@ -205,7 +195,7 @@ mod tests {
         );
     }
 
-    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     #[test]
     fn fetch_call_span_colors_are_pinned() {

@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, Region, SlotSpec, StyledLine, StyledSpan, TextMods, ThemeColor,
+    PluginKind, Region, SlotSpec, StyledLine, StyledSpan, ThemeColor,
 };
 
 /// TUI home-screen footer plugin.
@@ -114,29 +114,21 @@ impl Plugin for HomeFooterPlugin {
                 // - $0.00 is a literal placeholder until real cost tracking
                 //   ships.
                 // TODO(v0.10): wire real cost via TurnOutcome.usage + per-model pricing table
-                let muted = |text: String| StyledSpan {
-                    text,
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                };
-                let accent = |text: String| StyledSpan {
-                    text,
-                    fg: Some(ThemeColor::Accent),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                };
-
                 let mut spans: Vec<StyledSpan> = Vec::with_capacity(7);
-                spans.push(muted(self.working_dir.clone()));
+                spans.push(StyledSpan::muted(self.working_dir.clone()));
                 if let Some(ctx_text) = format_context_segment(self.context_tokens) {
-                    spans.push(muted(" · ".into()));
-                    spans.push(muted(ctx_text));
+                    spans.push(StyledSpan::muted(" · "));
+                    spans.push(StyledSpan::muted(ctx_text));
                 }
-                spans.push(muted(" · ".into()));
-                spans.push(muted(rust_i18n::t!("footer.cost-zero").to_string()));
-                spans.push(muted(" · ".into()));
-                spans.push(accent(format!("v{}", env!("CARGO_PKG_VERSION"))));
+                spans.push(StyledSpan::muted(" · "));
+                spans.push(StyledSpan::muted(
+                    rust_i18n::t!("footer.cost-zero").to_string(),
+                ));
+                spans.push(StyledSpan::muted(" · "));
+                spans.push(StyledSpan::colored(
+                    format!("v{}", env!("CARGO_PKG_VERSION")),
+                    ThemeColor::Accent,
+                ));
 
                 vec![StyledLine { spans }]
             }

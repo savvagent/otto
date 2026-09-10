@@ -4,8 +4,7 @@ use std::collections::HashSet;
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use tool_grep::{SearchInput, SearchOutput};
 
@@ -22,15 +21,6 @@ impl ToolGrepSummaryPlugin {
 impl Default for ToolGrepSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -58,18 +48,21 @@ impl Plugin for ToolGrepSummaryPlugin {
         }
         let input: SearchInput = serde_json::from_value(args.clone()).ok()?;
         let mut spans = vec![
-            span("grep '", ThemeColor::Fg),
-            span(input.pattern, ThemeColor::Success),
-            span("'", ThemeColor::Fg),
+            StyledSpan::colored("grep '", ThemeColor::Fg),
+            StyledSpan::colored(input.pattern, ThemeColor::Success),
+            StyledSpan::colored("'", ThemeColor::Fg),
         ];
         if let Some(path) = input.path {
-            spans.push(span(format!(" in {path}"), ThemeColor::Muted));
+            spans.push(StyledSpan::colored(
+                format!(" in {path}"),
+                ThemeColor::Muted,
+            ));
         }
         if input.case_insensitive {
-            spans.push(span(" -i", ThemeColor::Muted));
+            spans.push(StyledSpan::colored(" -i", ThemeColor::Muted));
         }
         if input.multiline {
-            spans.push(span(" --multiline", ThemeColor::Muted));
+            spans.push(StyledSpan::colored(" --multiline", ThemeColor::Muted));
         }
         Some(spans)
     }
@@ -81,13 +74,13 @@ impl Plugin for ToolGrepSummaryPlugin {
         let out: SearchOutput = serde_json::from_str(result_text).ok()?;
         let unique_files: HashSet<&str> = out.matches.iter().map(|m| m.file.as_str()).collect();
         let mut spans = vec![
-            span(out.matches.len().to_string(), ThemeColor::Success),
-            span(" matches in ", ThemeColor::Fg),
-            span(unique_files.len().to_string(), ThemeColor::Success),
-            span(" files", ThemeColor::Fg),
+            StyledSpan::colored(out.matches.len().to_string(), ThemeColor::Success),
+            StyledSpan::colored(" matches in ", ThemeColor::Fg),
+            StyledSpan::colored(unique_files.len().to_string(), ThemeColor::Success),
+            StyledSpan::colored(" files", ThemeColor::Fg),
         ];
         if out.truncated {
-            spans.push(span(" (truncated)", ThemeColor::Muted));
+            spans.push(StyledSpan::colored(" (truncated)", ThemeColor::Muted));
         }
         Some(spans)
     }
@@ -187,7 +180,7 @@ mod tests {
         );
     }
 
-    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     #[test]
     fn search_call_span_colors_are_pinned() {

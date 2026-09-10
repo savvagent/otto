@@ -203,12 +203,7 @@ async fn compute_tool_entries(
                     Some(spans) => spans,
                     None => match serde_json::from_str::<serde_json::Value>(text) {
                         Ok(v) => otto_plugin::styled::json_spans(&v),
-                        Err(_) => vec![otto_plugin::StyledSpan {
-                            text: text.clone(),
-                            fg: Some(otto_plugin::ThemeColor::Muted),
-                            bg: None,
-                            modifiers: otto_plugin::TextMods::default(),
-                        }],
+                        Err(_) => vec![otto_plugin::StyledSpan::muted(text.clone())],
                     },
                 };
                 Some(spans)
@@ -350,12 +345,7 @@ pub fn render(
     frame.render_widget(&textarea, chunks[4]);
 
     // Footer row — see `compose_footer_line` for the join semantics.
-    let separator = otto_plugin::StyledSpan {
-        text: " · ".into(),
-        fg: Some(otto_plugin::ThemeColor::Muted),
-        bg: None,
-        modifiers: otto_plugin::TextMods::default(),
-    };
+    let separator = otto_plugin::StyledSpan::muted(" · ");
     let footer_center = footer_center_lines(
         &frame_data.footer_center,
         frame_data.footer_center_turn_line,
@@ -1561,25 +1551,13 @@ mod tests {
     use crate::plugin::builtin::themes::catalog::Theme;
     use async_trait::async_trait;
     use otto_plugin::{
-        Effect, KeyEventPortable, PluginError, Region, Screen, ScreenLayout, StyledLine,
-        StyledSpan, TextMods, ThemeColor,
+        Effect, KeyEventPortable, PluginError, Region, Screen, ScreenLayout, StyledLine, ThemeColor,
     };
     use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
 
-    fn span(text: &str) -> StyledSpan {
-        StyledSpan {
-            text: text.into(),
-            fg: None,
-            bg: None,
-            modifiers: TextMods::default(),
-        }
-    }
-
     fn one_span_line(text: &str) -> StyledLine {
-        StyledLine {
-            spans: vec![span(text)],
-        }
+        StyledLine::plain(text)
     }
 
     fn rline(text: &str) -> Line<'static> {

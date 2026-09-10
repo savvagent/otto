@@ -6,7 +6,6 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, ProviderId, Region, Screen, StyledLine,
-    ThemeColor,
 };
 
 /// First-launch migration picker screen.
@@ -118,7 +117,10 @@ impl Screen for MigrationPickerScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `ThemeColor` is only referenced by the colour pins below, so it is imported
+    // here rather than at module scope where it would read as unused.
     use otto_plugin::KeyMods;
+    use otto_plugin::ThemeColor;
 
     fn pid(s: &str) -> ProviderId {
         ProviderId::new(s).unwrap()

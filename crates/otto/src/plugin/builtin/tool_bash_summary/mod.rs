@@ -2,8 +2,7 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use tool_bash::{RunInput, RunOutput};
 
@@ -25,15 +24,6 @@ impl ToolBashSummaryPlugin {
 impl Default for ToolBashSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -74,8 +64,8 @@ impl Plugin for ToolBashSummaryPlugin {
         }
         let input: RunInput = serde_json::from_value(args.clone()).ok()?;
         Some(vec![
-            span("bash $ ", ThemeColor::Fg),
-            span(truncate_command(&input.command), ThemeColor::Success),
+            StyledSpan::colored("bash $ ", ThemeColor::Fg),
+            StyledSpan::colored(truncate_command(&input.command), ThemeColor::Success),
         ])
     }
 
@@ -85,18 +75,24 @@ impl Plugin for ToolBashSummaryPlugin {
         }
         let out: RunOutput = serde_json::from_str(result_text).ok()?;
         let mut spans = vec![
-            span("exit ", ThemeColor::Fg),
-            span(out.exit_code.to_string(), ThemeColor::Success),
-            span(format!(" in {}ms", out.elapsed_ms), ThemeColor::Muted),
+            StyledSpan::colored("exit ", ThemeColor::Fg),
+            StyledSpan::colored(out.exit_code.to_string(), ThemeColor::Success),
+            StyledSpan::colored(format!(" in {}ms", out.elapsed_ms), ThemeColor::Muted),
         ];
         if out.timed_out {
-            spans.push(span(" (timed out)", ThemeColor::Warning));
+            spans.push(StyledSpan::colored(" (timed out)", ThemeColor::Warning));
         }
         if out.stdout_truncated {
-            spans.push(span(" (stdout truncated)", ThemeColor::Muted));
+            spans.push(StyledSpan::colored(
+                " (stdout truncated)",
+                ThemeColor::Muted,
+            ));
         }
         if out.stderr_truncated {
-            spans.push(span(" (stderr truncated)", ThemeColor::Muted));
+            spans.push(StyledSpan::colored(
+                " (stderr truncated)",
+                ThemeColor::Muted,
+            ));
         }
         Some(spans)
     }
@@ -216,7 +212,7 @@ mod tests {
         assert_eq!(join(&spans), "bash $ ls -la…");
     }
 
-    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     #[test]
     fn run_call_span_colors_are_pinned() {

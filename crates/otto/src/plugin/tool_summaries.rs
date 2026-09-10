@@ -92,7 +92,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use otto_plugin::{
-        Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
+        Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor,
         ToolSummarySpec,
     };
 
@@ -125,12 +125,10 @@ mod tests {
             _name: &str,
             _args: &serde_json::Value,
         ) -> Option<Vec<StyledSpan>> {
-            Some(vec![StyledSpan {
-                text: self.call_text.clone(),
-                fg: Some(ThemeColor::Fg),
-                bg: None,
-                modifiers: TextMods::default(),
-            }])
+            Some(vec![StyledSpan::colored(
+                self.call_text.clone(),
+                ThemeColor::Fg,
+            )])
         }
 
         fn summarize_tool_result(
@@ -138,12 +136,7 @@ mod tests {
             _name: &str,
             _result_text: &str,
         ) -> Option<Vec<StyledSpan>> {
-            Some(vec![StyledSpan {
-                text: self.result_text.clone(),
-                fg: Some(ThemeColor::Muted),
-                bg: None,
-                modifiers: TextMods::default(),
-            }])
+            Some(vec![StyledSpan::muted(self.result_text.clone())])
         }
     }
 

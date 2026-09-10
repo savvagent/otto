@@ -113,18 +113,8 @@ impl Screen for PluginsManagerScreen {
                         bg: None,
                         modifiers: mods_active,
                     },
-                    StyledSpan {
-                        text: format!("  {}", row.contribution_summary),
-                        fg: Some(ThemeColor::Muted),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
-                    StyledSpan {
-                        text: format!("  {origin_label}"),
-                        fg: Some(ThemeColor::Muted),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
+                    StyledSpan::muted(format!("  {}", row.contribution_summary)),
+                    StyledSpan::muted(format!("  {origin_label}")),
                 ],
             });
         }

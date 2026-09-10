@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, ProviderId, Region, Screen, StyledLine,
-    StyledSpan, TextMods, ThemeColor,
+    StyledSpan, ThemeColor,
 };
 
 use crate::providers::{PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD, provider_label_matches_query};
@@ -146,26 +146,19 @@ impl Screen for ConnectPickerScreen {
         if self.show_query() {
             lines.push(StyledLine {
                 spans: vec![
-                    StyledSpan {
-                        text: "Search: ".into(),
-                        fg: Some(ThemeColor::Muted),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
-                    StyledSpan {
-                        text: if self.query.is_empty() {
+                    StyledSpan::muted("Search: "),
+                    StyledSpan::colored(
+                        if self.query.is_empty() {
                             "type to filter".into()
                         } else {
                             self.query.clone()
                         },
-                        fg: Some(if self.query.is_empty() {
+                        if self.query.is_empty() {
                             ThemeColor::Muted
                         } else {
                             ThemeColor::Fg
-                        }),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
+                        },
+                    ),
                 ],
             });
         }
@@ -174,18 +167,8 @@ impl Screen for ConnectPickerScreen {
             lines.push(StyledLine::plain(""));
             lines.push(StyledLine {
                 spans: vec![
-                    StyledSpan {
-                        text: "No providers match".into(),
-                        fg: Some(ThemeColor::Muted),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
-                    StyledSpan {
-                        text: format!(" {}", self.query),
-                        fg: Some(ThemeColor::Accent),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
+                    StyledSpan::muted("No providers match"),
+                    StyledSpan::colored(format!(" {}", self.query), ThemeColor::Accent),
                 ],
             });
             return lines;
