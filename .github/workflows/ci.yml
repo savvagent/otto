@@ -19,15 +19,15 @@ jobs:
   # Lint runs once on Linux: rustfmt and clippy don't differ by host so there's
   # no point running them three times.
   lint:
-    name: fmt + clippy + skill stubs
+    name: fmt + clippy + skill ports
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # Runs before the toolchain install and rust-cache on purpose: the check
-      # needs nothing but the checkout, so a stub-parity failure surfaces in
+      # needs nothing but the checkout, so a port-parity failure surfaces in
       # seconds instead of after a full clippy build.
-      - name: Claude Code skill-stub parity
-        run: bash .github/scripts/check-claude-skill-stubs.sh
+      - name: Claude Code skill-port parity
+        run: bash .github/scripts/check-claude-skill-ports.sh
       - name: Install rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
