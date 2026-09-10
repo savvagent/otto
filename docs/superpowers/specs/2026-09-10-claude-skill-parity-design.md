@@ -48,11 +48,16 @@ rather than mechanism:
 2. **Porting means adapting, and the adaptation is small and bounded.** "Port" here is not a
    verbatim copy — a copy of `otto-development` would be as unusable as the symlink, for the same
    reason. It means the content itself rewritten so a Claude Code session reads instructions naming
-   Claude Code's own tools. Measured against the canonical files, that adaptation is **61 lines out
-   of ~1,465**: 30 in `SKILL.md`, 31 in `agent-prompts.md`, and **zero** in
-   `creating-github-issues/SKILL.md`, which is already fully host-neutral (plain `gh issue` /
-   `gh label` invocations). So ~96% of the ported text is identical to the canonical text, which is
-   what makes the drift problem tractable rather than fatal.
+   Claude Code's own tools. Measured from the committed records, that adaptation replaces **132 of
+   the 1,597 canonical lines — about 8%** — with 198 ported lines, across 25 hunks: 75 → 113 in
+   `otto-development/SKILL.md` (14 hunks), 57 → 80 in `otto-development/agent-prompts.md` (10
+   hunks), and 0 → 5 in `creating-github-issues/SKILL.md` (1 hunk), which is already fully
+   host-neutral (plain `gh issue` / `gh label` invocations) and diverges only by the "ported from"
+   note. So ~92% of the canonical text is carried into the port untouched, which is what makes the
+   drift problem tractable rather than fatal. It is 8% rather than the ~4% a pure mechanical
+   substitution would cost because two sections are rewritten rather than substituted (see below) —
+   still small enough for the divergence to be recorded exactly rather than managed by convention,
+   which is the argument this whole design rests on.
 
 ## Approach
 
@@ -128,9 +133,12 @@ the build. Concretely:
   rather than as an opaque diff mismatch, because that is the failure that silently changes which
   requests each host triggers on.
 
-The expected-diff files are generated, reviewable artifacts: they are exactly the ~61-line
-adaptation, so a reviewer reads the port's entire divergence from the canonical in one place, and
-any *unintended* divergence shows up as a diff-of-diffs in code review.
+The expected-diff files are generated, reviewable artifacts: they are exactly the adaptation and
+nothing else — 25 hunks over ~130 canonical lines — so a reviewer reads the port's entire divergence
+from the canonical in one place, and any *unintended* divergence shows up as a diff-of-diffs in code
+review. They are produced only by the check's own `--update` mode, which writes them through the
+same function the verifier compares against, so generation and verification cannot disagree about
+the diff's form.
 
 `creating-github-issues` needs no adaptation, so its expected diff contains only the "ported from"
 note. That makes the check strictest exactly where adaptation is absent: any change to that
@@ -155,10 +163,13 @@ not produce a CRLF shebang.
 - `.claude/skills/otto-development/SKILL.md` and `agent-prompts.md` — ported, adapted.
 - `.claude/skills/creating-github-issues/SKILL.md` — ported, no adaptation needed.
 - `.github/skills/<name>/claude-port/*.diff` — the committed expected divergences.
-- `.github/scripts/check-claude-skill-ports.sh` — the regenerate-and-compare check, plus the
-  `name`/`description` assertion.
-- `.github/workflows/ci.yml` — one step in the existing `lint` job.
-- `.gitattributes` (new) — `*.sh text eol=lf`.
+- `.github/scripts/check-claude-skill-ports.sh` — the regenerate-and-compare check, its `--update`
+  record-generation mode, and the `name`/`description` assertion.
+- `.github/workflows/ci.yml` — one step in the existing `lint` job, plus a workflow-level
+  `permissions: contents: read` (no job in the file writes to the repository, and the check runs on
+  `pull_request` where a fork's content reaches it).
+- `.gitattributes` (new) — `*.sh text eol=lf` for the shebang, plus `*.diff` and both skill trees
+  pinned to LF so the committed records still verify on a `core.autocrlf=true` clone.
 - `CLAUDE.md`'s "Claude Code skills" section — the two-directory layout, the port mechanism, the
   edit-canonical-then-re-port workflow, the check, and the revised precedence rule.
 
@@ -223,8 +234,10 @@ port's divergence from the canonical recorded exactly and enforced by CI.
   *PR-reviewer* references at `SKILL.md:671-678` and `:1024` are **not** altered.
 - `name`/`description` in each port match the canonical byte-for-byte.
 - `.github/scripts/check-claude-skill-ports.sh` exits 0 on the committed tree and exits non-zero for
-  each failure mode: canonical edited without re-porting, port edited directly, missing port,
-  `name`/`description` drift.
+  each failure mode: canonical edited without mirroring, port edited directly, missing port, missing
+  or orphaned record, orphaned port, empty record, verbatim-copy port, unreadable file, symlinked or
+  ill-named input, and `name`/`description` drift. Its `--update` mode is the only record generator,
+  writing through the same function the verifier compares against, and is never the default.
 - CI's `lint` job runs the check.
 - `CLAUDE.md` documents the layout, the port mechanism, the edit-canonical-then-re-port workflow,
   and the revised precedence rule.
@@ -245,9 +258,38 @@ port's divergence from the canonical recorded exactly and enforced by CI.
 - **Missing or empty frontmatter key on either side** → fails loudly rather than comparing two empty
   values, which would make the assertion vacuous. Frontmatter is read only from the leading `---`
   fenced block, so an unindented `description:` in the body cannot stand in for a deleted key.
-- **CRLF checkout** → trailing `\r` is stripped when extracting frontmatter values, so a
-  `core.autocrlf=true` clone does not produce a spurious mismatch. The `.gitattributes` LF pin keeps
-  the script's own shebang intact.
+- **CRLF checkout** → trailing whitespace, `\r` included, is stripped when extracting frontmatter
+  values, so a `core.autocrlf=true` clone does not produce a spurious mismatch. The `.gitattributes`
+  LF pins keep the script's shebang, the records, and both skill trees byte-stable, without which a
+  Windows contributor running the check locally could never get a green result.
+- **A canonical `*.md` nested in a subdirectory** (e.g. `reference/deep.md`) → iterated like any
+  other: it needs its own port and its own record. A non-recursive glob would let a nested canonical
+  file drift unported behind a green build, which is the false-green class this check exists to
+  prevent.
+- **A port `*.md` with no canonical counterpart *inside a ported skill*** → fails. It is a rule
+  Claude Code would execute that the source of truth does not contain, which is the precedence rule
+  read backwards. (This is distinct from a whole `.claude/skills/` entry with no canonical
+  directory, below, which is ignored by design.)
+- **A record that is empty, or a port byte-identical to its canonical** → fails. Zero divergence
+  asserts a verbatim copy, the one arrangement this design exists to avoid, and an empty record
+  would also compare equal to a diff that could not be computed.
+- **An unreadable canonical or port** → fails naming the file. `diff` signals this with exit 2
+  ("trouble"), which must not be collapsed with exit 1 ("differ"): collapsing them turns an
+  unreadable file into an empty diff and a green build over something nobody read.
+- **A canonical, port or record committed as a symlink** → rejected rather than followed. CI runs
+  the check on `pull_request`, so a fork's tree reaches it, and the diff-of-diffs would print the
+  target — `.git/config`, where `actions/checkout` leaves the job token — into the public job log.
+- **A path segment outside `[A-Za-z0-9._-]`** → rejected before it reaches any message, so a
+  filename cannot inject a shell command into remediation text or a workflow command into an
+  annotation. `fail` additionally escapes `%`, CR and LF.
+- **A non-C locale** → prevented: `LC_ALL=C` is exported, because GNU diffutils translates
+  `\ No newline at end of file`, and a record regenerated under another locale would commit a
+  translated marker and fail everywhere else.
+- **A defeated frontmatter assertion** → each way it can be defeated is a named failure: a YAML
+  block scalar (`description: >`), an empty quoted value, a duplicate key, an unterminated `---`
+  block, a missing leading `---` (where a UTF-8 BOM lands), and a `key:` prefix that is really a
+  different key (`name:s: v` declares `name:s`). This matters because "regenerate the record" is
+  the endorsed fix for a red build, and after a regeneration this assertion is all that is left.
 - **A canonical skill directory containing a companion file the port omits** → fails: a companion
   the port lacks is a companion Claude Code can never read, and `agent-prompts.md` holds the
   dispatch templates `otto-development` requires be pasted verbatim.
@@ -257,13 +299,16 @@ port's divergence from the canonical recorded exactly and enforced by CI.
 ## Risks & Open Questions
 
 - **Two copies of a 103KB document is a real maintenance cost**, and the honest trade this design
-  makes. It is mitigated, not eliminated: the divergence is ~4% and recorded exactly, CI refuses to
+  makes. It is mitigated, not eliminated: the divergence is ~8% and recorded exactly, CI refuses to
   let the copies drift, and the failure mode is a loud red build rather than a silently stale
   workflow. The alternative that removes the cost entirely — making the canonical bodies
   host-neutral so both hosts read one text — is the natural follow-up and is out of scope here.
-- **A canonical edit imposes work on the editor**, who must re-port and refresh the expected diff.
-  That is the cost of the port being self-sufficient. The check's failure message states the exact
-  two commands needed.
+- **A canonical edit imposes work on the editor**, who must mirror the edit into the port and
+  refresh the expected diff. That is the cost of the port being self-sufficient, and it is usually
+  small: an edit landing outside the adapted regions is copied into the port verbatim, and only an
+  edit landing *on* an adapted line needs the adaptation re-applied. The check's failure message
+  says both, then names the one regeneration command
+  (`bash .github/scripts/check-claude-skill-ports.sh --update`).
 - **The adaptation is judgement, not mechanism.** Substituting `agent_type` values is mechanical;
   rewriting "How dispatch works in this environment" is not. A future canonical rewrite of that
   section needs a human to re-adapt it, and the check can only tell them that it changed, not
