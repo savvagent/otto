@@ -68,24 +68,20 @@ impl PaletteScreen {
             .collect()
     }
 
-    /// Derive the prompt preview text from the current palette state.
+    /// The text the prompt should show while this screen owns input: the
+    /// leading `/` plus exactly what the user has typed.
     ///
-    /// This returns the text that should appear in the prompt to mirror the
-    /// currently highlighted command or the typed filter as a fallback.
+    /// This deliberately does *not* resolve the highlighted row into the
+    /// prompt. #92 did, and #96 reversed it: the prompt is the one surface a
+    /// terminal user expects to echo their keystrokes, so showing `/connect`
+    /// while they typed `/co` made backspace look like it replaced the word.
+    /// The `\u{25b6}` marker in the list is what communicates the pending
+    /// selection; the resolved name reaches the prompt only on `Enter`.
     ///
-    /// Rules:
-    /// - If the filtered list has a highlighted command: `/<command name>`
-    /// - Else if the user typed a filter: `/<filter>` (fallback when no match)
-    /// - Else: `/` (empty palette or empty filter)
+    /// The empty-filter case (`/`) and the no-match case (`/<filter>`) both
+    /// fall out of this rather than needing their own branches.
     pub fn prompt_preview(&self) -> String {
-        let filtered = self.filtered();
-        if let Some((_, cmd)) = filtered.get(self.cursor) {
-            format!("/{}", cmd.name)
-        } else if !self.filter.is_empty() {
-            format!("/{}", self.filter)
-        } else {
-            "/".to_string()
-        }
+        format!("/{}", self.filter)
     }
 }
 
@@ -223,24 +219,23 @@ impl Screen for PaletteScreen {
                     },
                 ])
             }
+            // Navigation moves the highlight, which is not an edit to the
+            // user's text — so it emits nothing, matching `connect`'s picker.
+            // The prompt keeps whatever was typed. Safe for rendering: the
+            // main loop redraws unconditionally every iteration and polls on
+            // a 50ms timeout, so the marker repaints without an effect.
             KeyCodePortable::Up => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                 }
-                // Emit the updated preview.
-                Ok(vec![Effect::PrefillInput {
-                    text: self.prompt_preview(),
-                }])
+                Ok(vec![])
             }
             KeyCodePortable::Down => {
                 let max = self.filtered().len().saturating_sub(1);
                 if self.cursor < max {
                     self.cursor += 1;
                 }
-                // Emit the updated preview.
-                Ok(vec![Effect::PrefillInput {
-                    text: self.prompt_preview(),
-                }])
+                Ok(vec![])
             }
             KeyCodePortable::Backspace => {
                 self.filter.pop();
@@ -593,80 +588,79 @@ mod tests {
         assert!(!joined.contains("more below"));
     }
 
-    // --- Prompt preview tests (issue #80) ---
+    // --- Prompt preview tests (issues #80, #96) ---
 
-    /// The palette should derive a prompt preview from the currently
-    /// highlighted command: `/<highlighted command name>`.
+    /// The preview echoes the typed filter, not the highlighted row. A
+    /// fresh palette has an empty filter, so it previews a bare `/`.
     #[test]
-    fn prompt_preview_shows_highlighted_command() {
+    fn prompt_preview_starts_as_a_bare_slash() {
         let p = fixture();
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/");
     }
 
-    /// When the palette is empty, the preview should be just `/`.
+    /// An empty palette previews `/` for the same reason: empty filter.
     #[test]
     fn prompt_preview_empty_palette_shows_slash() {
         let p = PaletteScreen::empty();
         assert_eq!(p.prompt_preview(), "/");
     }
 
-    /// When the filter returns no matches but the user has typed a filter,
-    /// the preview should show the filter as fallback: `/<filter>`.
+    /// Typing echoes character-for-character, even though the highlighted
+    /// row resolves to a longer name. This is the #96 behavior: typing
+    /// `cl` must not turn the prompt into `/clear`.
+    #[tokio::test]
+    async fn prompt_preview_echoes_typed_characters() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/c");
+        p.on_key(key(KeyCodePortable::Char('l'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/cl");
+        assert_eq!(
+            p.filtered().first().map(|(_, c)| c.name.as_str()),
+            Some("clear"),
+            "a row should be highlighted — the point is that it does not \
+             reach the prompt"
+        );
+    }
+
+    /// A filter matching nothing still echoes the filter.
     #[tokio::test]
     async fn prompt_preview_no_match_shows_filter() {
         let mut p = fixture();
-        // Type a filter that matches nothing.
         for ch in "xyz".chars() {
-            p.on_key(KeyEventPortable {
-                code: KeyCodePortable::Char(ch),
-                modifiers: KeyMods::default(),
-            })
-            .await
-            .unwrap();
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
         }
         assert!(p.filtered().is_empty(), "filter should match nothing");
         assert_eq!(p.prompt_preview(), "/xyz");
     }
 
-    /// Pressing `Up` should update the preview to the previous command.
+    /// Backspace on a non-empty filter removes exactly one character.
     #[tokio::test]
-    async fn prompt_preview_updates_on_up() {
+    async fn prompt_preview_backspace_removes_one_character() {
         let mut p = fixture();
-        // Start at "clear" (index 0)
-        assert_eq!(p.prompt_preview(), "/clear");
-        // Move down to "demo"
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        p.on_key(key(KeyCodePortable::Char('o'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/co");
+        p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/c");
+    }
+
+    /// Navigation moves the highlight without touching the prompt.
+    #[tokio::test]
+    async fn prompt_preview_is_unchanged_by_navigation() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('e'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/e");
+        let before = p.cursor;
         p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/demo");
-        // Move up back to "clear"
+        assert_ne!(p.cursor, before, "Down should move the highlight");
+        assert_eq!(p.prompt_preview(), "/e");
         p.on_key(key(KeyCodePortable::Up)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/e");
     }
 
-    /// Pressing `Down` should update the preview to the next command.
-    #[tokio::test]
-    async fn prompt_preview_updates_on_down() {
-        let mut p = fixture();
-        assert_eq!(p.prompt_preview(), "/clear");
-        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/demo");
-        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/exit");
-    }
-
-    /// Typing a character that has no match should show the filter as
-    /// fallback, not a stale command preview.
-    #[tokio::test]
-    async fn prompt_preview_shows_filter_on_no_match() {
-        let mut p = fixture();
-        for ch in "xyz".chars() {
-            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
-        }
-        assert!(p.filtered().is_empty());
-        assert_eq!(p.prompt_preview(), "/xyz");
-    }
-
-    /// `Char`, `Backspace`, `Up`, and `Down` should emit `PrefillInput`
-    /// effects to keep the prompt in sync with the palette selection.
+    /// `Char` and `Backspace` edit the user's text, so they emit
+    /// `PrefillInput`. `Up` and `Down` do not — see the two tests below.
     #[tokio::test]
     async fn char_emits_prefill_input() {
         let mut p = fixture();
@@ -697,26 +691,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn up_emits_prefill_input() {
+    async fn up_emits_no_effects() {
         let mut p = fixture();
         p.on_key(key(KeyCodePortable::Down)).await.unwrap();
         let effs = p.on_key(key(KeyCodePortable::Up)).await.unwrap();
-        let has_prefill = effs
-            .iter()
-            .any(|e| matches!(e, Effect::PrefillInput { .. }));
-        assert!(has_prefill, "Up should emit PrefillInput, got: {:?}", effs);
+        assert!(
+            effs.is_empty(),
+            "Up must not touch the prompt, got: {:?}",
+            effs
+        );
     }
 
     #[tokio::test]
-    async fn down_emits_prefill_input() {
+    async fn down_emits_no_effects() {
         let mut p = fixture();
         let effs = p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        let has_prefill = effs
-            .iter()
-            .any(|e| matches!(e, Effect::PrefillInput { .. }));
         assert!(
-            has_prefill,
-            "Down should emit PrefillInput, got: {:?}",
+            effs.is_empty(),
+            "Down must not touch the prompt, got: {:?}",
             effs
         );
     }
@@ -807,27 +799,31 @@ mod tests {
         }
     }
 
-    /// Typing should update the preview to the first matching command.
-    /// Using 'd' which matches only 'demo' (alphabetically first).
+    /// Typing narrows the list but the prompt still shows only what was
+    /// typed. `d` matches exactly one command, `demo` — the case where
+    /// resolving the highlight into the prompt is most tempting and most
+    /// wrong, because the user typed one character, not four.
     #[tokio::test]
-    async fn prompt_preview_updates_on_char() {
+    async fn prompt_preview_echoes_the_char_not_the_sole_match() {
         let mut p = fixture();
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/");
         p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
-        // Filter now matches only "demo"; cursor resets to 0 → "demo"
-        assert_eq!(p.prompt_preview(), "/demo");
+        assert_eq!(
+            p.filtered().len(),
+            1,
+            "'d' should narrow the fixture to exactly one command"
+        );
+        assert_eq!(p.prompt_preview(), "/d");
     }
 
-    /// Backspacing should update the preview based on the new filter.
+    /// Backspacing back to an empty filter returns the prompt to a bare
+    /// slash rather than to the newly highlighted command.
     #[tokio::test]
-    async fn prompt_preview_updates_on_backspace() {
+    async fn prompt_preview_returns_to_slash_on_backspace() {
         let mut p = fixture();
-        // Type "d" to filter to ["demo"]
         p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/demo");
-        // Backspace to clear the filter
+        assert_eq!(p.prompt_preview(), "/d");
         p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
-        // Back to full list, cursor at 0 → "clear"
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/");
     }
 }
