@@ -116,6 +116,8 @@ mod tests {
             joined.contains(rust_i18n::t!("picker.resume.no-transcripts").as_ref()),
             "expected no-transcripts text, got: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Warning));
     }
 
     #[tokio::test]

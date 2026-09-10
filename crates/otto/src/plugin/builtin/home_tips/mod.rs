@@ -102,6 +102,8 @@ mod tests {
             },
         );
         assert!(lines[0].spans[0].text.starts_with("Connecting"));
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Muted));
     }
 
     #[tokio::test]
@@ -125,5 +127,7 @@ mod tests {
             lines[0].spans[0].text,
             rust_i18n::t!("tips.press-slash").as_ref()
         );
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Muted));
     }
 }

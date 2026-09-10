@@ -275,4 +275,45 @@ mod tests {
             .expect("agent span");
         assert_eq!(agent_span.fg, Some(ThemeColor::Accent));
     }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn summarize_tool_call_span_colors_are_pinned() {
+        let p = ToolTaskSummaryPlugin::new();
+        let args = serde_json::json!({
+            "description": "review the auth diff",
+            "prompt": "...",
+            "subagent_type": "code-reviewer"
+        });
+        let spans = p.summarize_tool_call("task", &args).expect("summary");
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("task ", Some(ThemeColor::Fg)),
+                ("code-reviewer", Some(ThemeColor::Accent)),
+                (" · ", Some(ThemeColor::Muted)),
+                ("\"review the auth diff\"", Some(ThemeColor::Success)),
+            ]
+        );
+    }
+
+    #[test]
+    fn summarize_tool_result_span_colors_are_pinned() {
+        let p = ToolTaskSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_result("task", "first line\nsecond\nthird")
+            .expect("summary");
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("first line", Some(ThemeColor::Muted)),
+                (" (+2 more lines)", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
 }

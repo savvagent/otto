@@ -237,5 +237,35 @@ mod tests {
                 l.native_name
             );
         }
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // Row 0 is the filter label, row 1 the spacer, row 2 the first language row —
+        // which is the cursor row since the picker opens on "en".
+        let cursor_row = &lines[2];
+        assert_eq!(cursor_row.spans[0].fg, Some(ThemeColor::Accent));
+        assert!(cursor_row.spans[0].modifiers.bold);
+        assert_eq!(cursor_row.spans[1].fg, Some(ThemeColor::Muted));
+
+        let other_row = &lines[3];
+        assert_eq!(other_row.spans[0].fg, Some(ThemeColor::Fg));
+        assert!(!other_row.spans[0].modifiers.bold);
+        assert_eq!(other_row.spans[1].fg, Some(ThemeColor::Muted));
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[tokio::test]
+    async fn no_match_state_is_warning_colored() {
+        let mut s = LanguagePickerScreen::new(LanguagePicker::new("en"));
+        for c in "zzzznomatch".chars() {
+            let _ = s.on_key(key(KeyCodePortable::Char(c))).await.unwrap();
+        }
+        assert!(s.inner.filtered().is_empty(), "filter should match nothing");
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        let no_match_line = &lines[2];
+        assert_eq!(no_match_line.spans[0].fg, Some(ThemeColor::Warning));
     }
 }

@@ -186,4 +186,62 @@ mod tests {
                 .is_none()
         );
     }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn search_call_span_colors_are_pinned() {
+        let p = ToolGrepSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call(
+                "search",
+                &serde_json::json!({
+                    "pattern": "fn ",
+                    "path": "src",
+                    "case_insensitive": true,
+                    "multiline": true
+                }),
+            )
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("grep '", Some(ThemeColor::Fg)),
+                ("fn ", Some(ThemeColor::Success)),
+                ("'", Some(ThemeColor::Fg)),
+                (" in src", Some(ThemeColor::Muted)),
+                (" -i", Some(ThemeColor::Muted)),
+                (" --multiline", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_result_span_colors_are_pinned() {
+        let p = ToolGrepSummaryPlugin::new();
+        let result = serde_json::json!({
+            "pattern": "fn ",
+            "root": ".",
+            "matches": [
+                {"file": "a.rs", "line": 1, "column": 1, "text": "fn a() {}"}
+            ],
+            "truncated": true
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("search", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("1", Some(ThemeColor::Success)),
+                (" matches in ", Some(ThemeColor::Fg)),
+                ("1", Some(ThemeColor::Success)),
+                (" files", Some(ThemeColor::Fg)),
+                (" (truncated)", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
 }

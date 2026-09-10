@@ -230,5 +230,12 @@ mod tests {
         // Both provider ids should appear.
         assert!(joined.contains("anthropic"), "anthropic missing: {joined}");
         assert!(joined.contains("gemini"), "gemini missing: {joined}");
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // Title and row lines are unstyled (fg: None); only the hint line is Muted.
+        assert_eq!(lines[0].spans[0].fg, None);
+        assert_eq!(lines[1].spans[0].fg, None);
+        assert_eq!(lines[2].spans[0].fg, Some(ThemeColor::Muted));
+        assert_eq!(lines[3].spans[0].fg, None);
+        assert_eq!(lines[4].spans[0].fg, None);
     }
 }

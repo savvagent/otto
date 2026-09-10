@@ -275,4 +275,71 @@ mod tests {
         let s = ThemePickerScreen::new(ThemePicker::new(Theme::default()));
         assert_eq!(s.id(), "themes.picker");
     }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[tokio::test]
+    async fn no_match_state_is_warning_colored() {
+        let mut s = ThemePickerScreen::new(ThemePicker::new(Theme::default()));
+        for c in "zzzzzznomatch".chars() {
+            let _ = s.on_key(key(KeyCodePortable::Char(c))).await.unwrap();
+        }
+        assert!(s.inner.filtered_themes().is_empty(), "filter should match nothing");
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        // Line 0 is the filter label, line 1 the spacer, line 2 the no-match state.
+        let no_match_line = &lines[2];
+        assert_eq!(no_match_line.spans[0].fg, Some(ThemeColor::Warning));
+    }
+
+    #[test]
+    fn section_labels_are_muted() {
+        // Default (empty filter) picker shows both built-in and catalog sections.
+        let s = ThemePickerScreen::new(ThemePicker::new(Theme::default()));
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 200,
+        });
+        let builtin_label = rust_i18n::t!("picker.themes.section-builtin").to_string();
+        let catalog_label = rust_i18n::t!("picker.themes.section-catalog").to_string();
+        let builtin_line = lines
+            .iter()
+            .find(|l| l.spans.first().is_some_and(|s| s.text == builtin_label))
+            .expect("built-in section label line");
+        assert_eq!(builtin_line.spans[0].fg, Some(ThemeColor::Muted));
+        let catalog_line = lines
+            .iter()
+            .find(|l| l.spans.first().is_some_and(|s| s.text == catalog_label))
+            .expect("catalog section label line");
+        assert_eq!(catalog_line.spans[0].fg, Some(ThemeColor::Muted));
+    }
+
+    #[test]
+    fn row_spans_pin_cursor_accent_and_muted_display_name() {
+        // The picker opens with the cursor on the active (default) theme,
+        // which is the very first row rendered.
+        let s = ThemePickerScreen::new(ThemePicker::new(Theme::default()));
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 200,
+        });
+        // Row layout: [0] filter label, [1] spacer, [2] "Built-in" section
+        // label, [3] first theme row (the cursor, since it's the active theme).
+        let cursor_row = &lines[3];
+        assert_eq!(cursor_row.spans[0].fg, Some(ThemeColor::Accent));
+        assert!(cursor_row.spans[0].modifiers.bold);
+        assert_eq!(cursor_row.spans[1].fg, Some(ThemeColor::Muted));
+
+        let other_row = &lines[4];
+        assert_eq!(other_row.spans[0].fg, Some(ThemeColor::Fg));
+        assert!(!other_row.spans[0].modifiers.bold);
+        assert_eq!(other_row.spans[1].fg, Some(ThemeColor::Muted));
+    }
 }

@@ -520,6 +520,12 @@ mod tests {
             joined.contains(rust_i18n::t!("picker.command-palette.no-commands").as_ref()),
             "empty render should show placeholder, got: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        let no_commands_line = lines
+            .iter()
+            .find(|l| !l.spans.is_empty() && !l.spans[0].text.is_empty())
+            .expect("no-commands line");
+        assert_eq!(no_commands_line.spans[0].fg, Some(ThemeColor::Muted));
         let effs = p.on_key(key(KeyCodePortable::Enter)).await.unwrap();
         assert!(matches!(effs[0], Effect::CloseScreen));
     }
@@ -590,6 +596,12 @@ mod tests {
             !joined.contains("more above"),
             "nothing is hidden above at the top of the list, got: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        let hint_line = lines
+            .iter()
+            .find(|l| l.spans.first().is_some_and(|s| s.text.contains("more below")))
+            .expect("scroll-hint line");
+        assert_eq!(hint_line.spans[0].fg, Some(ThemeColor::Muted));
 
         // Move the cursor to the end; the window should follow it so the
         // selected row is always visible, and hidden-above must update.
@@ -607,6 +619,12 @@ mod tests {
             !joined.contains("more below"),
             "nothing is hidden below at the end of the list, got: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        let hint_line = lines
+            .iter()
+            .find(|l| l.spans.first().is_some_and(|s| s.text.contains("more above")))
+            .expect("scroll-hint line");
+        assert_eq!(hint_line.spans[0].fg, Some(ThemeColor::Muted));
     }
 
     /// Regression: the host overpaints the sheet's last row with `tips()`
@@ -694,6 +712,18 @@ mod tests {
             !joined.trim().is_empty(),
             "the sheet must not be blank when the filter matches nothing"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // Both the empty-commands state above and this no-matches state use Muted —
+        // unlike `connect`'s picker, where the two empty states use different colours.
+        let no_matches_line = lines
+            .iter()
+            .find(|l| {
+                l.spans
+                    .first()
+                    .is_some_and(|s| s.text == rust_i18n::t!("picker.command-palette.no-matches"))
+            })
+            .expect("no-matches line");
+        assert_eq!(no_matches_line.spans[0].fg, Some(ThemeColor::Muted));
     }
 
     /// The sheet no longer draws its own `> <filter>` header — the prompt
@@ -1088,5 +1118,27 @@ mod tests {
             }
             other => panic!("expected CloseScreen then an empty PrefillInput, got: {other:?}"),
         }
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn row_spans_use_accent_for_cursor_and_fg_for_others_with_muted_description() {
+        let p = fixture();
+        let lines = p.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        // Row 0 is unconditional plain spacer/hint line; rows are command rows after that.
+        let cursor_row = &lines[1];
+        assert_eq!(cursor_row.spans[0].fg, Some(ThemeColor::Accent));
+        assert!(cursor_row.spans[0].modifiers.bold);
+        assert_eq!(cursor_row.spans[1].fg, Some(ThemeColor::Muted));
+
+        let other_row = &lines[2];
+        assert_eq!(other_row.spans[0].fg, Some(ThemeColor::Fg));
+        assert!(!other_row.spans[0].modifiers.bold);
+        assert_eq!(other_row.spans[1].fg, Some(ThemeColor::Muted));
     }
 }

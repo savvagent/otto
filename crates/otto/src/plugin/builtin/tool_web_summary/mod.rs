@@ -204,4 +204,94 @@ mod tests {
                 .is_none()
         );
     }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn fetch_call_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call(
+                "web_fetch",
+                &serde_json::json!({"url": "https://example.com"}),
+            )
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("fetch ", Some(ThemeColor::Fg)),
+                ("https://example.com", Some(ThemeColor::Success)),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_call_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call("web_search", &serde_json::json!({"query": "rust async"}))
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("search '", Some(ThemeColor::Fg)),
+                ("rust async", Some(ThemeColor::Success)),
+                ("'", Some(ThemeColor::Fg)),
+            ]
+        );
+    }
+
+    #[test]
+    fn fetch_result_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let result = serde_json::json!({
+            "url": "https://example.com",
+            "status": 200,
+            "content_type": null,
+            "content": "hello",
+            "truncated": true
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("web_fetch", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("200", Some(ThemeColor::Success)),
+                (" · ", Some(ThemeColor::Muted)),
+                ("5", Some(ThemeColor::Success)),
+                (" chars", Some(ThemeColor::Fg)),
+                (" (truncated)", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_result_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let result = serde_json::json!({
+            "backend": "brave",
+            "results": [
+                {"title": "A", "url": "https://a.example", "snippet": ""},
+                {"title": "B", "url": "https://b.example", "snippet": ""}
+            ]
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("web_search", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("2", Some(ThemeColor::Success)),
+                (" results via ", Some(ThemeColor::Fg)),
+                ("brave", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
 }

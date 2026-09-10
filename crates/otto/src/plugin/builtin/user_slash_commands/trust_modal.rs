@@ -241,4 +241,19 @@ mod tests {
         let err = TrustModal::from_args(ScreenArgs::None).unwrap_err();
         assert!(matches!(err, PluginError::ScreenNotFound(_)));
     }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn render_warning_line_is_warning_colored_others_unstyled() {
+        let m = modal();
+        let lines = m.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Warning));
+        assert_eq!(lines[1].spans[0].fg, None);
+        assert_eq!(lines[2].spans[0].fg, None);
+    }
 }

@@ -166,12 +166,16 @@ mod tests {
             .await
             .expect("plugin should claim read_file");
         assert_eq!(call[0].text, "read_file src/main.rs");
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(call[0].fg, Some(ThemeColor::Fg));
 
         let result = router
             .summarize_result("read_file", r#"{"bytes": 1234}"#)
             .await
             .expect("plugin should claim read_file");
         assert_eq!(result[0].text, "1.2 KiB");
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(result[0].fg, Some(ThemeColor::Muted));
     }
 
     #[tokio::test]

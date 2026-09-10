@@ -293,6 +293,14 @@ mod tests {
             joined.contains(rust_i18n::t!("picker.connect.open-plugins-hint").as_ref()),
             "expected open-plugins-hint text, got: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // The no-providers line and the blank spacer line are unstyled (fg: None);
+        // the "open plugins" hint is deliberately Warning-coloured, NOT Muted, even
+        // though it reads like an ordinary hint — a mechanical rewrite to `muted()`
+        // here would silently change its colour.
+        assert_eq!(lines[0].spans[0].fg, None);
+        assert_eq!(lines[1].spans[0].fg, None);
+        assert_eq!(lines[2].spans[0].fg, Some(ThemeColor::Warning));
     }
 
     #[tokio::test]
@@ -434,6 +442,16 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(joined.contains("No providers match"), "rendered: {joined}");
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // "No providers match" (Muted) and the trailing " <query>" (Accent) are two
+        // different colours on the same line — an easy pair to collapse into one
+        // colour by mistake during a mechanical rewrite.
+        let no_match_line = lines
+            .iter()
+            .find(|l| l.spans.first().is_some_and(|s| s.text == "No providers match"))
+            .expect("no-match line");
+        assert_eq!(no_match_line.spans[0].fg, Some(ThemeColor::Muted));
+        assert_eq!(no_match_line.spans[1].fg, Some(ThemeColor::Accent));
         assert!(
             s.on_key(key(KeyCodePortable::Enter))
                 .await
@@ -488,5 +506,58 @@ mod tests {
             s.selected_candidate().map(|(id, _)| id.as_str()),
             Some("openai")
         );
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn search_prefix_is_muted_and_placeholder_is_muted_when_query_empty() {
+        // 6 candidates exceeds PROVIDER_SELECTOR_DISCOVERABILITY_THRESHOLD (5), so
+        // `show_query()` is true even with an empty query.
+        let s = ConnectPickerScreen::with_candidates(vec![
+            (ProviderId::new("a").unwrap(), "A".into()),
+            (ProviderId::new("b").unwrap(), "B".into()),
+            (ProviderId::new("c").unwrap(), "C".into()),
+            (ProviderId::new("d").unwrap(), "D".into()),
+            (ProviderId::new("e").unwrap(), "E".into()),
+            (ProviderId::new("f").unwrap(), "F".into()),
+        ]);
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        });
+        let search_line = &lines[0];
+        assert_eq!(search_line.spans[0].text, "Search: ");
+        assert_eq!(search_line.spans[0].fg, Some(ThemeColor::Muted));
+        assert_eq!(search_line.spans[1].text, "type to filter");
+        assert_eq!(search_line.spans[1].fg, Some(ThemeColor::Muted));
+    }
+
+    #[tokio::test]
+    async fn search_prefix_stays_muted_and_value_uses_fg_when_query_typed() {
+        let mut s = ConnectPickerScreen::with_candidates(vec![
+            (
+                ProviderId::new("anthropic").unwrap(),
+                "Anthropic (Claude)".into(),
+            ),
+            (ProviderId::new("openai").unwrap(), "OpenAI".into()),
+        ]);
+        s.on_key(key(KeyCodePortable::Char('o'))).await.unwrap();
+
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        });
+        let search_line = &lines[0];
+        assert_eq!(search_line.spans[0].text, "Search: ");
+        assert_eq!(search_line.spans[0].fg, Some(ThemeColor::Muted));
+        assert_eq!(search_line.spans[1].text, "o");
+        // Once the user has typed, the value span switches from Muted (placeholder)
+        // to Fg (real content) — losing that switch would make typed text look
+        // permanently greyed out.
+        assert_eq!(search_line.spans[1].fg, Some(ThemeColor::Fg));
     }
 }

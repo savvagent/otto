@@ -215,4 +215,52 @@ mod tests {
         // with `…` to signal the trailing content was elided.
         assert_eq!(join(&spans), "bash $ ls -la…");
     }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn run_call_span_colors_are_pinned() {
+        let p = ToolBashSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call("run", &serde_json::json!({"command": "ls -la"}))
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("bash $ ", Some(ThemeColor::Fg)),
+                ("ls -la", Some(ThemeColor::Success)),
+            ]
+        );
+    }
+
+    #[test]
+    fn run_result_span_colors_are_pinned() {
+        let p = ToolBashSummaryPlugin::new();
+        let result = serde_json::json!({
+            "exit_code": 124,
+            "stdout": "...",
+            "stderr": "",
+            "elapsed_ms": 5000,
+            "stdout_truncated": true,
+            "stderr_truncated": true,
+            "timed_out": true
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("run", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("exit ", Some(ThemeColor::Fg)),
+                ("124", Some(ThemeColor::Success)),
+                (" in 5000ms", Some(ThemeColor::Muted)),
+                (" (timed out)", Some(ThemeColor::Warning)),
+                (" (stdout truncated)", Some(ThemeColor::Muted)),
+                (" (stderr truncated)", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
 }

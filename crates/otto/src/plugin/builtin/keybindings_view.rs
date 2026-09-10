@@ -270,6 +270,27 @@ mod tests {
         assert_eq!(s.line_count(), 4);
     }
 
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn section_row_spans_pin_title_chord_and_description_colors() {
+        let s = ScrollableKeybindingsScreen::new(
+            "id",
+            vec![section("S", vec![("A", "1"), ("B", "2")])],
+            StyledLine::plain("tips"),
+        );
+        // Layout: [0] title, [1] blank, [2] row A, [3] row B.
+        let title_line = &s.lines[0];
+        assert_eq!(title_line.spans[0].fg, Some(ThemeColor::Accent));
+        assert!(title_line.spans[0].modifiers.bold);
+
+        for row_line in [&s.lines[2], &s.lines[3]] {
+            assert_eq!(row_line.spans[0].fg, Some(ThemeColor::Fg));
+            assert!(row_line.spans[0].modifiers.bold);
+            assert_eq!(row_line.spans[1].fg, Some(ThemeColor::Muted));
+            assert!(!row_line.spans[1].modifiers.bold);
+        }
+    }
+
     #[test]
     fn id_is_returned_as_constructed() {
         let s = ScrollableKeybindingsScreen::new(

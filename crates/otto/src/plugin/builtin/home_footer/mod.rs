@@ -182,6 +182,10 @@ mod tests {
             lines[0].spans[0].text,
             rust_i18n::t!("footer.idle").as_ref()
         );
+        // Pins span colour so the #117 constructor rewrite cannot change it
+        // silently. `home.footer.center` is Accent in both the idle and
+        // turn-working states.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Accent));
     }
 
     #[tokio::test]
@@ -203,6 +207,8 @@ mod tests {
             lines[0].spans[0].text,
             rust_i18n::t!("footer.turn-working", id = 3u32).as_ref()
         );
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Accent));
     }
 
     #[tokio::test]
@@ -261,6 +267,16 @@ mod tests {
             !joined.contains("? for help"),
             "stale hint still present in: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them
+        // silently. With `context_tokens == 0` (the default) the ctx segment is
+        // omitted, so the row is: working_dir · cost-zero · version — every span
+        // is Muted except the trailing version span, which is Accent.
+        let spans = &lines[0].spans;
+        assert!(spans.len() >= 2, "expected at least dir + version spans");
+        for s in &spans[..spans.len() - 1] {
+            assert_eq!(s.fg, Some(ThemeColor::Muted), "expected Muted for {s:?}");
+        }
+        assert_eq!(spans.last().unwrap().fg, Some(ThemeColor::Accent));
     }
 
     #[tokio::test]

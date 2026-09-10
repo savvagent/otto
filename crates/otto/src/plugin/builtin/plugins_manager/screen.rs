@@ -217,6 +217,8 @@ mod tests {
                     ),
                     "expected core-cannot-disable text, got {joined:?}"
                 );
+                // Pins span colours so the #117 constructor rewrite cannot change them silently.
+                assert_eq!(line.spans[0].fg, Some(ThemeColor::Warning));
             }
             other => panic!("expected PushNote, got {other:?}"),
         }
@@ -358,5 +360,35 @@ mod tests {
             line1.contains(&external),
             "expected external suffix in row 1: {line1:?}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // Row 0 is the cursor (index 0), so its toggle/name spans are Accent+bold;
+        // row 1 is not the cursor, so Fg and not bold. Both rows' contribution-summary
+        // and origin-label spans are Muted regardless of cursor position.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Accent));
+        assert!(lines[0].spans[0].modifiers.bold);
+        assert_eq!(lines[0].spans[1].fg, Some(ThemeColor::Accent));
+        assert!(lines[0].spans[1].modifiers.bold);
+        assert_eq!(lines[0].spans[2].fg, Some(ThemeColor::Muted));
+        assert_eq!(lines[0].spans[3].fg, Some(ThemeColor::Muted));
+
+        assert_eq!(lines[1].spans[0].fg, Some(ThemeColor::Fg));
+        assert!(!lines[1].spans[0].modifiers.bold);
+        assert_eq!(lines[1].spans[1].fg, Some(ThemeColor::Fg));
+        assert!(!lines[1].spans[1].modifiers.bold);
+        assert_eq!(lines[1].spans[2].fg, Some(ThemeColor::Muted));
+        assert_eq!(lines[1].spans[3].fg, Some(ThemeColor::Muted));
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn empty_rows_renders_warning_colored_placeholder() {
+        let s = PluginsManagerScreen::empty();
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Warning));
     }
 }
