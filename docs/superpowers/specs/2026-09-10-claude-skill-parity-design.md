@@ -82,15 +82,27 @@ A stub contains exactly three things:
    | --- | --- |
    | `task` tool call | `Agent` tool call |
    | `agent_type: "general-purpose"` | `subagent_type: "general-purpose"` |
+   | `agent_type: "task"` | `subagent_type: "general-purpose"` — Copilot's generic worker has no distinct counterpart |
    | `agent_type: "rubber-duck"` (spec/plan critique) | `subagent_type: "general-purpose"` — no built-in equivalent; the critique prompt carries the role |
    | `agent_type: "code-review"` | the `/code-review` skill, or `subagent_type: "general-purpose"` with the canonical template |
    | `agent_type: "security-review"` | the built-in `security-review` skill |
-   | `agent_type: "explore"` / `"research"` | `subagent_type: "Explore"` |
+   | `agent_type: "explore"` | `subagent_type: "Explore"` |
+   | `agent_type: "research"` | `subagent_type: "Explore"` |
    | `mode: "sync"` | a single `Agent` call — it returns the report |
    | `mode: "background"` | several `Agent` calls in one message; results arrive as task notifications |
    | `read_agent` | the task-completion notification, or `SendMessage` to the named agent |
    | the `sql` tool's `todos` table | `TodoWrite` |
    | `ask_user` | `AskUserQuestion` — still overridden for autonomy per the canonical body |
+
+   Those thirteen rows cover the canonical body's full seven-value `agent_type` enum
+   (`SKILL.md:370-371`). One mechanism needs a decision rather than a mapping: the canonical
+   "Model selection" paragraph (`SKILL.md:390-393`) reaches for `reasoning_effort`, which Claude
+   Code's `Agent` tool does not have. The stub resolves it as — `model: "haiku"` for a mechanical
+   1–2-file task; for integration or design-judgment work omit `model` to inherit the session
+   default, passing `model: "opus"` explicitly where that default is known to be weaker (an omitted
+   `model` resolves to the agent definition's model, then the configured default subagent model, and
+   only then the parent's, so omission alone does not guarantee strong reasoning); and every
+   `reasoning_effort` instruction is satisfied by that choice.
 
    The table deliberately maps only to **built-in** Claude Code agent types and skills. A
    contributor's personal `~/.claude/agents/` collection may well contain `rust-pro`,

@@ -159,7 +159,7 @@ Create `.claude/skills/otto-development/SKILL.md`:
 
   Rows 3, 7 and 8 complete the canonical body's seven-value `agent_type` enum (`SKILL.md:370-371`), which the spec's own table under-covered by one value.
 
-- **A model-selection row, decided here rather than guessed.** The canonical body's "Model selection" paragraph (`SKILL.md:390-394`) tells the orchestrator to pick a fast model for mechanical 1–2-file tasks (`model: "claude-haiku-4.5"` or `reasoning_effort: "low"`) and to omit the override — or raise `reasoning_effort` to `"high"`/`"xhigh"` — for multi-file or design-judgment work. Claude Code's `Agent` tool has a `model` parameter but **no `reasoning_effort`**. The stub therefore states: pass `model: "haiku"` for a mechanical task; **omit `model` entirely** for integration or design-judgment work so the dispatch inherits the parent session's model; and treat every `reasoning_effort` instruction in the canonical body as satisfied by that omission, since there is no knob to turn.
+- **A model-selection row, decided here rather than guessed.** The canonical body's "Model selection" paragraph (`SKILL.md:390-393`) tells the orchestrator to pick a fast model for mechanical 1–2-file tasks (`model: "claude-haiku-4.5"` or `reasoning_effort: "low"`) and to omit the override — or raise `reasoning_effort` to `"high"`/`"xhigh"` — for multi-file or design-judgment work. Claude Code's `Agent` tool has a `model` parameter but **no `reasoning_effort`**. The stub therefore states: pass `model: "haiku"` for a mechanical task; for integration or design-judgment work **omit `model` to inherit the session default, and pass `model: "opus"` explicitly if that default is known to be weaker** — an omitted `model` resolves to the agent definition's model, then the configured default subagent model, and only then the parent's, so omission alone is not a guarantee of strong reasoning; and treat every `reasoning_effort` instruction in the canonical body as satisfied by that choice, since there is no such knob to turn.
 - A note that the table maps only to **built-in** Claude Code agent types and skills, and that a contributor whose `~/.claude/agents/` provides specialised agents (`rust-pro`, `architect-reviewer`, `code-reviewer`, `security-auditor`) may use those for the mandatory review trio as an **optional upgrade** — never a requirement, so the mapping still holds in a fresh clone.
 - An explicit carry-over of the two rules most likely to be lost in translation, because they are host-mechanism-shaped rather than workflow-shaped: **dispatch prompts must be fully self-contained** (paste the actual spec/plan/task text inline; a Claude Code subagent has no access to this session's context), and the **security review must receive only the PR diff** — never the spec, plan, brief, PR body, or implementer report (canonical Non-Negotiable Rule 5). Both are stated as pointers to the canonical rule, not as replacements for it.
 - Nothing else. No phase list, no rule summary, no convention table — those would be a partial copy, which is what this design rejects.
@@ -185,13 +185,16 @@ git commit -m "docs: add otto-development Claude Code adapter stub"
 
 - [ ] **Step 1: Missing stub**
 
-Back the file up outside the repo — into the session scratch directory, not `/tmp` directly — then restore it:
+Back the file up outside the repo, then restore it. The backup directory is created inline so the step is self-contained — do not rely on an ambient scratch-path variable:
 
 ```bash
-mv .claude/skills/creating-github-issues/SKILL.md "$SCRATCH/stub-backup.md"
+BACKUP="$(mktemp -d)"
+mv .claude/skills/creating-github-issues/SKILL.md "$BACKUP/stub-backup.md"
 bash .github/scripts/check-claude-skill-stubs.sh; echo "exit=$?"
-mv "$SCRATCH/stub-backup.md" .claude/skills/creating-github-issues/SKILL.md
+mv "$BACKUP/stub-backup.md" .claude/skills/creating-github-issues/SKILL.md
 ```
+
+Run these as one block in one shell, so `$BACKUP` is still set for the restoring `mv`. If the first `mv` fails, **stop** — the stub is still in place and the check will report `exit=0`, which is the step passing for the wrong reason.
 
 Expected: `exit=1`, output names `creating-github-issues` and the missing path.
 
@@ -206,6 +209,12 @@ Expected: `exit=1`, output prints both description values labelled by path.
 Temporarily edit the `> **Canonical body:**` line in `.claude/skills/otto-development/SKILL.md` to name `` `.github/skills/otto-development/agent-prompts-typo.md` ``, run the check, then restore with `git checkout --`.
 
 Expected: `exit=1`, output names the non-existent path. **This step specifically proves the `agent-prompts.md` slot is validated, not just the first path on the line** — if the check passes here, the extractor is only reading one path and must be fixed (then re-run Tasks 1–3's checks).
+
+- [ ] **Step 3b: Missing frontmatter key**
+
+Task 1 Step 2 requires the script to fail *loudly* when a `name:` or `description:` key is absent or empty on either side, rather than silently comparing empty strings. The spec names only three failure modes, so this is one extra mutation beyond them — it is cheap and it covers the one path where a bug would make the check silently useless. Temporarily delete the `description:` line from `.claude/skills/creating-github-issues/SKILL.md`, run the check, then restore with `git checkout --`.
+
+Expected: `exit=1` with a message naming the missing key and the file — **not** a pass, and not a mismatch report comparing two empty values.
 
 - [ ] **Step 4: Confirm the tree is clean and the check is green**
 
