@@ -1235,7 +1235,7 @@ pub(crate) async fn dispatch_slash_command(
                     ));
                 }
                 apply_pending_model_change(app, host_slot, project_root, tool_bins).await;
-                apply_pending_pool_add(app, host_slot, false).await;
+                apply_pending_pool_add(app, host_slot, project_root, tool_bins, false).await;
                 apply_pending_gate(app, host_slot).await;
                 apply_pending_in_process_tools(app, host_slot).await;
                 apply_pending_routing_reload(app, host_slot).await;
@@ -1814,8 +1814,8 @@ pub(crate) async fn apply_pending_model_change(
 }
 
 /// Drain `app.pending_pool_add` (set by `Effect::RegisterProvider`) and
-/// add the provider to the host's pool. No-op when nothing is queued or
-/// when no host exists yet.
+/// add the provider to the host's pool — building a fresh host first if
+/// none exists yet. No-op when nothing is queued.
 ///
 /// Rebuilds the `ProviderRegistration` via the matching plugin's
 /// `try_build_registration` so the host pool gets a fresh
@@ -1823,7 +1823,24 @@ pub(crate) async fn apply_pending_model_change(
 /// boxed `dyn ProviderClient` can't be converted directly. The duplicate
 /// client build is the price for fixing the silent-failure path where
 /// `/connect <provider>` with a stored key only landed in
-/// `App::registered_providers` and never the host pool.
+/// `App::registered_providers` and never the host pool. That rebuild also
+/// validates the stored credential (`try_build_registration` calls
+/// `list_models`), which is what lets this drain reject a bad key the
+/// silent path itself couldn't check — the whole reason this function
+/// exists rather than trusting the client the silent path already built.
+///
+/// Whether a host already exists must NOT gate this validation: previously,
+/// finding `current_host` empty short-circuited the entire function before
+/// the credential was even re-checked, so a rejected (or later re-entered
+/// and valid) key silently vanished — no note, no host, and no record that
+/// `/connect` had even been tried. That is exactly what stranded issue #81
+/// on the DeepSeek path: it was reachable there whenever DeepSeek was
+/// (re)connected as the very first provider of a session with no other
+/// host already up, which — unlike `perform_connect`'s modal-submit path —
+/// is precisely the case this drain exists to cover. Now the credential is
+/// always re-validated and the outcome is always surfaced; a host is built
+/// on demand (mirroring `perform_connect`'s first-connect branch) only when
+/// validation actually succeeds.
 ///
 /// `startup` distinguishes the one call site reached right after
 /// `HostEvent::HostStarting`'s silent-connect subscribers run (`true`) from
@@ -1833,7 +1850,13 @@ pub(crate) async fn apply_pending_model_change(
 /// `/connect`-adjacent UX. For the startup drain, notes are gated behind
 /// `app.startup_verbose` so a revoked/rejected provider configured
 /// alongside a healthy one doesn't reintroduce startup chatter.
-pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot, startup: bool) {
+pub(crate) async fn apply_pending_pool_add(
+    app: &mut App,
+    host_slot: &HostSlot,
+    project_root: &Path,
+    tool_bins: &ToolBins,
+    startup: bool,
+) {
     use crate::plugin::builtin::provider_common::ProviderBuildOutcome;
     use crate::plugin::builtin::{
         provider_anthropic::ProviderAnthropicPlugin, provider_deepseek::ProviderDeepSeekPlugin,
@@ -1842,18 +1865,6 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot, 
     };
 
     let Some(pending) = app.pending_pool_add.take() else {
-        return;
-    };
-    let Some(host) = current_host(host_slot).await else {
-        // No host yet — the modal-submit path's perform_connect handles
-        // first-connect host construction. If we end up here with no
-        // host, the silent path fired before any modal connect ever
-        // ran, which the user can recover from by re-running /connect
-        // explicitly (or restarting).
-        tracing::warn!(
-            provider = %pending.id.as_str(),
-            "Effect::RegisterProvider arrived before any host exists; skipping pool add"
-        );
         return;
     };
 
@@ -1943,30 +1954,62 @@ pub(crate) async fn apply_pending_pool_add(app: &mut App, host_slot: &HostSlot, 
 
     let registered_caps = reg.capabilities.clone();
 
-    match host.add_provider(reg).await {
-        Ok(()) => {}
-        Err(otto_host::PoolError::AlreadyRegistered(_)) => {
-            // Already in the pool — the auto-connect at startup
-            // (bootstrap_pool_host) already added it. Nothing to do.
-            // Don't push a note; this is the common "double-emit" path
-            // where HostStarting auto-connect + bootstrap added the same
-            // provider via two routes.
-            tracing::debug!(provider = %pending.id.as_str(),
-                "apply_pending_pool_add: provider already in pool (likely bootstrap dup)");
-            return;
-        }
-        Err(e) => {
-            tracing::warn!(provider = %pending.id.as_str(), error = %e,
-                "apply_pending_pool_add: host.add_provider failed");
-            if show_notes {
-                app.push_note(
-                    rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e}"))
-                        .to_string(),
-                );
+    let host = match current_host(host_slot).await {
+        Some(host) => {
+            match host.add_provider(reg).await {
+                Ok(()) => host,
+                Err(otto_host::PoolError::AlreadyRegistered(_)) => {
+                    // Already in the pool — the auto-connect at startup
+                    // (bootstrap_pool_host) already added it. Nothing to do.
+                    // Don't push a note; this is the common "double-emit" path
+                    // where HostStarting auto-connect + bootstrap added the same
+                    // provider via two routes.
+                    tracing::debug!(provider = %pending.id.as_str(),
+                        "apply_pending_pool_add: provider already in pool (likely bootstrap dup)");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(provider = %pending.id.as_str(), error = %e,
+                        "apply_pending_pool_add: host.add_provider failed");
+                    if show_notes {
+                        app.push_note(
+                            rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e}"))
+                                .to_string(),
+                        );
+                    }
+                    return;
+                }
             }
-            return;
         }
-    }
+        None => {
+            // No host yet: the validated credential above is the first
+            // provider of this session, so build a host for it instead of
+            // dropping it on the floor (see the function doc for why this
+            // used to be unreachable).
+            if bootstrap_first_pool_host(
+                spec,
+                reg,
+                &registered_caps,
+                host_slot,
+                project_root,
+                tool_bins,
+                app,
+            )
+            .await
+            .is_err()
+            {
+                return;
+            }
+            match current_host(host_slot).await {
+                Some(host) => host,
+                None => {
+                    tracing::error!(provider = %pending.id.as_str(),
+                        "apply_pending_pool_add: bootstrap_first_pool_host reported success but left host_slot empty");
+                    return;
+                }
+            }
+        }
+    };
 
     // Drift-repair + first-connect promotion, mirroring perform_connect's logic.
     let active_is_in_pool = host.active_capabilities().await.is_some();
@@ -2629,6 +2672,70 @@ fn fmt_overrides(cfg: &SandboxConfig) -> String {
         .join(", ")
 }
 
+/// Build a fresh single-provider pool `Host` from an already-validated `reg`
+/// and install it into `host_slot`. Shared by `perform_connect`'s
+/// first-connect branch (a key just entered through the API-key modal) and
+/// `apply_pending_pool_add`'s silent-reconnect branch (a stored key
+/// re-validated after `Effect::RegisterProvider` fired with no host yet to
+/// add it to) — both need identical "there is no host at all yet" bootstrap
+/// logic, not just an additive `host.add_provider`.
+///
+/// Pushes its own failure note and returns `Err(())` on `Host::start`
+/// failure so the caller can bail out the same way it does for every other
+/// connect failure.
+async fn bootstrap_first_pool_host(
+    spec: &'static ProviderSpec,
+    reg: ProviderRegistration,
+    registered_caps: &otto_host::capabilities::ProviderCapabilities,
+    host_slot: &HostSlot,
+    project_root: &Path,
+    tool_bins: &ToolBins,
+    app: &mut App,
+) -> Result<(), ()> {
+    let (initial_model, maybe_warning) =
+        resolve_initial_model_for_with_caps(spec, Some(registered_caps));
+    if let Some(w) = maybe_warning {
+        app.push_note(w);
+    }
+    let mut cfg = tool_bins.apply(
+        HostConfig::new(
+            ProviderEndpoint::StreamableHttp {
+                url: "inproc://pool".into(),
+            },
+            initial_model,
+        )
+        .with_project_root(project_root.to_path_buf())
+        .with_app_version(env!("CARGO_PKG_VERSION")),
+    );
+    cfg.providers = vec![reg];
+    cfg.startup_connect = otto_host::StartupConnectPolicy::All;
+    cfg.routing_rules_path = crate::routing_pref::routing_toml_path();
+    match Host::start(cfg).await {
+        Ok(h) => {
+            // Surface any one-shot startup notes (e.g. routing.toml parse
+            // failure) before the host is stashed in host_slot.
+            for note in h.take_startup_notes() {
+                app.push_note(note);
+            }
+            let host_arc = Arc::new(h);
+            // Register the `Arc<Host>` back into the host so
+            // `run_turn_inner` can construct a `ToolCallContext` for
+            // in-process tools (the `task` tool from the user-agents
+            // plugin, future built-ins, etc.).
+            host_arc.wire_self_arc();
+            *host_slot.write().await = Some(host_arc);
+            Ok(())
+        }
+        Err(e) => {
+            app.push_note(
+                rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e:#}"))
+                    .to_string(),
+            );
+            Err(())
+        }
+    }
+}
+
 /// Persist the key (if required), build the in-process handler, swap the host.
 async fn perform_connect(
     spec: &'static ProviderSpec,
@@ -2732,46 +2839,19 @@ async fn perform_connect(
         // No host yet — startup produced no registrations (e.g. user
         // dismissed the migration picker with startup_providers = []).
         // Build a fresh single-entry pool host.
-        let (initial_model, maybe_warning) =
-            resolve_initial_model_for_with_caps(spec, Some(&registered_caps));
-        if let Some(w) = maybe_warning {
-            app.push_note(w);
-        }
-        let mut cfg = tool_bins.apply(
-            HostConfig::new(
-                ProviderEndpoint::StreamableHttp {
-                    url: "inproc://pool".into(),
-                },
-                initial_model,
-            )
-            .with_project_root(project_root.to_path_buf())
-            .with_app_version(env!("CARGO_PKG_VERSION")),
-        );
-        cfg.providers = vec![reg];
-        cfg.startup_connect = otto_host::StartupConnectPolicy::All;
-        cfg.routing_rules_path = crate::routing_pref::routing_toml_path();
-        match Host::start(cfg).await {
-            Ok(h) => {
-                // Surface any one-shot startup notes (e.g. routing.toml
-                // parse failure) before the host is stashed in host_slot.
-                for note in h.take_startup_notes() {
-                    app.push_note(note);
-                }
-                let host_arc = Arc::new(h);
-                // Register the `Arc<Host>` back into the host so
-                // `run_turn_inner` can construct a `ToolCallContext`
-                // for in-process tools (the `task` tool from the
-                // user-agents plugin, future built-ins, etc.).
-                host_arc.wire_self_arc();
-                *host_slot.write().await = Some(host_arc);
-            }
-            Err(e) => {
-                app.push_note(
-                    rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e:#}"))
-                        .to_string(),
-                );
-                return;
-            }
+        if bootstrap_first_pool_host(
+            spec,
+            reg,
+            &registered_caps,
+            host_slot,
+            project_root,
+            tool_bins,
+            app,
+        )
+        .await
+        .is_err()
+        {
+            return;
         }
     } else {
         // Pool already exists — add this provider to it additively.
@@ -3347,7 +3427,7 @@ async fn run_app(
     // route to silently-connected providers. Idempotent w.r.t. providers
     // bootstrap_pool_host already added (apply_pending_pool_add handles
     // PoolError::AlreadyRegistered as a debug no-op).
-    apply_pending_pool_add(app, &host_slot, true).await;
+    apply_pending_pool_add(app, &host_slot, &project_root, &tool_bins, true).await;
     apply_pending_gate(app, &host_slot).await;
     apply_pending_in_process_tools(app, &host_slot).await;
 
@@ -3742,7 +3822,7 @@ async fn run_app(
                 tracing::warn!(error = %e, "apply_effects from screen failed");
             }
             apply_pending_model_change(app, &host_slot, &project_root, &tool_bins).await;
-            apply_pending_pool_add(app, &host_slot, false).await;
+            apply_pending_pool_add(app, &host_slot, &project_root, &tool_bins, false).await;
             apply_pending_gate(app, &host_slot).await;
             apply_pending_in_process_tools(app, &host_slot).await;
             apply_pending_routing_reload(app, &host_slot).await;
@@ -4053,7 +4133,14 @@ async fn run_app(
                                         &tool_bins,
                                     )
                                     .await;
-                                    apply_pending_pool_add(app, &host_slot, false).await;
+                                    apply_pending_pool_add(
+                                        app,
+                                        &host_slot,
+                                        &project_root,
+                                        &tool_bins,
+                                        false,
+                                    )
+                                    .await;
                                     apply_pending_gate(app, &host_slot).await;
                                     apply_pending_in_process_tools(app, &host_slot).await;
                                     apply_pending_routing_reload(app, &host_slot).await;
@@ -4723,6 +4810,129 @@ mod connect_provider_selector_tests {
         assert!(connect.is_none());
         assert!(matches!(app.input_mode, InputMode::SelectingProvider));
         assert!(app.pending_provider.is_none());
+    }
+}
+
+/// Regression tests for issue #81 (reopened): the DeepSeek `/connect` picker
+/// path could silently drop a rejected — or, on the very next attempt,
+/// perfectly valid — credential whenever no host existed yet, because
+/// `apply_pending_pool_add` bailed out before it ever re-validated the
+/// stored key. See that function's doc comment for the full story.
+#[cfg(test)]
+mod apply_pending_pool_add_hostless_tests {
+    use super::*;
+    use crate::app::{Entry, PendingPoolAdd};
+    use crate::plugin::builtin::provider_common::test_support::use_mock_keyring;
+    use crate::test_helpers::{HOME_LOCK, HomeGuard};
+
+    /// Build a host-less `App` (mirrors a fresh session, or one where the
+    /// startup auto-connect found no usable credentials) via the same
+    /// bootstrap path `main` uses, so the plugin runtime and `App` state
+    /// are wired exactly like production.
+    async fn hostless_app() -> (App, HostSlot, std::path::PathBuf, ToolBins) {
+        build_app_with_host(
+            HostBoot {
+                host: None,
+                header_model: "(disconnected)".into(),
+                provider_id: None,
+                startup_notes: Vec::new(),
+                mcp_manager_seed: McpManagerSeed::default(),
+                startup_verbose: false,
+            },
+            std::env::temp_dir(),
+            ToolBins::default(),
+        )
+        .await
+        .expect("build_app_with_host must succeed with no host")
+    }
+
+    fn notes(app: &App) -> Vec<String> {
+        app.entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Note(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Before the fix: `Effect::RegisterProvider`'s silent-connect path
+    /// (picked DeepSeek from the picker with no `--rekey`, stored key
+    /// vanished/never validated) queued a `pending_pool_add`, and because no
+    /// host existed yet `apply_pending_pool_add` returned immediately after
+    /// a `tracing::warn!` — no note, no host, nothing the user could act on.
+    /// A later message then failed with the generic, unhelpful "Not
+    /// connected" — exactly issue #81's report. After the fix, the
+    /// credential is still re-validated (here: found missing) and the
+    /// outcome is always surfaced to the user, host or no host.
+    // Test-only HOME/keyring serialization intentionally spans the awaits
+    // below so concurrent tests can't race on the process-wide HOME
+    // override or the shared mock keyring.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn deepseek_reconnect_with_no_host_reports_missing_credential_instead_of_silently_dropping_it()
+     {
+        let _lock = HOME_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
+        use_mock_keyring();
+        rust_i18n::set_locale("en");
+
+        // No stored DeepSeek key and no env fallback: try_build_registration
+        // must resolve to `Unavailable`, the same shape a rejected-then
+        // never-fixed key eventually collapses to once the caller clears it.
+        let _ = keyring::Entry::new("otto", "deepseek").map(|e| e.delete_credential());
+        // SAFETY: HOME_LOCK held for the test's lifetime; no other test
+        // reads/writes DEEPSEEK_API_KEY concurrently.
+        unsafe { std::env::remove_var("DEEPSEEK_API_KEY") };
+
+        let (mut app, host_slot, project_root, tool_bins) = hostless_app().await;
+        assert!(
+            current_host(&host_slot).await.is_none(),
+            "test setup: session must start host-less"
+        );
+
+        app.pending_pool_add = Some(PendingPoolAdd {
+            id: otto_plugin::ProviderId::new("deepseek").expect("valid id"),
+            display_name: "DeepSeek".into(),
+        });
+
+        apply_pending_pool_add(&mut app, &host_slot, &project_root, &tool_bins, false).await;
+
+        assert!(
+            current_host(&host_slot).await.is_none(),
+            "no usable credential must not fabricate a host"
+        );
+        let joined = notes(&app).join("\n");
+        assert!(
+            joined.contains("deepseek"),
+            "the missing-credential outcome must be surfaced as a note \
+             even with no host yet (previously silent); notes were: {joined}"
+        );
+    }
+
+    /// Same host-less setup, but the pending id doesn't match any known
+    /// provider — must not panic and must not fabricate a host either.
+    // See the allow on the test above: HOME_LOCK intentionally spans the
+    // awaits below.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn unknown_provider_with_no_host_is_a_no_op() {
+        let _lock = HOME_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
+        rust_i18n::set_locale("en");
+
+        let (mut app, host_slot, project_root, tool_bins) = hostless_app().await;
+
+        app.pending_pool_add = Some(PendingPoolAdd {
+            id: otto_plugin::ProviderId::new("not-a-real-provider").expect("valid id"),
+            display_name: "Not A Real Provider".into(),
+        });
+
+        apply_pending_pool_add(&mut app, &host_slot, &project_root, &tool_bins, false).await;
+
+        assert!(current_host(&host_slot).await.is_none());
     }
 }
 
