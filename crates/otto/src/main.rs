@@ -228,10 +228,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// The `Send` result of the network half of bootstrap, handed back from the
-/// background Tokio worker to the UI thread. A named struct (rather than a bare
-/// 4-tuple) so the two `String`/`Vec<String>`-family members can't be
-/// transposed at a decode site.
+/// Result of building the provider-pool host, independent of `App`
+/// construction. A named struct (rather than a bare 4-tuple) so the two
+/// `String`/`Vec<String>`-family members can't be transposed at a decode
+/// site. Also the seam a test uses to hand [`build_app_with_host`] a
+/// synthetic result and exercise app/plugin startup without running the
+/// network-bearing `bootstrap_pool_host` — see
+/// `build_app_startup_skips_conflicting_user_exit_command`.
 pub(crate) struct HostBoot {
     /// The started provider-pool host, if startup connected successfully.
     pub host: Option<Arc<Host>>,
@@ -370,31 +373,17 @@ pub(crate) fn build_tool_bins() -> ToolBins {
     }
 }
 
-/// The network-bearing half of bootstrap: build the provider-pool host. Owns
-/// its arguments and returns only `Send` data ([`HostBoot`]), which is why it
-/// can be split from the `!Send` `App` construction in [`build_app_with_host`]
-/// at all. Nothing exploits that today: [`bootstrap_app_and_host`] is the sole
-/// caller and awaits both halves back to back on one task, so the split is
-/// currently a property of the types rather than something the scheduling
-/// depends on.
-pub(crate) async fn bootstrap_host_only(
-    project_root: PathBuf,
-    tool_bins: ToolBins,
-    config_file: config_file::ConfigFile,
-    mcp_server_diagnostics: Vec<String>,
-) -> HostBoot {
-    bootstrap_pool_host(
-        &project_root,
-        &tool_bins,
-        &config_file,
-        mcp_server_diagnostics,
-    )
-    .await
-}
-
-/// Full bootstrap: build the host (network) then `App` (local), awaited
-/// sequentially on one task. This is the only caller of either half, and the
-/// ratatui TUI path in `main` is the only caller of this.
+/// Bootstraps the TUI: build the provider-pool host, then `App` on top of
+/// it, awaited sequentially on one task. The ratatui TUI path in `main` is
+/// the only caller.
+///
+/// This used to be split into a `bootstrap_host_only` step, kept separate
+/// from [`build_app_with_host`] so the `Send`-only network half could in
+/// principle run on a background Tokio worker while the `!Send` `App` was
+/// built on the GUI thread of the now-removed egui front-end. With only one
+/// front-end left, nothing schedules the two halves apart, so that wrapper
+/// added a function without adding a caller and was folded back in here.
+/// [`build_app_with_host`] stays separate — see its doc comment.
 pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path::PathBuf, ToolBins)>
 {
     let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -403,20 +392,24 @@ pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path
         config_file::ConfigFile::load_or_default(&config_file::ConfigFile::default_path());
     let mcp_server_diagnostics = loaded_config.mcp_server_diagnostics;
     let config_file = loaded_config.config;
-    let initial = bootstrap_host_only(
-        project_root.clone(),
-        tool_bins.clone(),
-        config_file,
+    let initial = bootstrap_pool_host(
+        &project_root,
+        &tool_bins,
+        &config_file,
         mcp_server_diagnostics,
     )
     .await;
     build_app_with_host(initial, project_root, tool_bins).await
 }
 
-/// The local, `!Send` half of bootstrap: construct `App`, install the plugin
-/// runtime, and wrap the (already-built) host in a `HostSlot`. No network I/O
-/// happens here — only local manifest/plugin work — so it stays fast enough to
-/// await inline on the task that goes on to drive the TUI.
+/// Construct `App` from an already-built [`HostBoot`], install the plugin
+/// runtime, and wrap the host in a `HostSlot`. Kept as its own function
+/// (rather than inlined into [`bootstrap_app_and_host`]) because a test
+/// exploits exactly that seam: it hands this a synthetic `HostBoot` with
+/// `host: None` to exercise startup's app-construction and
+/// plugin-registration behavior without running the network-bearing
+/// `bootstrap_pool_host` — see
+/// `build_app_startup_skips_conflicting_user_exit_command`.
 pub(crate) async fn build_app_with_host(
     initial: HostBoot,
     project_root: std::path::PathBuf,
