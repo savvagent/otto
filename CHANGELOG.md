@@ -8,6 +8,8 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.27.0 - 2026-09-09
+
 ### Added
 
 - Otto now ships a built-in `/skills` slash command that lists skills discovered from
@@ -15,6 +17,18 @@ boundary changes and PATCH captures fixes).
   the project's `.github/skills/*/SKILL.md`, including each skill's name, source tier, and
   file-supplied description, with that description explicitly labeled as untrusted text. Skills
   that fail to parse are skipped and reported as a count rather than silently omitted. (#83)
+
+### Changed
+
+- **Breaking: the provider picker is the only way to connect.** `/connect` now ignores any
+  argument and always opens the picker; the provider-specific `/connect <provider>` commands
+  (`/connect anthropic`, `/connect gemini`, and the rest) are gone from the typed-command surface
+  and from the `/` command palette. Re-keying moved onto the picker too — highlight a provider and
+  press <kbd>Alt</kbd>+<kbd>Enter</kbd> instead of passing `--rekey`. The `connect <id>` slashes
+  still exist as internal plumbing for the picker, silent stored-key reconnect, and `--rekey`, so
+  no plugin ABI, SPP wire format, or on-disk format changed. Removing user-facing commands is
+  breaking, which ships this as a MINOR release under this repo's pre-1.0 SemVer policy. Recovery
+  hints across all four locale catalogs now point at `/connect` and the picker. (#82)
 
 ### Removed
 
