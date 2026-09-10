@@ -158,9 +158,14 @@ note. That makes the check strictest exactly where adaptation is absent: any cha
 canonical body must be mirrored immediately.
 
 Claude-Code-native skills with no canonical counterpart (`rust-engineer`, `tui-engineer`) have no
-port directory and are not iterated.
+port directory, so the per-file loop does not iterate them and nothing verifies their *content*.
+They are not unchecked, though: the top-level sweep requires every directory under
+`.claude/skills/` to be either a port or a name declared in the script's `NATIVE_SKILLS` allowlist,
+so a native skill is a deliberate, reviewable line rather than something a directory drifts into
+when its canonical is deleted.
 
-`.github/scripts/` does not exist yet and the repo contains no `.sh` file, though there is a
+On `main` before this change, `.github/scripts/` does not exist and the repo contains no `.sh` file
+(this change adds the first of each), though there is a
 precedent for CI *guards*: `.github/workflows/wit-dep-guard.yml` and `wit-portability-guard.yml`
 are inline `run:` bash blocks with `set -euo pipefail` and GitHub `::error::` annotations. This
 check follows their style but lives in a standalone script so a contributor can run it locally.
