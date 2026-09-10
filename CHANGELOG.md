@@ -8,6 +8,8 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.28.0 - 2026-09-10
+
 ### Added
 
 - `otto-plugin` gains constructors for the styled-text shape plugin screens build most often:
