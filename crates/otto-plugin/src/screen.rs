@@ -50,4 +50,13 @@ pub trait Screen: Send {
     fn tips(&self) -> Vec<StyledLine> {
         vec![]
     }
+
+    /// Optional: the remainder of a predicted completion, rendered as dim
+    /// "ghost" text immediately after the prompt's cursor. Returning `None`
+    /// (the default) means: no ghost text. This is advisory only — it is
+    /// never written into the prompt's editable buffer, so it can never be
+    /// deleted, submitted, or otherwise treated as real input.
+    fn ghost_completion(&self) -> Option<String> {
+        None
+    }
 }
