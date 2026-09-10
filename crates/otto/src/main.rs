@@ -1973,8 +1973,12 @@ pub(crate) async fn apply_pending_pool_add(
                         "apply_pending_pool_add: host.add_provider failed");
                     if show_notes {
                         app.push_note(
-                            rust_i18n::t!("notes.connect-failed", id = spec.id, err = format!("{e}"))
-                                .to_string(),
+                            rust_i18n::t!(
+                                "notes.connect-failed",
+                                id = spec.id,
+                                err = format!("{e}")
+                            )
+                            .to_string(),
                         );
                     }
                     return;
