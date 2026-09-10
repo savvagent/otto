@@ -86,10 +86,19 @@ The README has step-by-step recipes — the short version:
 
 ## Claude Code skills
 
-This repo's own committed skill location is `.github/skills/` (Copilot CLI's skill format, e.g. `otto-development`). `.claude/skills/<name>/SKILL.md` is the equivalent location for Claude-Code-compatible skills and is **committed**, not gitignored — `.claude/skills/rust-engineer/SKILL.md` is the existing precedent. Only repo-authored, project-specific skills belong there (mirroring or complementing `.github/skills/`, e.g. `rust-engineer`).
+This repo's own skills live in **two committed directories**, and neither is gitignored:
+
+- `.github/skills/<name>/SKILL.md` holds the **canonical body** of this repo's own workflow skills — `otto-development` (plus its `agent-prompts.md` companion) and `creating-github-issues` — in the Copilot CLI's skill format. These are the single source of truth for the workflows themselves.
+- `.claude/skills/<name>/SKILL.md` is what **Claude Code** discovers (it reads project skills from nowhere else), and holds two kinds of entry: Claude-Code-native skills with no canonical counterpart (`rust-engineer`, `tui-engineer`), and **adapter stubs** that delegate to a canonical body (`otto-development`, `creating-github-issues`).
+
+An adapter stub is a small real file carrying three things: `name`/`description` frontmatter copied verbatim from the canonical skill (so both hosts trigger on exactly the same requests), a `> **Canonical body:**` line naming the canonical file(s) with an instruction to read them before acting, and — for `otto-development` only — a Copilot→Claude Code host-mechanism translation table. It is deliberately neither a symlink nor a copy: a symlink cannot carry that translation (the canonical body is written for the orchestrating Copilot CLI and says so) and would need `core.symlinks=true` on a Windows checkout, while a copy would duplicate ~100KB of the repo's most-edited process document and drift on every workflow edit.
+
+**Adding a new skill under `.github/skills/` requires a `.claude/skills/<name>/SKILL.md` adapter stub in the same change.** `.github/scripts/check-claude-skill-stubs.sh`, run by CI's `lint` job, fails the build if a stub is missing, if a stub's `name`/`description` have drifted from the canonical, or if a stub points at a path that no longer exists. Run it locally before pushing with `bash .github/scripts/check-claude-skill-stubs.sh`.
+
+Precedence, for a repo-authored skill: the **canonical body governs the workflow** and the **stub governs only host-mechanism translation** — a stub never overrides a rule, it only says how to carry it out with Claude Code's tools. Read the canonical body before acting; the stub is not a summary of it.
 
 Generic or personal Claude Code skills pulled from `~/.claude/skills/` (e.g. a symlinked `creating-tickets`) are **not** added under this repo's `.claude/skills/` — they stay personal and machine-local in the contributor's home directory, never checked into this tree. Nothing needs to be gitignored as a result, since a correctly-scoped personal skill is never placed under the repo in the first place.
 
 Any tracker-related skill (ticket creation, issue triage, etc.) used while working in this repo must defer to this repo's actual tracker — **GitHub Issues**, via `gh issue`/`gh pr` and the conventions in `.github/skills/otto-development` — never a JIRA-first or other generic tracker abstraction a personal skill might assume.
 
-If a Claude Code skill and a `.github/skills/` skill overlap in purpose (e.g. a personal ticket-creation skill vs. `otto-development`'s own ticket conventions), this repo's own `.github/skills/` skill governs while working in this repo; the personal skill's generic guidance yields.
+If a *personal* skill from `~/.claude/skills/` overlaps a repo skill in purpose (e.g. a personal ticket-creation skill vs. `creating-github-issues`' own conventions), this repo's own skill governs while working in this repo; the personal skill's generic guidance yields.
