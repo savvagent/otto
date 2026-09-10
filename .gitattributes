@@ -1,0 +1,3 @@
+# Keep shell scripts LF-only so a core.autocrlf=true clone does not produce a
+# CRLF shebang that fails with a confusing "bad interpreter" error.
+*.sh text eol=lf
