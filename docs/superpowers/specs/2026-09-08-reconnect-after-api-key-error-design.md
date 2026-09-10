@@ -1,8 +1,13 @@
 # Afford a path back to a valid API key after a rejected connect — design
 
 Date: 2026-09-08
-Status: pending review
+Status: shipped in 0.26.2 (`savvagent/otto#81`)
 Related: `savvagent/otto#81`
+
+> **Note:** `savvagent/otto#94`/`#97`, landed after this shipped, removed the `egui_app` GUI
+> front-end referenced throughout §3 below. That section is kept as historical record of what was
+> implemented at the time (both front-ends did receive this fix) rather than rewritten to omit a
+> front-end that existed when this design was executed. See `savvagent/otto#99`.
 
 ## Problem
 
@@ -307,6 +312,10 @@ existing local-variable ownership in `run_app`) called from both the
 
 ### 3. The GUI front-end (`egui_app`) needs the identical treatment
 
+> **Historical:** `egui_app` was removed entirely by `savvagent/otto#94`/`#97`, after this section's
+> work shipped. `crates/otto/src/egui_app/mod.rs` no longer exists; the TUI (`main.rs`) is now
+> otto's only front-end. See `savvagent/otto#99`.
+
 `crates/otto/src/egui_app/mod.rs` is a second, independent front-end
 (`OttoApp`) sharing the same `pub(crate) WorkerMsg` enum from `main.rs` — its
 `handle_worker_msg` (`crates/otto/src/egui_app/mod.rs:193-316`) is an
@@ -466,7 +475,7 @@ exact command to fix it, so the issue's "never affords the user the ability
 to enter a valid API key" no longer applies to any of the three sites named
 in Problem.
 
-- [ ] `/connect anthropic` (or gemini/openai/deepseek) with a key rejected
+- [x] `/connect anthropic` (or gemini/openai/deepseek) with a key rejected
       by `list_models` with `ErrorKind::Authentication` shows `Connect to
       anthropic failed: <reason> Run /connect anthropic --rekey to try a
       different key.` (the new `notes.connect-rejected-keyed` text) instead
@@ -476,11 +485,11 @@ in Problem.
       with no `--rekey` hint, since rekeying would not fix those. A generic
       build error (the `Err(e)` arm, any provider) also still shows the
       unchanged `notes.connect-failed` text with no hint.
-- [ ] `local`/Ollama's `Rejected` case (its `spec.api_key_required` is
+- [x] `local`/Ollama's `Rejected` case (its `spec.api_key_required` is
       `false`) still shows the unchanged `notes.connect-failed` text with no
       `--rekey` hint regardless of `kind`, since re-entering a (nonexistent)
       key would not fix a connectivity problem.
-- [ ] The same keyed-rejection hint appears when a stored key goes bad and is
+- [x] The same keyed-rejection hint appears when a stored key goes bad and is
       caught by the silent-reconnect path (`apply_pending_pool_add`'s
       `Rejected` arm) **outside of startup** — i.e. when
       `apply_pending_pool_add` is invoked with `startup: false` (the runtime
@@ -495,24 +504,24 @@ in Problem.
       picks up the same new `notes.connect-rejected-keyed` text
       automatically (subject to the same `kind == ErrorKind::Authentication
       && spec.api_key_required` gate).
-- [ ] A turn routed to a non-active provider (via `@`-override, modality
+- [x] A turn routed to a non-active provider (via `@`-override, modality
       redirection, or a `routing.toml` rule) that fails with
       `ErrorKind::Authentication` shows a hint naming the *routed* provider
       (from `TurnEvent::RouteSelected`), not whatever `app.active_provider_id`
       happens to be at the time. Verified in both `main.rs`'s TUI front-end
       and `egui_app/mod.rs`'s GUI front-end.
-- [ ] A turn that fails with `ErrorKind::Authentication` (e.g. a revoked key
+- [x] A turn that fails with `ErrorKind::Authentication` (e.g. a revoked key
       caught only at first-prompt time, since `list_models` validation at
       connect time can't catch a key that goes bad *after* a successful
       connect) shows both the existing `Error: <name> rejected the request:
       <message>` note and a new `Run /connect <id> --rekey to enter a
       different API key for <name>.` note, in both front-ends.
-- [ ] A turn failing with any other `ErrorKind` (rate limit, overloaded,
+- [x] A turn failing with any other `ErrorKind` (rate limit, overloaded,
       context length, etc.) shows only the existing `Error: ...` note — no
       new hint, since `--rekey` would not fix those.
-- [ ] `cargo build --workspace` succeeds (i.e. `egui_app/mod.rs`'s
-      `handle_worker_msg` match remains exhaustive after adding
-      `WorkerMsg::TurnAuthError`), `cargo test --workspace` and
+- [x] `cargo build --workspace` succeeds (i.e. `egui_app/mod.rs`'s — since removed by
+      `savvagent/otto#94`/`#97`, see `savvagent/otto#99` — `handle_worker_msg` match remained
+      exhaustive after adding `WorkerMsg::TurnAuthError`), `cargo test --workspace` and
       `cargo clippy --workspace --all-targets` stay green, and
       `cargo fmt --all --check` passes.
 
