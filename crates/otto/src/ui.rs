@@ -1681,6 +1681,118 @@ mod tests {
         out
     }
 
+    /// Paint a real `PaletteScreen` through the real `paint_screen` and
+    /// look at the resulting cells. The palette's own unit tests check the
+    /// `Vec<StyledLine>` it emits; this checks what actually lands on the
+    /// terminal, which is where the sheet, the prompt row beneath it, and
+    /// the host's `tips()` overpaint interact.
+    #[tokio::test]
+    async fn palette_paints_over_the_prompt_without_a_filter_header() {
+        use crate::plugin::builtin::command_palette::screen::{PaletteCommand, PaletteScreen};
+        use otto_plugin::KeyCodePortable;
+
+        let cmd = |name: &str| PaletteCommand {
+            name: name.into(),
+            description: format!("{name} description"),
+            needs_arg: false,
+        };
+        let mut screen = PaletteScreen::with_commands(vec![
+            cmd("changelog"),
+            cmd("clear"),
+            cmd("connect"),
+            cmd("exit"),
+        ]);
+        // Type `c` — three commands match, and under the old behavior the
+        // sheet would have drawn `> c` directly above the prompt.
+        screen
+            .on_key(KeyEventPortable {
+                code: KeyCodePortable::Char('c'),
+                modifiers: otto_plugin::KeyMods::default(),
+            })
+            .await
+            .expect("palette handles a char key");
+
+        let buffer = render_paint_screen(
+            &screen,
+            &ScreenLayout::BottomSheet { height: 12 },
+            Palette::for_theme(Theme::Dark),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = buffer_text(&buffer);
+
+        assert!(
+            !text.contains("> c"),
+            "the sheet must not draw its own filter header:\n{text}"
+        );
+        for name in ["/changelog", "/clear", "/connect"] {
+            assert!(text.contains(name), "expected {name} in:\n{text}");
+        }
+        assert!(
+            !text.contains("/exit"),
+            "a filtered-out command must not paint:\n{text}"
+        );
+        assert!(
+            text.contains("\u{25b6} /changelog"),
+            "the highlighted row must paint its marker:\n{text}"
+        );
+        // The host overpaints the sheet's last row with tips(); the marker
+        // must not be sitting on it.
+        let marker_row = text
+            .lines()
+            .position(|l| l.contains("\u{25b6}"))
+            .expect("marker row");
+        let tips_row = text
+            .lines()
+            .position(|l| l.contains("navigate"))
+            .expect("tips row");
+        assert!(
+            marker_row < tips_row,
+            "the selected row {marker_row} must paint above the tips row {tips_row}:\n{text}"
+        );
+    }
+
+    /// The blank-panel regression, checked on the painted cells: dropping
+    /// the sheet's `> <filter>` header removed the only line this state
+    /// used to draw, so without its own empty state the palette would
+    /// paint an empty rectangle above the prompt.
+    #[tokio::test]
+    async fn palette_with_no_matches_paints_an_empty_state() {
+        use crate::plugin::builtin::command_palette::screen::{PaletteCommand, PaletteScreen};
+        use otto_plugin::KeyCodePortable;
+
+        let mut screen = PaletteScreen::with_commands(vec![PaletteCommand {
+            name: "clear".into(),
+            description: "clear description".into(),
+            needs_arg: false,
+        }]);
+        for ch in "xyz".chars() {
+            screen
+                .on_key(KeyEventPortable {
+                    code: KeyCodePortable::Char(ch),
+                    modifiers: otto_plugin::KeyMods::default(),
+                })
+                .await
+                .expect("palette handles a char key");
+        }
+
+        let buffer = render_paint_screen(
+            &screen,
+            &ScreenLayout::BottomSheet { height: 12 },
+            Palette::for_theme(Theme::Dark),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let text = buffer_text(&buffer);
+
+        assert!(
+            text.contains(rust_i18n::t!("picker.command-palette.no-matches").as_ref()),
+            "a filter matching nothing must paint an empty state, not a blank sheet:\n{text}"
+        );
+        assert!(
+            !text.contains("/clear"),
+            "the filtered-out command must not paint:\n{text}"
+        );
+    }
+
     #[test]
     fn canvas_content_area_unfocused_is_unchanged() {
         let area = Rect {
