@@ -47,18 +47,11 @@ impl Screen for ThemePickerScreen {
 
         let filtered = self.inner.filtered_themes();
         if filtered.is_empty() {
-            out.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!(
-                        "picker.themes.no-match",
-                        filter = self.inner.filter.clone()
-                    )
+            out.push(StyledLine::colored(
+                rust_i18n::t!("picker.themes.no-match", filter = self.inner.filter.clone())
                     .to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+                ThemeColor::Warning,
+            ));
             return out;
         }
 
@@ -79,27 +72,17 @@ impl Screen for ThemePickerScreen {
             .collect();
 
         if !builtins.is_empty() {
-            out.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.themes.section-builtin").to_string(),
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            out.push(StyledLine::muted(
+                rust_i18n::t!("picker.themes.section-builtin").to_string(),
+            ));
             for (i, t) in &builtins {
                 out.push(self.row(*i, *t));
             }
         }
         if !catalog.is_empty() {
-            out.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.themes.section-catalog").to_string(),
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            out.push(StyledLine::muted(
+                rust_i18n::t!("picker.themes.section-catalog").to_string(),
+            ));
             for (i, t) in &catalog {
                 out.push(self.row(*i, *t));
             }
@@ -283,7 +266,10 @@ mod tests {
         for c in "zzzzzznomatch".chars() {
             let _ = s.on_key(key(KeyCodePortable::Char(c))).await.unwrap();
         }
-        assert!(s.inner.filtered_themes().is_empty(), "filter should match nothing");
+        assert!(
+            s.inner.filtered_themes().is_empty(),
+            "filter should match nothing"
+        );
         let lines = s.render(Region {
             x: 0,
             y: 0,

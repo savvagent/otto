@@ -18,7 +18,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, Region, SlashSpec, SlotSpec, StyledLine, StyledSpan, TextMods, ThemeColor,
+    PluginKind, Region, SlashSpec, SlotSpec, StyledLine, ThemeColor,
 };
 use tokio::time::MissedTickBehavior;
 
@@ -138,14 +138,7 @@ fn opt_out_active() -> bool {
 /// scaffolding.
 fn note_effect(text: String) -> Effect {
     Effect::PushNote {
-        line: StyledLine {
-            spans: vec![StyledSpan {
-                text,
-                fg: None,
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        },
+        line: StyledLine::plain(text),
     }
 }
 
@@ -519,14 +512,7 @@ impl Plugin for SelfUpdatePlugin {
             }
             _ => return vec![],
         };
-        vec![StyledLine {
-            spans: vec![StyledSpan {
-                text,
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }]
+        vec![StyledLine::colored(text, ThemeColor::Accent)]
     }
 }
 

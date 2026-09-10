@@ -104,14 +104,7 @@ impl Plugin for HomeFooterPlugin {
                     Some(id) => rust_i18n::t!("footer.turn-working", id = id).to_string(),
                     None => rust_i18n::t!("footer.idle").to_string(),
                 };
-                vec![StyledLine {
-                    spans: vec![StyledSpan {
-                        text: turn,
-                        fg: Some(ThemeColor::Accent),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    }],
-                }]
+                vec![StyledLine::colored(turn, ThemeColor::Accent)]
             }
             "home.footer.right" => {
                 // Layout: working_dir · ~N ctx · $0.00 · vX.Y.Z

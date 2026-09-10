@@ -65,14 +65,10 @@ impl Screen for PluginsManagerScreen {
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         let mut out = Vec::with_capacity(self.rows.len());
         if self.rows.is_empty() {
-            out.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.plugins-manager.no-plugins").to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            out.push(StyledLine::colored(
+                rust_i18n::t!("picker.plugins-manager.no-plugins").to_string(),
+                ThemeColor::Warning,
+            ));
             return out;
         }
         for (i, row) in self.rows.iter().enumerate() {
@@ -155,15 +151,10 @@ impl Screen for PluginsManagerScreen {
                 };
                 if matches!(row.kind, PluginKind::Core) {
                     return Ok(vec![Effect::PushNote {
-                        line: StyledLine {
-                            spans: vec![StyledSpan {
-                                text: rust_i18n::t!("picker.plugins-manager.core-cannot-disable")
-                                    .to_string(),
-                                fg: Some(ThemeColor::Warning),
-                                bg: None,
-                                modifiers: TextMods::default(),
-                            }],
-                        },
+                        line: StyledLine::colored(
+                            rust_i18n::t!("picker.plugins-manager.core-cannot-disable").to_string(),
+                            ThemeColor::Warning,
+                        ),
                     }]);
                 }
                 row.enabled = !row.enabled;

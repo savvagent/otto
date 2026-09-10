@@ -41,14 +41,10 @@ impl Screen for ModelPickerScreen {
 
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         if self.models.is_empty() {
-            return vec![StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.model.no-models").to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            }];
+            return vec![StyledLine::colored(
+                rust_i18n::t!("picker.model.no-models").to_string(),
+                ThemeColor::Warning,
+            )];
         }
         self.models
             .iter()

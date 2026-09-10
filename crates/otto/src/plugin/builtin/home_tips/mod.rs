@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, Region, SlotSpec, StyledLine, StyledSpan, TextMods, ThemeColor,
+    PluginKind, Region, SlotSpec, StyledLine, ThemeColor,
 };
 
 /// TUI home-screen tips plugin.
@@ -62,14 +62,7 @@ impl Plugin for HomeTipsPlugin {
         } else {
             rust_i18n::t!("tips.connecting").to_string()
         };
-        vec![StyledLine {
-            spans: vec![StyledSpan {
-                text,
-                fg: Some(ThemeColor::Muted),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }]
+        vec![StyledLine::muted(text)]
     }
 
     async fn on_event(&mut self, event: HostEvent) -> Result<Vec<Effect>, PluginError> {

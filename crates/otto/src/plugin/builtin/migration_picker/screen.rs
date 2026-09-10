@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, ProviderId, Region, Screen, StyledLine,
-    StyledSpan, TextMods, ThemeColor,
+    ThemeColor,
 };
 
 /// First-launch migration picker screen.
@@ -52,14 +52,7 @@ impl Screen for MigrationPickerScreen {
         let mut lines = vec![
             StyledLine::plain(title),
             StyledLine::plain(""),
-            StyledLine {
-                spans: vec![StyledSpan {
-                    text: hint,
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            },
+            StyledLine::muted(hint),
             StyledLine::plain(""),
         ];
 

@@ -136,14 +136,10 @@ impl Screen for ConnectPickerScreen {
             return vec![
                 StyledLine::plain(rust_i18n::t!("picker.connect.no-providers").to_string()),
                 StyledLine::plain(""),
-                StyledLine {
-                    spans: vec![StyledSpan {
-                        text: rust_i18n::t!("picker.connect.open-plugins-hint").to_string(),
-                        fg: Some(ThemeColor::Warning),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    }],
-                },
+                StyledLine::colored(
+                    rust_i18n::t!("picker.connect.open-plugins-hint").to_string(),
+                    ThemeColor::Warning,
+                ),
             ];
         }
         let mut lines = Vec::new();
@@ -448,7 +444,11 @@ mod tests {
         // colour by mistake during a mechanical rewrite.
         let no_match_line = lines
             .iter()
-            .find(|l| l.spans.first().is_some_and(|s| s.text == "No providers match"))
+            .find(|l| {
+                l.spans
+                    .first()
+                    .is_some_and(|s| s.text == "No providers match")
+            })
             .expect("no-match line");
         assert_eq!(no_match_line.spans[0].fg, Some(ThemeColor::Muted));
         assert_eq!(no_match_line.spans[1].fg, Some(ThemeColor::Accent));

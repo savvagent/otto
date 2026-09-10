@@ -1429,18 +1429,14 @@ fn footer_center_lines(
                 busy_turn_id.is_some() && Some(idx) == turn_line_idx && !line.spans.is_empty();
             let mut line = if rewrite_for_pending && !line.spans.is_empty() {
                 crate::plugin::convert::styled_line_to_ratatui(
-                    otto_plugin::StyledLine {
-                        spans: vec![otto_plugin::StyledSpan {
-                            text: rust_i18n::t!(
-                                "footer.turn-working",
-                                id = pending_turn_id.expect("checked is_some above")
-                            )
-                            .to_string(),
-                            fg: Some(otto_plugin::ThemeColor::Accent),
-                            bg: None,
-                            modifiers: otto_plugin::TextMods::default(),
-                        }],
-                    },
+                    otto_plugin::StyledLine::colored(
+                        rust_i18n::t!(
+                            "footer.turn-working",
+                            id = pending_turn_id.expect("checked is_some above")
+                        )
+                        .to_string(),
+                        otto_plugin::ThemeColor::Accent,
+                    ),
                     &palette,
                 )
             } else {
@@ -2162,14 +2158,7 @@ mod tests {
     fn footer_turn_state_lines_busy_include_working_label() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working.clone(),
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working.clone(), ThemeColor::Accent)];
 
         let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
 
@@ -2198,14 +2187,7 @@ mod tests {
     fn footer_turn_state_lines_busy_include_spinner_glyph_output() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working.clone(),
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working.clone(), ThemeColor::Accent)];
 
         let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
         let rendered = joined_ratatui(&out[0]);
@@ -2224,14 +2206,7 @@ mod tests {
     fn footer_turn_state_lines_busy_use_accent_and_muted_spinner_colors() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working.clone(),
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working.clone(), ThemeColor::Accent)];
         let palette = palette();
 
         let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);
@@ -2262,14 +2237,7 @@ mod tests {
     fn footer_turn_state_lines_busy_change_spinner_frame_across_ticks() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working,
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working, ThemeColor::Accent)];
         let palette = palette();
 
         let a = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);

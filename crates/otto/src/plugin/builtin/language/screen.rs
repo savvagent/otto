@@ -39,18 +39,14 @@ impl Screen for LanguagePickerScreen {
 
         let filtered = self.inner.filtered();
         if filtered.is_empty() {
-            out.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!(
-                        "picker.language.no-match",
-                        filter = self.inner.filter.clone()
-                    )
-                    .to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            out.push(StyledLine::colored(
+                rust_i18n::t!(
+                    "picker.language.no-match",
+                    filter = self.inner.filter.clone()
+                )
+                .to_string(),
+                ThemeColor::Warning,
+            ));
             return out;
         }
 

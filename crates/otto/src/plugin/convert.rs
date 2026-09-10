@@ -261,14 +261,7 @@ mod tests {
     #[test]
     fn styled_line_to_ratatui_produces_spans() {
         use otto_plugin::{StyledSpan, TextMods};
-        let line = StyledLine {
-            spans: vec![StyledSpan {
-                text: "hello".into(),
-                fg: Some(ThemeColor::Green),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        };
+        let line = StyledLine::colored("hello", ThemeColor::Green);
         let palette = crate::palette::Palette::for_theme(
             crate::plugin::builtin::themes::catalog::Theme::Dark,
         );

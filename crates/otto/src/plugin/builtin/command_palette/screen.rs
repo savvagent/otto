@@ -106,14 +106,9 @@ impl Screen for PaletteScreen {
         let mut lines: Vec<StyledLine> = Vec::new();
         if self.commands.is_empty() {
             lines.push(StyledLine::plain(""));
-            lines.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.command-palette.no-commands").to_string(),
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            lines.push(StyledLine::muted(
+                rust_i18n::t!("picker.command-palette.no-commands").to_string(),
+            ));
             return lines;
         }
         // Computed once: `render` runs at >=20Hz and `filtered` allocates
@@ -125,14 +120,9 @@ impl Screen for PaletteScreen {
         // this state would otherwise render as a blank rectangle.
         if filtered.is_empty() {
             lines.push(StyledLine::plain(""));
-            lines.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.command-palette.no-matches").to_string(),
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            lines.push(StyledLine::muted(
+                rust_i18n::t!("picker.command-palette.no-matches").to_string(),
+            ));
             return lines;
         }
         // Align description column across rows by padding the slash-name
@@ -192,14 +182,7 @@ impl Screen for PaletteScreen {
         if hint.is_empty() {
             lines.push(StyledLine::plain(""));
         } else {
-            lines.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: hint,
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            lines.push(StyledLine::muted(hint));
         }
         for (visual_idx, (_, cmd)) in filtered[window_start..window_end]
             .iter()
@@ -599,7 +582,11 @@ mod tests {
         // Pins span colours so the #117 constructor rewrite cannot change them silently.
         let hint_line = lines
             .iter()
-            .find(|l| l.spans.first().is_some_and(|s| s.text.contains("more below")))
+            .find(|l| {
+                l.spans
+                    .first()
+                    .is_some_and(|s| s.text.contains("more below"))
+            })
             .expect("scroll-hint line");
         assert_eq!(hint_line.spans[0].fg, Some(ThemeColor::Muted));
 
@@ -622,7 +609,11 @@ mod tests {
         // Pins span colours so the #117 constructor rewrite cannot change them silently.
         let hint_line = lines
             .iter()
-            .find(|l| l.spans.first().is_some_and(|s| s.text.contains("more above")))
+            .find(|l| {
+                l.spans
+                    .first()
+                    .is_some_and(|s| s.text.contains("more above"))
+            })
             .expect("scroll-hint line");
         assert_eq!(hint_line.spans[0].fg, Some(ThemeColor::Muted));
     }

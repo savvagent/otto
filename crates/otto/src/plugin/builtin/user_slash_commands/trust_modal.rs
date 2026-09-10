@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, Region, Screen, ScreenArgs, StyledLine,
-    StyledSpan, TextMods, ThemeColor,
+    ThemeColor,
 };
 
 /// The trust modal pushed onto the screen stack via
@@ -35,14 +35,10 @@ impl Screen for TrustModal {
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         let path_str = self.project_root.display().to_string();
         vec![
-            StyledLine {
-                spans: vec![StyledSpan {
-                    text: format!("Commands in {path_str} use shell substitution (!cmd)."),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            },
+            StyledLine::colored(
+                format!("Commands in {path_str} use shell substitution (!cmd)."),
+                ThemeColor::Warning,
+            ),
             StyledLine::plain("Trust this project's commands?".to_string()),
             StyledLine::plain(
                 "  y = always   n = this session (text-only)   q = cancel".to_string(),
