@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(agent_span.fg, Some(ThemeColor::Accent));
     }
 
-    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     #[test]
     fn summarize_tool_call_span_colors_are_pinned() {

@@ -180,7 +180,7 @@ mod tests {
         );
     }
 
-    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     #[test]
     fn search_call_span_colors_are_pinned() {

@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(path_span.fg, Some(ThemeColor::Success));
     }
 
-    // Pins span colours so the #117 `StyledSpan::colored()` -> `StyledSpan::colored()` constructor
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
     // rewrite cannot change them silently.
     fn pairs(spans: &[StyledSpan]) -> Vec<(&str, Option<ThemeColor>)> {
         spans.iter().map(|s| (s.text.as_str(), s.fg)).collect()
