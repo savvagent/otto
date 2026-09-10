@@ -209,6 +209,7 @@ tips              = "Enter confiar e instalar · Esc cancelar"
 [picker.command-palette]
 modal-title       = "Paleta de comandos"
 no-commands       = "(no hay comandos disponibles)"
+no-matches        = "(ningún comando coincide)"
 tips              = "↑/↓ navegar · escribe para filtrar · Enter ejecutar · Esc cancelar"
 
 [picker.prompt-keybindings]

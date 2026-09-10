@@ -98,12 +98,32 @@ impl Screen for PaletteScreen {
     }
 
     fn render(&self, region: Region) -> Vec<StyledLine> {
-        let mut lines = vec![StyledLine::plain(format!("> {}", self.filter))];
+        // No `> <filter>` header here: the sheet is anchored directly above
+        // the prompt (`ui.rs::bottom_sheet_rect`), and the prompt now echoes
+        // the filter itself, so a header would put the same string on two
+        // adjacent rows. The prompt is the input surface; this is the list.
+        let mut lines: Vec<StyledLine> = Vec::new();
         if self.commands.is_empty() {
             lines.push(StyledLine::plain(""));
             lines.push(StyledLine {
                 spans: vec![StyledSpan {
                     text: rust_i18n::t!("picker.command-palette.no-commands").to_string(),
+                    fg: Some(ThemeColor::Muted),
+                    bg: None,
+                    modifiers: TextMods::default(),
+                }],
+            });
+            return lines;
+        }
+        // A filter matching nothing needs its own empty state, and it has to
+        // return here — before the windowing arithmetic — so the blank
+        // spacer row below doesn't land above it. Without the old header
+        // this state would otherwise render as a blank rectangle.
+        if self.filtered().is_empty() {
+            lines.push(StyledLine::plain(""));
+            lines.push(StyledLine {
+                spans: vec![StyledSpan {
+                    text: rust_i18n::t!("picker.command-palette.no-matches").to_string(),
                     fg: Some(ThemeColor::Muted),
                     bg: None,
                     modifiers: TextMods::default(),
@@ -126,18 +146,28 @@ impl Screen for PaletteScreen {
             .max(12)
             + 2;
         // The list lives in a fixed-height `BottomSheet`, so a long,
-        // unfiltered command set (30+ builtins) won't fit. Window the
-        // rows around the cursor, budgeting *three* of the region's rows
-        // for non-command chrome: the `> filter` line (already pushed),
-        // the spacer/scroll-hint line, and the sheet's last row — which
-        // the host overpaints with our `tips()` after the paragraph
-        // (`ui.rs::paint_screen`). Reserving only two would put a row we
-        // still drew underneath the tips line, and since the window is
-        // anchored so the cursor sits on its *last* row that hidden row
-        // is the selected one: the `▶` highlight would vanish for every
-        // scrolled list. Then show a scroll hint in place of the usual
-        // blank spacer row whenever the window doesn't reach an edge.
-        let capacity = (region.height as usize).saturating_sub(3).max(1);
+        // unfiltered command set (30+ builtins) won't fit. Window the rows
+        // around the cursor, budgeting *two* of the region's rows for
+        // non-command chrome: the spacer/scroll-hint line, and the sheet's
+        // last row — which the host overpaints with our `tips()` after the
+        // paragraph (`ui.rs::paint_screen`). Reserving one fewer would put
+        // a row we still drew underneath the tips line, and since the
+        // window is anchored so the cursor sits on its *last* row, that
+        // hidden row is the selected one: the `▶` highlight would vanish
+        // for every scrolled list. (This was three while `render` also
+        // drew a `> filter` header; dropping that header freed a row.)
+        //
+        // The spacer stays unconditional even with the header gone.
+        // Reclaiming it when there is no hint would be circular: `hint`
+        // derives from `hidden_above`/`hidden_below`, which derive from
+        // `capacity`, which would then derive from `hint`.
+        //
+        // `.max(1)` is a floor, not panic-protection — a capacity of 0
+        // yields a valid empty slice. What it does at `height <= 2` is
+        // force one row into a budget with no room for it, so `tips()`
+        // overpaints the `▶` row. That boundary is pre-existing and this
+        // change shrinks it: it used to bite at `height <= 3`.
+        let capacity = (region.height as usize).saturating_sub(2).max(1);
         let window_start = if filtered.len() <= capacity {
             0
         } else {
@@ -469,7 +499,7 @@ mod tests {
     async fn long_list_fits_shows_no_scroll_hint() {
         let commands: Vec<_> = (0..5).map(|i| cmd(&format!("cmd{i}"), false)).collect();
         let p = PaletteScreen::with_commands(commands);
-        // capacity = height(12) - 3 = 9, which comfortably fits all 5 rows.
+        // capacity = height(12) - 2 = 10, which comfortably fits all 5 rows.
         let lines = p.render(Region {
             x: 0,
             y: 0,
@@ -496,7 +526,7 @@ mod tests {
     async fn overflowing_list_windows_around_cursor_with_scroll_hint() {
         let commands: Vec<_> = (0..20).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
         let mut p = PaletteScreen::with_commands(commands);
-        // capacity = height(6) - 3 = 3 visible rows out of 20 commands.
+        // capacity = height(6) - 2 = 4 visible rows out of 20 commands.
         let region = Region {
             x: 0,
             y: 0,
@@ -509,13 +539,14 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
-        // Cursor starts at 0: window is [0, 3), nothing hidden above but
-        // 17 rows hidden below.
+        // Cursor starts at 0: window is [0, 4), nothing hidden above but
+        // 16 rows hidden below.
         assert!(joined.contains("/cmd00"));
         assert!(joined.contains("/cmd01"));
         assert!(joined.contains("/cmd02"));
-        assert!(!joined.contains("/cmd03"));
-        assert!(joined.contains("↓17 more below"));
+        assert!(joined.contains("/cmd03"));
+        assert!(!joined.contains("/cmd04"));
+        assert!(joined.contains("↓16 more below"));
         assert!(
             !joined.contains("more above"),
             "nothing is hidden above at the top of the list, got: {joined}"
@@ -532,7 +563,7 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
         assert!(joined.contains("/cmd19"));
-        assert!(joined.contains("↑17 more above"));
+        assert!(joined.contains("↑16 more above"));
         assert!(
             !joined.contains("more below"),
             "nothing is hidden below at the end of the list, got: {joined}"
@@ -545,38 +576,105 @@ mod tests {
     /// sits on its last row, which is precisely the row that would be
     /// swallowed — leaving the `▶` selection invisible for the rest of
     /// the list once it scrolls.
+    ///
+    /// Swept across region heights rather than pinned to one, because the
+    /// reserved-row count is a constant that a future edit can move by
+    /// one without any single height noticing.
+    ///
+    /// The sweep starts at 3: at `height <= 2` the `.max(1)` floor forces
+    /// one command row into a budget with no room for it, so the
+    /// line-count bound is false by construction there. That boundary is
+    /// pre-existing and documented at the `capacity` binding; the `▶`
+    /// presence half is asserted at every height including those.
     #[tokio::test]
-    async fn cursor_row_never_lands_on_the_tips_row() {
-        let commands: Vec<_> = (0..30).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
-        let mut p = PaletteScreen::with_commands(commands);
-        let region = Region {
+    async fn cursor_row_never_lands_on_the_tips_row_at_any_height() {
+        for height in 1..=14u16 {
+            let commands: Vec<_> = (0..30).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
+            let mut p = PaletteScreen::with_commands(commands);
+            let region = Region {
+                x: 0,
+                y: 0,
+                width: 80,
+                height,
+            };
+
+            // Walk the whole list; at no point may the selected row fall
+            // on (or past) the row the tips line will claim.
+            for step in 0..30 {
+                let lines = p.render(region);
+                let cursor_row = lines
+                    .iter()
+                    .position(|l| l.spans.iter().any(|s| s.text.starts_with("▶")))
+                    .unwrap_or_else(|| {
+                        panic!("selected row missing at height {height}, step {step}")
+                    });
+
+                if height >= 3 {
+                    let visible = height as usize - 1; // tips row is not ours
+                    assert!(
+                        lines.len() <= visible,
+                        "height {height}: render emitted {} lines into {visible} usable rows",
+                        lines.len()
+                    );
+                    assert!(
+                        cursor_row < visible,
+                        "height {height}: cursor row {cursor_row} would be overpainted by tips"
+                    );
+                }
+                p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+            }
+        }
+    }
+
+    /// The sheet must never render as a blank panel. With commands loaded
+    /// but a filter matching none of them, the old `> <filter>` header was
+    /// the only line drawn; removing it without an empty state would leave
+    /// an empty rectangle above the prompt.
+    #[tokio::test]
+    async fn no_match_renders_an_empty_state_not_a_blank_sheet() {
+        let mut p = fixture();
+        for ch in "xyz".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert!(p.filtered().is_empty(), "filter should match nothing");
+        let lines = p.render(Region {
             x: 0,
             y: 0,
             width: 80,
             height: 12,
-        };
+        });
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
+            .collect();
+        assert!(
+            joined.contains(rust_i18n::t!("picker.command-palette.no-matches").as_ref()),
+            "no-match render should show the empty state, got: {joined:?}"
+        );
+        assert!(
+            !joined.trim().is_empty(),
+            "the sheet must not be blank when the filter matches nothing"
+        );
+    }
 
-        // Walk the whole list; at no point may the selected row fall on
-        // (or past) the row the tips line will claim.
-        for _ in 0..30 {
-            let lines = p.render(region);
-            let visible = region.height as usize - 1; // tips row is not ours
-            assert!(
-                lines.len() <= visible,
-                "render emitted {} lines into {} usable rows",
-                lines.len(),
-                visible
-            );
-            let cursor_row = lines
+    /// The sheet no longer draws its own `> <filter>` header — the prompt
+    /// one row below echoes the filter, so a header would duplicate it.
+    #[tokio::test]
+    async fn render_has_no_filter_header() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        let lines = p.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 12,
+        });
+        assert!(
+            !lines
                 .iter()
-                .position(|l| l.spans.iter().any(|s| s.text.starts_with("▶")))
-                .expect("the selected row must always be rendered");
-            assert!(
-                cursor_row < visible,
-                "cursor row {cursor_row} would be overpainted by the tips row"
-            );
-            p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        }
+                .any(|l| l.spans.iter().any(|s| s.text.starts_with("> "))),
+            "no rendered line may start with the old header prefix"
+        );
     }
 
     /// A filtered list whose length is exactly the capacity must render in
@@ -584,8 +682,8 @@ mod tests {
     /// while reporting `0 more below`.
     #[tokio::test]
     async fn list_exactly_filling_capacity_renders_every_row() {
-        // capacity = height(12) - 3 = 9.
-        let commands: Vec<_> = (0..9).map(|i| cmd(&format!("cmd{i}"), false)).collect();
+        // capacity = height(12) - 2 = 10.
+        let commands: Vec<_> = (0..10).map(|i| cmd(&format!("cmd{i}"), false)).collect();
         let p = PaletteScreen::with_commands(commands);
         let lines = p.render(Region {
             x: 0,
@@ -597,7 +695,7 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
-        for i in 0..9 {
+        for i in 0..10 {
             assert!(joined.contains(&format!("/cmd{i}")), "missing /cmd{i}");
         }
         assert!(!joined.contains("more below"));

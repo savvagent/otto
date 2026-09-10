@@ -213,6 +213,7 @@ tips              = "Enter trust + install · Esc cancel"
 [picker.command-palette]
 modal-title       = "Command Palette"
 no-commands       = "(no commands available)"
+no-matches        = "(no commands match)"
 tips              = "↑/↓ navigate · type to filter · Enter run · Esc cancel"
 
 [picker.prompt-keybindings]
