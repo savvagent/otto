@@ -8,6 +8,17 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.28.1 - 2026-09-10
+
+### Fixed
+
+- `Screen::render`'s `Fullscreen` and `BottomSheet` layouts no longer let the runtime overpaint a
+  screen's own last row with `tips()`. The runtime now reserves that row out of the region handed
+  to `render` before calling it, instead of painting `tips()` over whatever the screen already drew
+  there — matching `Screen::render`'s documented contract that chrome is painted around the
+  screen's content, not inside it. The command palette's own reserved-row budget shrinks
+  accordingly, since it no longer needs to compensate for the overpaint itself. (#116)
+
 ## 0.28.0 - 2026-09-10
 
 ### Added
