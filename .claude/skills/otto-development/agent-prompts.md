@@ -364,6 +364,15 @@ pass the spec, the plan, the brief, the PR body or an implementer report. The di
 free to invoke the `security-review` skill itself inside its own fresh context; that is where the
 skill form is safe.
 
+**Read-only by instruction, not by construction — so say it in the prompt.** Copilot CLI's
+`security-review` agent type is read-only by construction; `general-purpose` is not — it holds
+Bash, Edit and Write in the live worktree. Substituting the one for the other therefore has to
+carry its own constraint, or the port would downgrade the mandatory gate from an auditor that
+cannot write to one that can, with read-only status asserted only in prose. The prompt below opens
+with that constraint; keep it there. (This paragraph and that constraint exist *only* because the
+two hosts' dispatch mechanisms differ in what the reviewer can do — which is exactly what a port is
+allowed to diverge on. The canonical needs neither.)
+
 Keep the "do not read" instruction attached to the prompt. The severity-table output contract below
 is what this workflow requires of the pass; the prompt also tells it to skip the follow-up question
 so a fully autonomous run doesn't stall — you (the orchestrator) apply the fix-loop rule instead
@@ -380,6 +389,13 @@ Agent tool:
     built in, so this prompt carries the role. If the `security-review` skill is available to you,
     you may invoke it here: you are a fresh context that has seen nothing but this prompt, which is
     exactly where that skill is safe to run.
+
+    READ-ONLY, HARD CONSTRAINT. Do not modify, create or delete any file. Do not commit, push,
+    stage, stash, or run any command that writes — to the worktree, to git, or to GitHub. `gh pr
+    diff` and other read commands are fine. If you believe a fix is needed, describe it in your
+    findings with a file:line ref and the concrete change — do not apply it. An auditor that also
+    writes is not an independent gate, and this pass is the only security control in an autonomous
+    merge pipeline.
 
     Read ONLY the diff: `gh pr diff <N>`.
     Do NOT read the PR description, the issue, the spec, the plan, or any summary of intent. Your

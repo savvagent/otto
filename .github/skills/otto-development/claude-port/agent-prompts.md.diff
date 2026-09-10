@@ -188,7 +188,7 @@
    description: "Architecture review: PR #<N>"
    prompt: |
      Review PR #<N> of savvagent/otto (`gh pr diff <N>`) for architectural consistency, for
-@@ -340,23 +352,35 @@
+@@ -340,23 +352,51 @@
      Report: Strengths, Issues (Critical / Important / Minor), Assessment.
  ```
  
@@ -210,6 +210,15 @@
 +free to invoke the `security-review` skill itself inside its own fresh context; that is where the
 +skill form is safe.
 +
++**Read-only by instruction, not by construction — so say it in the prompt.** Copilot CLI's
++`security-review` agent type is read-only by construction; `general-purpose` is not — it holds
++Bash, Edit and Write in the live worktree. Substituting the one for the other therefore has to
++carry its own constraint, or the port would downgrade the mandatory gate from an auditor that
++cannot write to one that can, with read-only status asserted only in prose. The prompt below opens
++with that constraint; keep it there. (This paragraph and that constraint exist *only* because the
++two hosts' dispatch mechanisms differ in what the reviewer can do — which is exactly what a port is
++allowed to diverge on. The canonical needs neither.)
++
 +Keep the "do not read" instruction attached to the prompt. The severity-table output contract below
 +is what this workflow requires of the pass; the prompt also tells it to skip the follow-up question
 +so a fully autonomous run doesn't stall — you (the orchestrator) apply the fix-loop rule instead
@@ -230,10 +239,17 @@
 +    you may invoke it here: you are a fresh context that has seen nothing but this prompt, which is
 +    exactly where that skill is safe to run.
 +
++    READ-ONLY, HARD CONSTRAINT. Do not modify, create or delete any file. Do not commit, push,
++    stage, stash, or run any command that writes — to the worktree, to git, or to GitHub. `gh pr
++    diff` and other read commands are fine. If you believe a fix is needed, describe it in your
++    findings with a file:line ref and the concrete change — do not apply it. An auditor that also
++    writes is not an independent gate, and this pass is the only security control in an autonomous
++    merge pipeline.
++
      Read ONLY the diff: `gh pr diff <N>`.
      Do NOT read the PR description, the issue, the spec, the plan, or any summary of intent. Your
      findings must come from the code as written, so they cannot be steered by the author's framing.
-@@ -380,19 +404,18 @@
+@@ -380,19 +420,18 @@
      After your investigation, present findings as the standard severity table (🔴 CRITICAL / 🟠 HIGH
      / 🟡 MEDIUM / ⚪ LOW) with file:line refs and a concrete fix each, then an overall assessment.
  
