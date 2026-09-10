@@ -1236,7 +1236,16 @@ fn paint_screen(
             // Full-frame overlay: paint content directly.
             f.render_widget(Clear, area);
             f.buffer_mut().set_style(area, palette.base_style());
-            let region = crate::plugin::convert::rect_to_region(area);
+
+            // Reserve the bottom row for tips() before handing the region to
+            // the screen, so its content never lands under the tips line.
+            let tips = active_screen.screen.tips();
+            let content_area = if !tips.is_empty() && area.height > 0 {
+                Rect::new(area.x, area.y, area.width, area.height - 1)
+            } else {
+                area
+            };
+            let region = crate::plugin::convert::rect_to_region(content_area);
             let lines: Vec<Line<'static>> = active_screen
                 .screen
                 .render(region)
@@ -1244,10 +1253,9 @@ fn paint_screen(
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
                 .collect();
             let para = Paragraph::new(lines).style(palette.base_style());
-            f.render_widget(para, area);
+            f.render_widget(para, content_area);
 
             // Tips row at the very bottom of the frame.
-            let tips = active_screen.screen.tips();
             if !tips.is_empty() && area.height > 0 {
                 let tips_row = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips
@@ -1322,16 +1330,27 @@ fn paint_screen(
             let sheet = bottom_sheet_rect(area, input_top, *height);
             f.render_widget(Clear, sheet);
             f.buffer_mut().set_style(sheet, palette.base_style());
-            let region = crate::plugin::convert::rect_to_region(sheet);
+
+            // Reserve the bottom row for tips() before handing the region to
+            // the screen, so its content never lands under the tips line.
+            let tips = active_screen.screen.tips();
+            let content_sheet = if !tips.is_empty() && sheet.height > 0 {
+                Rect::new(sheet.x, sheet.y, sheet.width, sheet.height - 1)
+            } else {
+                sheet
+            };
+            let region = crate::plugin::convert::rect_to_region(content_sheet);
             let lines: Vec<Line<'static>> = active_screen
                 .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
                 .collect();
-            f.render_widget(Paragraph::new(lines).style(palette.base_style()), sheet);
+            f.render_widget(
+                Paragraph::new(lines).style(palette.base_style()),
+                content_sheet,
+            );
 
-            let tips = active_screen.screen.tips();
             if !tips.is_empty() && sheet.height > 0 {
                 let tips_row = Rect::new(sheet.x, sheet.y + sheet.height - 1, sheet.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips

@@ -140,15 +140,14 @@ impl Screen for PaletteScreen {
             + 2;
         // The list lives in a fixed-height `BottomSheet`, so a long,
         // unfiltered command set (30+ builtins) won't fit. Window the rows
-        // around the cursor, budgeting *two* of the region's rows for
-        // non-command chrome: the spacer/scroll-hint line, and the sheet's
-        // last row — which the host overpaints with our `tips()` after the
-        // paragraph (`ui.rs::paint_screen`). Reserving one fewer would put
-        // a row we still drew underneath the tips line, and since the
-        // window is anchored so the cursor sits on its *last* row, that
-        // hidden row is the selected one: the `▶` highlight would vanish
-        // for every scrolled list. (This was three while `render` also
-        // drew a `> filter` header; dropping that header freed a row.)
+        // around the cursor, budgeting *one* of the region's rows for the
+        // spacer/scroll-hint line. The sheet's last row for `tips()` is no
+        // longer part of this region — `ui.rs::paint_screen` reserves it
+        // before calling `render`, per `Screen::render`'s contract that the
+        // screen is free to fill the region it's given. (This was three
+        // while `render` also drew a `> filter` header and the host still
+        // overpainted tips() inside the region; dropping the header and
+        // fixing the overpaint freed the other two rows down to one.)
         //
         // The spacer stays unconditional even with the header gone.
         // Reclaiming it when there is no hint would be circular: `hint`
@@ -156,11 +155,10 @@ impl Screen for PaletteScreen {
         // `capacity`, which would then derive from `hint`.
         //
         // `.max(1)` is a floor, not panic-protection — a capacity of 0
-        // yields a valid empty slice. What it does at `height <= 2` is
-        // force one row into a budget with no room for it, so `tips()`
-        // overpaints the `▶` row. That boundary is pre-existing and this
-        // change shrinks it: it used to bite at `height <= 3`.
-        let capacity = (region.height as usize).saturating_sub(2).max(1);
+        // yields a valid empty slice. What it does at `height == 0` is
+        // force one row into a budget with no room for it; that boundary
+        // is pre-existing.
+        let capacity = (region.height as usize).saturating_sub(1).max(1);
         let window_start = if filtered.len() <= capacity {
             0
         } else {
@@ -522,7 +520,7 @@ mod tests {
     async fn long_list_fits_shows_no_scroll_hint() {
         let commands: Vec<_> = (0..5).map(|i| cmd(&format!("cmd{i}"), false)).collect();
         let p = PaletteScreen::with_commands(commands);
-        // capacity = height(12) - 2 = 10, which comfortably fits all 5 rows.
+        // capacity = height(12) - 1 = 11, which comfortably fits all 5 rows.
         let lines = p.render(Region {
             x: 0,
             y: 0,
@@ -549,7 +547,7 @@ mod tests {
     async fn overflowing_list_windows_around_cursor_with_scroll_hint() {
         let commands: Vec<_> = (0..20).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
         let mut p = PaletteScreen::with_commands(commands);
-        // capacity = height(6) - 2 = 4 visible rows out of 20 commands.
+        // capacity = height(6) - 1 = 5 visible rows out of 20 commands.
         let region = Region {
             x: 0,
             y: 0,
@@ -562,14 +560,15 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
-        // Cursor starts at 0: window is [0, 4), nothing hidden above but
-        // 16 rows hidden below.
+        // Cursor starts at 0: window is [0, 5), nothing hidden above but
+        // 15 rows hidden below.
         assert!(joined.contains("/cmd00"));
         assert!(joined.contains("/cmd01"));
         assert!(joined.contains("/cmd02"));
         assert!(joined.contains("/cmd03"));
-        assert!(!joined.contains("/cmd04"));
-        assert!(joined.contains("↓16 more below"));
+        assert!(joined.contains("/cmd04"));
+        assert!(!joined.contains("/cmd05"));
+        assert!(joined.contains("↓15 more below"));
         assert!(
             !joined.contains("more above"),
             "nothing is hidden above at the top of the list, got: {joined}"
@@ -596,7 +595,7 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
         assert!(joined.contains("/cmd19"));
-        assert!(joined.contains("↑16 more above"));
+        assert!(joined.contains("↑15 more above"));
         assert!(
             !joined.contains("more below"),
             "nothing is hidden below at the end of the list, got: {joined}"
@@ -613,24 +612,23 @@ mod tests {
         assert_eq!(hint_line.spans[0].fg, Some(ThemeColor::Muted));
     }
 
-    /// Regression: the host overpaints the sheet's last row with `tips()`
-    /// *after* the paragraph, so `render` must emit at most
-    /// `region.height - 1` lines. The window is anchored so the cursor
-    /// sits on its last row, which is precisely the row that would be
-    /// swallowed — leaving the `▶` selection invisible for the rest of
-    /// the list once it scrolls.
+    /// Regression: `ui.rs::paint_screen` now reserves the sheet's last row
+    /// for `tips()` *before* calling `render` (it shrinks the region), so
+    /// `render` is free to fill the full region it's given — per
+    /// `Screen::render`'s contract — and must never emit more lines, or
+    /// place the cursor's `▶` row, past that region's bottom.
     ///
     /// Swept across region heights rather than pinned to one, because the
-    /// reserved-row count is a constant that a future edit can move by
-    /// one without any single height noticing.
+    /// reserved-row count (the spacer/scroll-hint line) is a constant that
+    /// a future edit can move by one without any single height noticing.
     ///
-    /// The sweep starts at 3: at `height <= 2` the `.max(1)` floor forces
+    /// The sweep starts at 2: at `height <= 1` the `.max(1)` floor forces
     /// one command row into a budget with no room for it, so the
     /// line-count bound is false by construction there. That boundary is
     /// pre-existing and documented at the `capacity` binding; the `▶`
     /// presence half is asserted at every height including those.
     #[tokio::test]
-    async fn cursor_row_never_lands_on_the_tips_row_at_any_height() {
+    async fn cursor_row_never_overflows_the_rendered_region_at_any_height() {
         for height in 1..=14u16 {
             let commands: Vec<_> = (0..30).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
             let mut p = PaletteScreen::with_commands(commands);
@@ -642,7 +640,7 @@ mod tests {
             };
 
             // Walk the whole list; at no point may the selected row fall
-            // on (or past) the row the tips line will claim.
+            // outside the region `render` was given.
             for step in 0..30 {
                 let lines = p.render(region);
                 let cursor_row = lines
@@ -652,8 +650,8 @@ mod tests {
                         panic!("selected row missing at height {height}, step {step}")
                     });
 
-                if height >= 3 {
-                    let visible = height as usize - 1; // tips row is not ours
+                if height >= 2 {
+                    let visible = height as usize;
                     assert!(
                         lines.len() <= visible,
                         "height {height}: render emitted {} lines into {visible} usable rows",
@@ -661,7 +659,7 @@ mod tests {
                     );
                     assert!(
                         cursor_row < visible,
-                        "height {height}: cursor row {cursor_row} would be overpainted by tips"
+                        "height {height}: cursor row {cursor_row} fell outside the region"
                     );
                 }
                 p.on_key(key(KeyCodePortable::Down)).await.unwrap();
@@ -737,14 +735,14 @@ mod tests {
     /// while reporting `0 more below`.
     #[tokio::test]
     async fn list_exactly_filling_capacity_renders_every_row() {
-        // capacity = height(12) - 2 = 10.
+        // capacity = height(11) - 1 = 10.
         let commands: Vec<_> = (0..10).map(|i| cmd(&format!("cmd{i}"), false)).collect();
         let p = PaletteScreen::with_commands(commands);
         let lines = p.render(Region {
             x: 0,
             y: 0,
             width: 80,
-            height: 12,
+            height: 11,
         });
         let joined: String = lines
             .iter()
