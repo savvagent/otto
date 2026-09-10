@@ -379,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_content_marks_logo_rows_centered_for_frontend_parity() {
+    fn shared_content_marks_logo_rows_centered_for_startup_and_splash_parity() {
         let lines = shared_content(&SandboxSplashState::OnDefault);
         let logo_rows = lines
             .iter()
