@@ -229,12 +229,8 @@ async fn main() -> Result<()> {
 }
 
 /// Result of building the provider-pool host, independent of `App`
-/// construction. A named struct (rather than a bare 4-tuple) so the two
-/// `String`/`Vec<String>`-family members can't be transposed at a decode
-/// site. Also the seam a test uses to hand [`build_app_with_host`] a
-/// synthetic result and exercise app/plugin startup without running the
-/// network-bearing `bootstrap_pool_host` — see
-/// `build_app_startup_skips_conflicting_user_exit_command`.
+/// construction — the value [`build_app_with_host`] takes to construct
+/// `App` on top of an already-built host.
 pub(crate) struct HostBoot {
     /// The started provider-pool host, if startup connected successfully.
     pub host: Option<Arc<Host>>,
@@ -383,7 +379,10 @@ pub(crate) fn build_tool_bins() -> ToolBins {
 /// built on the GUI thread of the now-removed egui front-end. With only one
 /// front-end left, nothing schedules the two halves apart, so that wrapper
 /// added a function without adding a caller and was folded back in here.
-/// [`build_app_with_host`] stays separate — see its doc comment.
+/// The capability it named didn't disappear: `bootstrap_pool_host` still
+/// returns only `Send` data, so a future off-thread or headless bootstrap is
+/// a rewrap away, not a redesign. [`build_app_with_host`] stays separate —
+/// see its doc comment.
 pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path::PathBuf, ToolBins)>
 {
     let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -403,12 +402,13 @@ pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path
 }
 
 /// Construct `App` from an already-built [`HostBoot`], install the plugin
-/// runtime, and wrap the host in a `HostSlot`. Kept as its own function
-/// (rather than inlined into [`bootstrap_app_and_host`]) because a test
-/// exploits exactly that seam: it hands this a synthetic `HostBoot` with
-/// `host: None` to exercise startup's app-construction and
-/// plugin-registration behavior without running the network-bearing
-/// `bootstrap_pool_host` — see
+/// runtime, and wrap the host in a `HostSlot`. Kept as its own function,
+/// taking the host as a parameter instead of building it, because that
+/// injection point is a real phase boundary: local, `!Send` app/plugin
+/// startup versus the network-bearing `bootstrap_pool_host` that builds the
+/// host. A test exploits exactly that seam — it hands this a synthetic
+/// `HostBoot` with `host: None` to exercise startup's app-construction and
+/// plugin-registration behavior without touching the network — see
 /// `build_app_startup_skips_conflicting_user_exit_command`.
 pub(crate) async fn build_app_with_host(
     initial: HostBoot,
