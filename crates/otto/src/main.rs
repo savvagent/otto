@@ -250,14 +250,12 @@ pub(crate) struct HostBoot {
     pub startup_verbose: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct McpManagerSeed {
     pub configured: Vec<McpServerSummary>,
     pub skip_notes: Vec<(String, String)>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum McpServerAuthSummary {
     #[default]
@@ -266,7 +264,6 @@ pub(crate) enum McpServerAuthSummary {
     Oauth,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct McpServerSummary {
     pub name: String,
