@@ -336,9 +336,23 @@ frontmatter_value() {
         FM_ERROR="$file: frontmatter key '$key:' is present but its value is empty. Write it as '$key: <value>' on one line."
         return 1
     fi
+    # A prefix rule, deliberately not a list of known introducers. An
+    # enumeration of '>' '>-' '|-' … misses every neighbour that is equally
+    # valid YAML -- '>2' and '|4' (indentation indicators), '>- # c' (trailing
+    # comment), '~' and 'null' (null), '# c' (a comment, so the value is null)
+    # -- and each of those would let the canonical and its port carry entirely
+    # different text while this check compared two identical meaningless
+    # strings. That matters more than it looks: regenerating a record is the
+    # prescribed fix for a red build, and after a regeneration the frontmatter
+    # assertion is the only check still standing.
+    #
+    # No false positives: a plain YAML scalar cannot begin with '>', '|' or
+    # '#', since those are indicators that force quoting -- so a description
+    # legitimately starting with one arrives quoted, and this tests the raw
+    # value before `unquote` runs.
     case "$value" in
-        '>' | '>-' | '>+' | '|' | '|-' | '|+')
-            FM_ERROR="$file: frontmatter key '$key:' uses a YAML block scalar ('$value'). This check compares single-line plain values, so a block scalar would let the canonical and its port carry entirely different text and still match. Put the value on the '$key:' line."
+        [\>\|]* | '~' | 'null' | '#'*)
+            FM_ERROR="$file: frontmatter key '$key:' is not a single-line plain value ('$value'). This check compares plain scalars, so a block scalar, a null, or a comment would let the canonical and its port carry entirely different text and still match. Put the value itself on the '$key:' line, quoting it if it starts with '>', '|' or '#'."
             return 1
             ;;
     esac
@@ -356,6 +370,35 @@ frontmatter_value() {
 # in this shell or its `failures` increments would be lost to a subshell.
 find_md() {
     find "$1" -path "$2" -prune -o -type f -name '*.md' -print0
+}
+
+# Emits every symlink under $1 at any depth, NUL-separated, pruning $2.
+#
+# `find_md` filters on `-type f`, which excludes symlinks, and `find` defaults
+# to `-P`, so it does not descend into a symlinked directory either. Without
+# this pass a committed symlink is not rejected the way a constructed path is
+# -- it is simply never examined: a symlinked canonical `*.md` would need no
+# port and no record, a symlinked port would escape the orphan assertion, and a
+# symlinked subdirectory would hide every file beneath it. All three are exit-0
+# with an unexamined skill file, which is the outcome this whole check exists to
+# make impossible.
+find_links() {
+    find "$1" -path "$2" -prune -o -type l -print0
+}
+
+# Runs a NUL-emitting find into $tmp_dir/list and fails if find itself had
+# trouble. `while … done < <(find …)` cannot observe find's exit status by
+# construction, so an unreadable subtree would truncate the walk and read as
+# "nothing to see" -- the same defect class as a `diff` trouble status being
+# mistaken for "no differences", one layer up.
+run_find() {
+    local what="$1" dest="$2"
+    shift 2
+    if ! "$@" > "$dest" 2> "$tmp_dir/find_err"; then
+        fail "$what: could not be walked completely -- $(tr '\n' ' ' < "$tmp_dir/find_err"). Some skill files may not have been examined, so nothing about this skill has been verified."
+        return 1
+    fi
+    return 0
 }
 
 for dir in "$CANONICAL_ROOT"/*/; do
@@ -384,8 +427,21 @@ for dir in "$CANONICAL_ROOT"/*/; do
         continue
     fi
 
+    # 0. No symlinks anywhere in either tree, at any depth. This runs before
+    #    the walks below because those filter on `-type f` and would skip a
+    #    symlink rather than reject it, leaving a skill file unexamined.
+    for tree in "$canonical_dir" "$port_dir"; do
+        [ -d "$tree" ] || continue
+        if run_find "skill '$name': $tree" "$tmp_dir/link_list" find_links "$tree" "$diff_dir"; then
+            while IFS= read -r -d '' link; do
+                fail "skill '$name': $link is a symlink. This check refuses to follow links inside a skill tree — a symlinked file is skipped by the walks rather than verified, and a symlinked directory hides every file beneath it. Commit a regular file."
+            done < "$tmp_dir/link_list"
+        fi
+    done
+
     # 1-3. Every canonical Markdown file, at any depth, needs a port and an
     #      expected diff, and the recomputed diff must match that record.
+    run_find "skill '$name': $canonical_dir" "$tmp_dir/canonical_list" find_md "$canonical_dir" "$diff_dir" || continue
     while IFS= read -r -d '' canonical; do
         rel="${canonical#"$canonical_dir"/}"
 
@@ -450,7 +506,7 @@ for dir in "$CANONICAL_ROOT"/*/; do
             printf '  --- diff-of-diffs (expected vs. recomputed) for %s ---\n' "$rel"
             diff -u -L "$expected" -L "recomputed" "$expected" "$actual" || true
         fi
-    done < <(find_md "$canonical_dir" "$diff_dir")
+    done < "$tmp_dir/canonical_list"
 
     # 2 (reverse). An expected diff with no canonical file verifies nothing and
     #    hides a rename: the record survives while the file it described is
@@ -512,6 +568,24 @@ for dir in "$CANONICAL_ROOT"/*/; do
         done
     fi
 done
+
+# A whole port directory whose canonical skill no longer exists. The orphan
+# check above runs inside the per-canonical-skill loop, so it structurally
+# cannot fire for a skill whose canonical directory is gone: deleting
+# `.github/skills/<name>/` takes its `claude-port/` records with it, the loop
+# never sees the name, and the port is left live and unowned on a green build.
+# A port is identified as ported (rather than Claude-Code-native, like
+# `rust-engineer`) by the "Ported for Claude Code" note every port must carry.
+if [ -d "$PORT_ROOT" ]; then
+    for port_dir_top in "$PORT_ROOT"/*/; do
+        [ -d "$port_dir_top" ] || continue
+        port_name="$(basename "$port_dir_top")"
+        [ -d "$CANONICAL_ROOT/$port_name" ] && continue
+        if grep -qlr 'Ported for Claude Code' "$port_dir_top" 2>/dev/null; then
+            fail "skill '$port_name': $port_dir_top carries the 'Ported for Claude Code' note, but $CANONICAL_ROOT/$port_name does not exist. Its canonical body — and, since the records live beside it, its divergence records — were deleted while the port was left live: Claude Code still executes it and nothing verifies it. Restore the canonical, or delete the port."
+        fi
+    done
+fi
 
 # Zero skills must not be a green build. Without this, moving or renaming
 # `.github/skills/` orphans every port while the glob quietly matches nothing
