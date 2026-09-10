@@ -126,9 +126,12 @@ job and runnable locally. It asserts, for every directory under `.github/skills/
 Claude-Code-native skills with no canonical counterpart (`rust-engineer`, `tui-engineer`) are not
 iterated and need no marker.
 
-`.github/scripts/` does not exist yet and the repo currently contains no `.sh` file anywhere, so
-this script has no local precedent to copy. Three consequences, settled here rather than left to
-the implementer: the script opens with `set -euo pipefail`; CI invokes it as
+`.github/scripts/` does not exist yet and the repo currently contains no `.sh` file anywhere. There
+is, however, a precedent for CI *guards*: `.github/workflows/wit-dep-guard.yml` and
+`wit-portability-guard.yml` are inline `run:` bash blocks with `set -euo pipefail` and GitHub
+`::error::` annotations. This check follows their style but lives in a standalone script rather than
+inline YAML, so a contributor can run it locally before pushing. Three further consequences, settled
+here rather than left to the implementer: the script opens with `set -euo pipefail`; CI invokes it as
 `bash .github/scripts/check-claude-skill-stubs.sh` so the git executable bit is never
 load-bearing (it is set anyway, for local ergonomics); and a new `.gitattributes` pins `*.sh text
 eol=lf` so a `core.autocrlf=true` clone does not produce a CRLF shebang that fails locally with a
