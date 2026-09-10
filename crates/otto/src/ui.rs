@@ -2066,7 +2066,7 @@ mod tests {
     #[test]
     fn paint_screen_reserves_tips_row_out_of_the_region_before_render() {
         let fullscreen = RegionRecordingScreen {
-            tips: vec![one_span_line("tips_row_text")],
+            tips: vec![StyledLine::plain("tips_row_text")],
             seen_region: std::cell::Cell::new(None),
         };
         let _ = render_paint_screen(
@@ -2087,7 +2087,7 @@ mod tests {
         );
 
         let bottom_sheet = RegionRecordingScreen {
-            tips: vec![one_span_line("tips_row_text")],
+            tips: vec![StyledLine::plain("tips_row_text")],
             seen_region: std::cell::Cell::new(None),
         };
         let _ = render_paint_screen(
@@ -2115,7 +2115,10 @@ mod tests {
             palette(),
             crate::splash::SandboxSplashState::OnDefault,
         );
-        let no_tips_region = no_tips.seen_region.get().expect("Fullscreen must call render");
+        let no_tips_region = no_tips
+            .seen_region
+            .get()
+            .expect("Fullscreen must call render");
         assert_eq!(
             no_tips_region.height, 30,
             "with no tips to reserve for, render should get the full frame: {no_tips_region:?}"
