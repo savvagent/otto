@@ -404,12 +404,13 @@ pub(crate) async fn bootstrap_app_and_host() -> Result<(App, HostSlot, std::path
 /// Construct `App` from an already-built [`HostBoot`], install the plugin
 /// runtime, and wrap the host in a `HostSlot`. Kept as its own function,
 /// taking the host as a parameter instead of building it, because that
-/// injection point is a real phase boundary: local, `!Send` app/plugin
+/// injection point is a real phase boundary: local, in-process app/plugin
 /// startup versus the network-bearing `bootstrap_pool_host` that builds the
-/// host. A test exploits exactly that seam — it hands this a synthetic
-/// `HostBoot` with `host: None` to exercise startup's app-construction and
-/// plugin-registration behavior without touching the network — see
-/// `build_app_startup_skips_conflicting_user_exit_command`.
+/// host — `App` itself is `Send` today, so this isn't a `Send`/`!Send` split
+/// (that justification left with egui). A test exploits the seam — it hands
+/// this a synthetic `HostBoot` with `host: None` to exercise startup's
+/// app-construction and plugin-registration behavior without touching the
+/// network — see `build_app_startup_skips_conflicting_user_exit_command`.
 pub(crate) async fn build_app_with_host(
     initial: HostBoot,
     project_root: std::path::PathBuf,
