@@ -2,6 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Status: shipped in 0.26.2 via `savvagent/otto#81`** (see `CHANGELOG.md`). Every checkbox below is
+> ticked to reflect that. This plan predates `savvagent/otto#94`/`#97`, which removed the
+> `egui_app` GUI front-end entirely — every step and file reference below that targets
+> `crates/otto/src/egui_app/mod.rs` or "both front-ends" describes work that *was* done (the GUI
+> front-end existed and received the identical fix at the time), but that module no longer exists
+> in the tree today. Those references are kept as-is for historical accuracy rather than edited to
+> pretend the GUI never existed; see `savvagent/otto#99`.
+
 **Goal:** Make the three existing dead-end failure notes (connect-time rejection, silent stored-key reconnect failure, turn-time authentication failure) point the user at the already-existing `/connect <id> --rekey` mechanism, without inventing any new `/connect` UX. Closes `savvagent/otto#81`.
 
 **Architecture:** Three sequenced slices: (1) thread `otto_protocol::ErrorKind` through `DynamicCapsOutcome::Rejected`/`ProviderBuildOutcome::Rejected` (currently a bare `String`, discarding whether the rejection was actually a bad key vs. a rate limit/permission/quota failure) so the two connect-time call sites can gate a rekey hint correctly; (2) add a new locale key and the `if` at those two call sites; (3) classify turn-time `HostError::Provider` errors by `ErrorKind::Authentication`, capture the per-turn routed provider id from `TurnEvent::RouteSelected` (not `app.active_provider_id`, which can be stale/wrong under `@`-override or `routing.toml` routing) via a shared, unit-testable `providers::turn_auth_hint` helper, and surface a matching hint via a new `WorkerMsg::TurnAuthError` variant in **both** front-ends (`main.rs`'s TUI and `egui_app/mod.rs`'s GUI, landed in one commit since `egui_app`'s exhaustive `WorkerMsg` match would not otherwise compile).
@@ -22,7 +30,7 @@
 - `crates/otto/src/plugin/builtin/provider_common.rs` — `DynamicCapsOutcome::Rejected`/`ProviderBuildOutcome::Rejected` gain a `kind: otto_protocol::ErrorKind` field; `build_dynamic_caps`'s construction site and existing unit tests updated.
 - `crates/otto/src/plugin/builtin/provider_{anthropic,deepseek,gemini,local,openai}/mod.rs` — mechanical destructure/re-wrap at each `DynamicCapsOutcome::Rejected` → `ProviderBuildOutcome::Rejected` pass-through (no logic change).
 - `crates/otto/src/main.rs` — destructure updates at all three existing `ProviderBuildOutcome::Rejected` call sites (`try_provider!` macro, `apply_pending_pool_add`, `perform_connect`); new locale-key gating at the latter two; new `WorkerMsg::TurnAuthError` variant; `current_turn_provider_id` local capturing `TurnEvent::RouteSelected`; turn-spawn error classification; new match arm in the main loop; shared turn-bookkeeping helper extraction.
-- `crates/otto/src/egui_app/mod.rs` — mirrored `current_turn_provider_id` field/capture, turn-spawn classification, and `WorkerMsg::TurnAuthError` arm in `handle_worker_msg`.
+- `crates/otto/src/egui_app/mod.rs` — mirrored `current_turn_provider_id` field/capture, turn-spawn classification, and `WorkerMsg::TurnAuthError` arm in `handle_worker_msg`. **This module no longer exists** — it was removed wholesale by `savvagent/otto#94`/`#97`, after this plan shipped. See `savvagent/otto#99`.
 - `crates/otto/locales/{en,es,hi,pt}.toml` — new keys `notes.connect-rejected-keyed`, `notes.turn-auth-failed-hint`.
 
 **No new files.**
@@ -36,15 +44,15 @@
 - Modify: `crates/otto/src/plugin/builtin/provider_anthropic/mod.rs`, `provider_deepseek/mod.rs`, `provider_gemini/mod.rs`, `provider_local/mod.rs`, `provider_openai/mod.rs`
 - Modify: `crates/otto/src/main.rs`
 
-- [ ] **Step 1: Read the current shapes**
+- [x] **Step 1: Read the current shapes**
 
 View `crates/otto/src/plugin/builtin/provider_common.rs:180-270` (`ProviderBuildOutcome`, `DynamicCapsOutcome`, `build_dynamic_caps`) and its existing unit tests (`~line 278` onward, referencing `DynamicCapsOutcome::Rejected(reason)` and `Rejected(_)`). Confirm `build_dynamic_caps`'s final `Err(e) => DynamicCapsOutcome::Rejected(e.message.clone())` arm discards `e.kind`. Grep `DynamicCapsOutcome::Rejected\|ProviderBuildOutcome::Rejected` across `crates/otto/src` to enumerate every call/construction site (expect: 1 construction site in `provider_common.rs`, 5 provider-plugin pass-through arms, 3 sites in `main.rs` at ~lines 650, 1912, 2689, and 3 test-pattern sites in `provider_common.rs`'s test module).
 
-- [ ] **Step 2: Add a failing test (red)**
+- [x] **Step 2: Add a failing test (red)**
 
 In `provider_common.rs`'s test module, add/extend a test that mocks a `list_models` failure with `ErrorKind::RateLimited` (or `PermissionDenied`) and asserts the returned `DynamicCapsOutcome::Rejected { kind, .. }` has `kind == ErrorKind::RateLimited` (distinct from the existing `Authentication`-kind test). Run `cargo test -p otto provider_common 2>&1 | tail -30` — expect a compile failure (the field doesn't exist yet).
 
-- [ ] **Step 3: Change the enum shapes and update every downstream pattern (green)**
+- [x] **Step 3: Change the enum shapes and update every downstream pattern (green)**
 
 `otto` is a single binary crate, so `cargo test -p otto`/`cargo build -p otto` compile the whole crate at once — changing `DynamicCapsOutcome`/`ProviderBuildOutcome`'s shape and building/testing before every pattern-match site is updated will fail with unrelated pattern-mismatch errors elsewhere in the crate, not just in `provider_common.rs`. Make all of the following edits together, as one uninterrupted pass, before running any build or test:
 
@@ -67,21 +75,21 @@ Update `build_dynamic_caps`'s final arm to `Err(e) => DynamicCapsOutcome::Reject
 
 Then, in the same pass, continue to Steps 4 and 5 below (the 5 provider-plugin pass-through sites and the 3 `main.rs` call sites) before attempting a build. Only after all of them are updated, run `cargo test -p otto provider_common 2>&1 | tail -30` (Step 6) — expect green.
 
-- [ ] **Step 4: Update the 5 provider-plugin pass-through sites**
+- [x] **Step 4: Update the 5 provider-plugin pass-through sites**
 
 In each of `provider_anthropic/mod.rs`, `provider_deepseek/mod.rs`, `provider_gemini/mod.rs`, `provider_local/mod.rs`, `provider_openai/mod.rs`, find the one `DynamicCapsOutcome::Rejected(reason) => return Ok(ProviderBuildOutcome::Rejected(reason))` arm and change it to `DynamicCapsOutcome::Rejected { reason, kind } => return Ok(ProviderBuildOutcome::Rejected { reason, kind })` — pure destructure/re-wrap, no other change.
 
-- [ ] **Step 5: Update `main.rs`'s 3 call sites**
+- [x] **Step 5: Update `main.rs`'s 3 call sites**
 
 - `try_provider!` macro (~line 650, startup path): change `Ok(Ok(ProviderBuildOutcome::Rejected(reason)))` to `Ok(Ok(ProviderBuildOutcome::Rejected { reason, kind: _ }))` (kind discarded here — this site is unconditionally gated by `config_file.startup.verbose` already and is out of scope for the new hint per the spec).
 - `apply_pending_pool_add` (~line 1912): change the pattern to `Ok(ProviderBuildOutcome::Rejected { reason, kind })`, keep existing behavior for now (Task 2 adds the gating logic in this arm's body).
 - `perform_connect` (~line 2689): same pattern-destructure update; keep existing behavior for now (Task 2 adds the gating logic).
 
-- [ ] **Step 6: Build and test — first green-build checkpoint**
+- [x] **Step 6: Build and test — first green-build checkpoint**
 
 Only now, with Steps 3-5 all applied, run `cargo build --workspace 2>&1 | tail -60`. Fix any remaining pattern mismatches. Run `cargo test --workspace 2>&1 | tail -60` — expect green (no behavior change yet, purely a shape threading).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/otto/src/plugin/builtin/provider_common.rs crates/otto/src/plugin/builtin/provider_anthropic crates/otto/src/plugin/builtin/provider_deepseek crates/otto/src/plugin/builtin/provider_gemini crates/otto/src/plugin/builtin/provider_local crates/otto/src/plugin/builtin/provider_openai crates/otto/src/main.rs
@@ -107,7 +115,7 @@ kind until the next commit."
 - Modify: `crates/otto/locales/{en,es,hi,pt}.toml`
 - Modify: `crates/otto/src/main.rs`
 
-- [ ] **Step 1: Add the locale key**
+- [x] **Step 1: Add the locale key**
 
 In `crates/otto/locales/en.toml`, add, near `connect-failed` (line ~18):
 
@@ -117,13 +125,13 @@ connect-rejected-keyed = "Connect to %{id} failed: %{err} Run /connect %{id} --r
 
 Add the equivalent key (translated, matching the existing short-literal style of the other keys in each file) to `es.toml`, `hi.toml`, `pt.toml`.
 
-- [ ] **Step 2: Add a failing test (red)**
+- [x] **Step 2: Add a failing test (red)**
 
 Add/extend a test in `crates/otto`'s test module covering `perform_connect` (or the smallest existing test harness that exercises its `Rejected` arm) asserting that an `Authentication`-kind rejection on an `api_key_required: true` provider produces a note containing `--rekey`, and that a `RateLimited`-kind rejection on the same provider does not. If no existing test harness exercises `perform_connect` directly, add the assertion at the smallest testable unit (e.g. extract the key-selection `if` into a small pure helper function `fn connect_rejected_note_key(kind: otto_protocol::ErrorKind, api_key_required: bool) -> &'static str` that can be unit-tested directly without going through the full async `perform_connect`/`apply_pending_pool_add` machinery).
 
 Run the new test — expect failure (helper doesn't exist / always uses the old key).
 
-- [ ] **Step 3: Implement the gate (green)**
+- [x] **Step 3: Implement the gate (green)**
 
 Add the helper (co-located with `perform_connect`/`apply_pending_pool_add` in `main.rs`, or in `provider_common.rs` alongside the enums it consumes):
 
@@ -156,11 +164,11 @@ Apply the identical change at `apply_pending_pool_add`'s `Rejected { reason, kin
 
 Run the Step 2 test — expect green.
 
-- [ ] **Step 4: Manual/integration sanity check**
+- [x] **Step 4: Manual/integration sanity check**
 
 Run `cargo test -p otto 2>&1 | tail -60` — full crate suite green. If an existing test asserted the literal old `notes.connect-failed`-only text for an `Authentication`-kind rejection, update its expectation to the new `notes.connect-rejected-keyed` text.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/otto/locales crates/otto/src/main.rs
@@ -178,6 +186,12 @@ unchanged notes.connect-failed text, since --rekey would not fix those."
 
 ## Task 3: Surface the same hint after a turn-time authentication failure (both front-ends)
 
+> **Moot as of `savvagent/otto#94`/`#97`:** at the time this task was executed, `egui_app` was a
+> real second front-end and every GUI-facing step below did land as described. `savvagent/otto#94`/
+> `#97` have since deleted `crates/otto/src/egui_app/mod.rs` entirely, so the GUI-specific
+> instructions in this task (Step 6, and the GUI references throughout Steps 1-9) no longer apply
+> to the current tree — the TUI (`main.rs`) remains otto's only front-end. See `savvagent/otto#99`.
+
 **Depends on Task 1 (not Task 2 — this task is independent of the connect-time locale key, but shares the `otto_protocol::ErrorKind` import already in scope).**
 
 **Note on commit granularity:** `egui_app` is compiled unconditionally (`mod egui_app;` in `main.rs`), and its `handle_worker_msg` (`crates/otto/src/egui_app/mod.rs:193`) is an exhaustive `match` over `WorkerMsg` with no wildcard arm. Adding `WorkerMsg::TurnAuthError` therefore breaks the crate's build the instant it's introduced, until `egui_app/mod.rs` also handles it. This task's steps are ordered TUI-first for readability, but **land the `WorkerMsg::TurnAuthError` variant and both front-ends' handling of it in the same commit** (Step 8's commit) — do not commit the variant addition (Step 3) separately, and do not expect a green build after Step 3/4/5 in isolation; the first green-build checkpoint in this task is Step 7, after both front-ends are updated.
@@ -188,13 +202,13 @@ unchanged notes.connect-failed text, since --rekey would not fix those."
 - Modify: `crates/otto/src/main.rs`
 - Modify: `crates/otto/src/egui_app/mod.rs`
 
-- [ ] **Step 1: Read the current turn-error path in both front-ends**
+- [x] **Step 1: Read the current turn-error path in both front-ends**
 
 View `crates/otto/src/main.rs`'s `WorkerMsg` enum (~line 91), the turn-spawn block's `Ok(Err(e)) => tx.send(WorkerMsg::Error(e.to_string()))` (~line 3869), the `WorkerMsg::Error(msg)` match arm (~lines 3428-3479) including its `footer_pending_turn_id`/`current_turn_id`/`turn_terminal_event_seen`/`next_turn_id` bookkeeping, and the `WorkerMsg::Event(e)` arm's `html_block_stop_id` capture pattern (the `if let TurnEvent::HtmlBlockStop { index } = &e` block a few lines before `app.apply_turn_event(e)`) to mirror for `current_turn_provider_id`. Also view `crates/otto-host/src/session.rs`'s `HostError::Provider { name, error }` and `TurnEvent::RouteSelected { provider_id, .. }` (~lines 137, 238), `crates/otto/src/app.rs`'s `RouteSelected` arm in `apply_turn_event` (~line 1114) to confirm `provider_id`'s type (`otto_protocol::ProviderId`, which exposes `.as_str()` — see `crates/otto-protocol/src/provider_id.rs`) and that nothing today retains it past that arm, and `crates/otto/src/providers.rs`'s `ProviderSpec` (`id: &'static str`, `api_key_required: bool`) and `effective_providers() -> Vec<&'static ProviderSpec>`.
 
 Then view `crates/otto/src/egui_app/mod.rs`'s `OttoApp` struct (its `current_turn_id`/`next_turn_id`/`next_tool_call_id`/`last_tool_call_id` fields — confirm it has **no** `footer_pending_turn_id` and **no** `turn_terminal_event_seen`, unlike `main.rs`), `handle_worker_msg`'s `WorkerMsg::Event(e)` arm (`crates/otto/src/egui_app/mod.rs:195-256`) and `WorkerMsg::Error(msg)` arm (`:257-296`), and its own turn-spawn site (~line 396-415) that independently sends `WorkerMsg::Error`.
 
-- [ ] **Step 2: Add the locale key**
+- [x] **Step 2: Add the locale key**
 
 Add to `crates/otto/locales/en.toml` (and the translated equivalents in `es.toml`, `hi.toml`, `pt.toml`):
 
@@ -202,7 +216,7 @@ Add to `crates/otto/locales/en.toml` (and the translated equivalents in `es.toml
 turn-auth-failed-hint = "Run /connect %{id} --rekey to enter a different API key for %{name}."
 ```
 
-- [ ] **Step 3: Add a shared, unit-testable hint helper in `providers.rs`**
+- [x] **Step 3: Add a shared, unit-testable hint helper in `providers.rs`**
 
 Both front-ends must apply the *identical* gating/lookup logic, so put it once in `crates/otto/src/providers.rs` (which already owns `ProviderSpec`/`effective_providers`) rather than duplicating it in `main.rs` and `egui_app/mod.rs`:
 
@@ -237,7 +251,7 @@ Add a unit test in `providers.rs`'s existing test module asserting: `turn_auth_h
 
 Run `cargo test -p otto providers:: 2>&1 | tail -30` — expect green.
 
-- [ ] **Step 4: Add `WorkerMsg::TurnAuthError`**
+- [x] **Step 4: Add `WorkerMsg::TurnAuthError`**
 
 Add a variant to `WorkerMsg` (~line 91) in `main.rs` (shared by both front-ends):
 
@@ -253,7 +267,7 @@ TurnAuthError {
 
 (This alone does not compile — `egui_app`'s exhaustive match now has a missing arm. Continue to Step 5 before attempting a build.)
 
-- [ ] **Step 5: Wire the TUI (`main.rs`)**
+- [x] **Step 5: Wire the TUI (`main.rs`)**
 
 1. Declare `let mut current_turn_provider_id: Option<otto_protocol::ProviderId> = None;` alongside `current_turn_id`/`footer_pending_turn_id`/`turn_terminal_event_seen` (~line 3226).
 2. In the `WorkerMsg::Event(e)` arm, before `app.apply_turn_event(e)` consumes `e`, add (mirroring the `html_block_stop_id` capture immediately above it):
@@ -299,22 +313,22 @@ TurnAuthError {
    }
    ```
 
-- [ ] **Step 6: Wire the GUI (`egui_app/mod.rs`)**
+- [x] **Step 6: Wire the GUI (`egui_app/mod.rs`)**
 
 1. Add a `current_turn_provider_id: Option<otto_protocol::ProviderId>` field to `OttoApp`'s turn-tracking state (initialized to `None` wherever `current_turn_id`/`next_turn_id` are initialized).
 2. In `handle_worker_msg`'s `WorkerMsg::Event(e)` arm, capture it from `TurnEvent::RouteSelected` identically to Step 5.2 above, before `self.app.apply_turn_event(e)` consumes `e`. Reset it to `None` after any terminal `TurnEvent` (`TurnComplete`, `Cancelled`, `AbortedAfterGrace`) is handled and at the end of both the existing `WorkerMsg::Error` arm and the new `WorkerMsg::TurnAuthError` arm. `OttoApp` has neither `footer_pending_turn_id` nor `turn_terminal_event_seen` — do **not** introduce either into `OttoApp` for this feature; only mirror its existing simpler turn-id bookkeeping.
 3. At the turn-spawn site (~line 411), apply the identical classification from Step 5.5: if the `HostError` is `Provider { error, .. }` with `error.kind == ErrorKind::Authentication`, send `WorkerMsg::TurnAuthError { message, provider_display_name }` instead of `WorkerMsg::Error`.
 4. Add a `WorkerMsg::TurnAuthError { message, provider_display_name }` arm to `handle_worker_msg`, mirroring the existing `WorkerMsg::Error(msg)` arm's bookkeeping shape in this file (its own synthetic-turn-id logic, not `main.rs`'s `record_turn_error`), then call `crate::providers::turn_auth_hint(self.current_turn_provider_id.as_ref(), &provider_display_name)` — note `current_turn_provider_id` lives on `OttoApp` itself (per Step 6.1), not on the nested `self.app` — and `self.app.push_note(hint)` if `Some`.
 
-- [ ] **Step 7: Build and test — first green-build checkpoint**
+- [x] **Step 7: Build and test — first green-build checkpoint**
 
 Run `cargo build --workspace 2>&1 | tail -60` — this is the first point since Step 4 that the workspace is expected to compile (both front-ends now handle `WorkerMsg::TurnAuthError`). Run `cargo test -p otto 2>&1 | tail -60`.
 
-- [ ] **Step 8: Manual side-by-side diff check**
+- [x] **Step 8: Manual side-by-side diff check**
 
 Diff `main.rs`'s Step 5 changes against `egui_app/mod.rs`'s Step 6 changes side-by-side to confirm the classification logic and the shared `turn_auth_hint` call are wired identically in both front-ends — this is largely guaranteed by construction now that both call the same `providers::turn_auth_hint` helper, but confirm the `HostError`/`ErrorKind` classification `if`/`match` at each turn-spawn site is the same shape.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add crates/otto/locales crates/otto/src/providers.rs crates/otto/src/main.rs crates/otto/src/egui_app/mod.rs
@@ -339,22 +353,22 @@ egui_app's exhaustive WorkerMsg match would not otherwise compile."
 
 **Depends on Tasks 1-3.**
 
-- [ ] **Step 1: Full workspace build**
+- [x] **Step 1: Full workspace build**
 
 Run `cargo build --workspace 2>&1 | tail -60` — expect clean.
 
-- [ ] **Step 2: Full test suite**
+- [x] **Step 2: Full test suite**
 
 Run `cargo test --workspace 2>&1 | tail -100` — expect green.
 
-- [ ] **Step 3: Clippy**
+- [x] **Step 3: Clippy**
 
 Run `cargo clippy --workspace --all-targets 2>&1 | tail -60` — expect clean (no new warnings).
 
-- [ ] **Step 4: Format check**
+- [x] **Step 4: Format check**
 
 Run `cargo fmt --all --check 2>&1 | tail -60` — expect clean; if it reports diffs, run `cargo fmt --all` and amend the relevant commit(s).
 
-- [ ] **Step 5: Manual smoke test (optional but recommended given no end-to-end harness covers the TUI event loop)**
+- [x] **Step 5: Manual smoke test (optional but recommended given no end-to-end harness covers the TUI event loop)**
 
 If feasible in this environment, run `cargo run -p otto` (or the headless example) against a provider with a deliberately invalid API key and confirm the connect-time note now includes the `--rekey` hint; this is a manual confirmation only, not a substitute for the automated tests in Tasks 2-4.
