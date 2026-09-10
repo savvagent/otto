@@ -49,8 +49,8 @@ rather than mechanism:
    verbatim copy — a copy of `otto-development` would be as unusable as the symlink, for the same
    reason. It means the content itself rewritten so a Claude Code session reads instructions naming
    Claude Code's own tools. Measured from the committed records, that adaptation replaces **132 of
-   the 1,597 canonical lines — about 8%** — with 198 ported lines, across 25 hunks: 75 → 113 in
-   `otto-development/SKILL.md` (14 hunks), 57 → 80 in `otto-development/agent-prompts.md` (10
+   the 1,602 canonical lines — about 8%** — with 214 ported lines, across 25 hunks: 75 → 113 in
+   `otto-development/SKILL.md` (14 hunks), 57 → 96 in `otto-development/agent-prompts.md` (10
    hunks), and 0 → 5 in `creating-github-issues/SKILL.md` (1 hunk), which is already fully
    host-neutral (plain `gh issue` / `gh label` invocations) and diverges only by the "ported from"
    note. So ~92% of the canonical text is carried into the port untouched, which is what makes the
@@ -88,7 +88,7 @@ is carried across unchanged.
 | `agent_type: "general-purpose"` / `"task"` | `subagent_type: "general-purpose"` |
 | `agent_type: "rubber-duck"` (spec/plan critique) | `subagent_type: "general-purpose"` — no built-in equivalent, so the critique prompt carries the role |
 | `agent_type: "code-review"` | `subagent_type: "general-purpose"` with the canonical review template, or the `/code-review` skill |
-| `agent_type: "security-review"` | the built-in `security-review` skill |
+| `agent_type: "security-review"` | `subagent_type: "general-purpose"` carrying the blind-diff prompt — **not** the built-in `security-review` skill (see below) |
 | `agent_type: "explore"` / `"research"` | `subagent_type: "Explore"` |
 | `mode: "sync"` | a single `Agent` call — it returns the report |
 | `mode: "background"` | several `Agent` calls in one message; results arrive as task notifications |
@@ -96,6 +96,19 @@ is carried across unchanged.
 | the `sql` tool's `todos` table | `TodoWrite` |
 | `ask_user` | `AskUserQuestion` (still overridden for autonomy) |
 | `model: "claude-haiku-4.5"` / `reasoning_effort:` | `model: "haiku"` for mechanical tasks; omit `model` for design-judgment work — and pass `model: "opus"` where the session default is known to be weaker, since an omitted `model` resolves to the agent definition's model, then the configured default subagent model, and only then the parent's. There is no `reasoning_effort` parameter. |
+
+**Why the security row is not the obvious one.** Claude Code ships a built-in `security-review`
+skill, and mapping `agent_type: "security-review"` onto it is the mechanical answer. It is wrong,
+and the port rejects it. A `Skill` invocation runs in the **orchestrator's own context**, which by
+Phase 4 step 8 already holds the spec, the plan, the task brief and the PR body — so Non-Negotiable
+Rule 5's requirement that this pass see only the diff would become a promise the orchestrator makes
+to itself, unenforceable and false at the moment it matters. A fresh `general-purpose` subagent has
+seen nothing but its prompt, which makes the blindness structural rather than asserted. Two
+consequences the port also carries: the dispatched agent may invoke the `security-review` skill
+*itself*, inside its own fresh context, which is where the skill form is safe; and because
+`general-purpose` holds Bash/Edit/Write where the Copilot agent type is read-only by construction,
+the ported prompt opens with an explicit read-only constraint. Anyone re-porting from this table
+must reproduce both, not just the `subagent_type` substitution.
 
 Two sections need rewriting rather than substituting: "How dispatch works in this environment"
 (`SKILL.md:358-410`), whose whole subject is the Copilot dispatch mechanism, and the review-trio
@@ -172,13 +185,23 @@ not produce a CRLF shebang.
   pinned to LF so the committed records still verify on a `core.autocrlf=true` clone.
 - `CLAUDE.md`'s "Claude Code skills" section — the two-directory layout, the port mechanism, the
   edit-canonical-then-re-port workflow, the check, and the revised precedence rule.
+- **Canonical `.github/skills/**/*.md` edits, where the canonical itself has a bug.** Editing a
+  canonical is the *normal* first half of the workflow this design installs — edit the canonical,
+  mirror the edit into the port, regenerate the record — so it cannot also be out of scope here.
+  Worked example on this branch: `d4824da` fixed `creating-github-issues/SKILL.md`, where a `\`
+  line continuation was followed by a `#` comment, which is broken bash in the one command that
+  skill exists to hand a contributor. It was mirrored into the port and the record regenerated, and
+  the check went green — so the commit is a live proof that the round trip works, not a scope
+  breach. What is forbidden is editing a *port* in place; see below.
 
 **Out:**
 
-- Editing the canonical `.github/skills/` bodies. They remain Copilot-authoritative and are the
-  source the port is derived from. (Making them host-neutral so both hosts could share one text is
-  a plausible future change; it would remove the need for a port at all, and it is not this
-  change.)
+- Editing a **port** in place. A port is regenerated from its canonical, so an in-place edit is
+  lost work as soon as the next re-port lands — and it is the drift the check exists to catch, from
+  the port's side. This is the prohibition; "do not touch `.github/skills/`" is **not**.
+- Rewriting the canonical bodies to be host-neutral so both hosts could share one text. That is a
+  plausible future change — it would remove the need for a port at all — and it is not this one.
+  The canonicals remain Copilot-authoritative and are the source the port is derived from.
 - Reverse-direction ports of `rust-engineer` / `tui-engineer` into `.github/skills/`.
 - Any change to personal-skill policy (`CLAUDE.md:91`) — personal skills stay in `~/.claude/skills/`.
 - A general-purpose skill-format converter. Two skills, one needing no conversion, does not justify
