@@ -106,46 +106,27 @@ touches the prompt's own rect. Ghost text has to be painted into the prompt's re
 new step, inserted directly after the textarea render call and before the screen-stack paint:
 
 ```rust
-let block = prompt_block(&palette); // factored out of the inline builder below
+let block = prompt_block(palette); // factored out of the inline builder below
 textarea.set_block(block.clone());
 // ... existing set_style / set_cursor_line_style / measure calls, unchanged ...
 frame.render_widget(&textarea, chunks[4]);
 
 if let Some((top_screen, _)) = app.screen_stack.top() {
     if let Some(ghost) = top_screen.ghost_completion() {
-        let (cursor_row, cursor_col) = textarea.cursor();
-        let single_line = textarea.lines().len() == 1;
-        // `line_fits` proves the line cannot have wrapped onto a second
-        // visual row: if the whole logical line's char count is within
-        // the interior width, `WrapMode::WordOrGlyph` has nothing to wrap.
-        // This is the actual no-wrap guarantee — `cursor_row == 0` and
-        // `lines().len() == 1` alone do NOT detect wrapping, because both
-        // report the *logical* line/row, unchanged by soft-wrapping a
-        // long logical line across multiple *visual* rows. See Risks.
-        let inner = block.inner(chunks[4]);
-        let line_fits = textarea
-            .lines()
-            .first()
-            .is_some_and(|l| l.chars().count() <= inner.width as usize);
-        if cursor_row == 0 && single_line && line_fits {
-            let x = inner.x.saturating_add(cursor_col as u16);
-            if x < inner.x + inner.width {
-                let max_width = (inner.x + inner.width - x) as usize;
-                frame.buffer_mut().set_stringn(
-                    x,
-                    inner.y,
-                    &ghost,
-                    max_width,
-                    palette.base_style().fg(palette.muted),
-                );
-            }
-        }
+        paint_ghost_completion(
+            frame.buffer_mut(),
+            block.inner(chunks[4]),
+            textarea.cursor(),
+            textarea.lines(),
+            &ghost,
+            palette.base_style().fg(palette.muted),
+        );
     }
 }
 ```
 
-`prompt_block(&palette) -> Block` is factored out of the inline block-builder `render()` already
-constructs (`borders(ALL)` + `padding(Padding::horizontal(1))` + border styling,
+`prompt_block(palette: Palette) -> Block` is factored out of the inline block-builder `render()`
+already constructs (`borders(ALL)` + `padding(Padding::horizontal(1))` + border styling,
 `ui.rs:247-252`) so there is exactly **one** place that defines the prompt's block geometry —
 `textarea.set_block(...)` and the ghost overlay's `block.inner(chunks[4])` both derive from the
 same `Block` value in the same call to `render()`, rather than two independently-written
@@ -153,7 +134,67 @@ same `Block` value in the same call to `render()`, rather than two independently
 conditional border, an added title) could silently leave the other out of sync with. An earlier
 draft of this spec proposed a standalone `prompt_inner_rect` helper reproducing the geometry
 independently; a design critique correctly flagged that as two sources of truth with nothing
-forcing them to agree, so this revision derives both uses from one shared value instead.
+forcing them to agree, so this revision derives both uses from one shared value instead. Takes
+`palette: Palette` by value (not `&Palette`) because `Palette` is `Copy` (`palette.rs:22`) and every
+other helper in this file that needs a palette (`render_log`, `footer_spinner_spans`, etc.) already
+takes it by value — matching the file's existing convention rather than introducing a `&` for a
+single call site.
+
+The guard-and-paint logic itself is pulled into its own function, `paint_ghost_completion`, rather
+than inlined into `render()`:
+
+```rust
+/// Paints `ghost` as dim text immediately after the prompt's cursor,
+/// if doing so is safe. Pure function over a `Buffer` and primitives
+/// (no `Frame`/`App` dependency) so it is directly unit-testable —
+/// `render()` itself has no test precedent in this file and pulling
+/// the logic out avoids inventing one.
+///
+/// Safety conditions, both required:
+/// - `cursor.0 == 0` and `lines.len() == 1`: the cursor is on the
+///   textarea's one and only logical line.
+/// - `line_fits`: that line's full character count is within `inner`'s
+///   width. This is the actual no-wrap proof — `WrapMode::WordOrGlyph`
+///   cannot have moved the cursor's visual column away from its logical
+///   column unless the line was wider than the available width, so
+///   checking `cursor.0 == 0 && lines.len() == 1` alone is NOT
+///   sufficient: both report *logical* line/row and are unchanged by
+///   soft-wrapping a long logical line across multiple *visual* rows.
+///   See the spec's Risks section for the critique that caught this.
+fn paint_ghost_completion(
+    buf: &mut Buffer,
+    inner: Rect,
+    cursor: (usize, usize),
+    lines: &[String],
+    ghost: &str,
+    style: Style,
+) {
+    let (cursor_row, cursor_col) = cursor;
+    let single_line = lines.len() == 1;
+    let line_fits = lines
+        .first()
+        .is_some_and(|l| l.chars().count() <= inner.width as usize);
+    if cursor_row != 0 || !single_line || !line_fits {
+        return;
+    }
+    let x = inner.x.saturating_add(cursor_col as u16);
+    if x >= inner.x + inner.width {
+        return;
+    }
+    let max_width = (inner.x + inner.width - x) as usize;
+    buf.set_stringn(x, inner.y, ghost, max_width, style);
+}
+```
+
+This mirrors a pattern this file already uses: `footer_spinner_spans` builds a bare `Buffer::empty(area)`
+and renders into it directly to get a unit-testable result, rather than going through a full `Frame`.
+`paint_ghost_completion` follows the same shape — every input is a plain value or a borrowed slice,
+so a test can construct exact `Rect`/cursor/`lines` combinations (including the wrap-guard's edge
+case: a line whose length exceeds `inner.width`) without constructing an `App` or a `Frame` at all.
+`render()`'s only job is wiring: read the top screen's `ghost_completion()`, pass the textarea's
+actual `cursor()`/`lines()`/the shared block's `inner()` rect through, and call this function. That
+wiring is covered by the manual terminal check (implementation plan, final task), not by a unit test
+of `render()` itself, since this file has no existing test that calls `render()`.
 
 `Buffer::set_stringn` (not `set_string`) is used because it takes an explicit max-width and clips
 rather than panicking or overflowing the buffer if the ghost text would run past the block's right
@@ -182,14 +223,19 @@ a textarea edit does not.
 **In:**
 - `crates/otto-plugin/src/screen.rs` — new `Screen::ghost_completion` default method.
 - `crates/otto/src/plugin/builtin/command_palette/screen.rs` — `PaletteScreen` implements it.
-- `crates/otto/src/ui.rs` — the render-time overlay in `render()`, plus factoring the prompt's
-  `Block` construction into a shared `prompt_block` helper reused by both the textarea and the
-  overlay.
+- `crates/otto/src/ui.rs` — the render-time overlay in `render()`, factored into a pure
+  `paint_ghost_completion` function; the prompt's `Block` construction factored into a shared
+  `prompt_block` helper reused by both the textarea and the overlay.
 - `CHANGELOG.md` — an `Added` entry.
 - Tests: unit tests for `PaletteScreen::ghost_completion` (prefix match, substring-only match,
-  exact match, empty filter, no highlight); a `ui.rs` render test asserting the ghost text appears
-  at the expected cell(s) for a representative case, and that it does *not* appear when no screen is
-  open or the top screen returns `None`.
+  exact match, empty filter, no highlight); unit tests for `paint_ghost_completion` directly against
+  a bare `Buffer` (draws at the expected cell for a fitting single line; does not draw when the line
+  exceeds the available width — the wrap-guard regression case; does not draw when `lines.len() !=
+  1` or `cursor.0 != 0`; clips via `max_width` rather than overflowing when the ghost text is longer
+  than the remaining space). `render()`'s wiring of these two pieces together is exercised by the
+  manual terminal check (implementation plan, final task), not a unit test — this file has no
+  existing test that calls `render()` itself, and `paint_ghost_completion`'s own tests already cover
+  every branch of the logic that matters.
 
 **Out:**
 - Multi-line / wrapped prompt text. The palette always drives the prompt with a single line (`/` +
