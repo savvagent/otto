@@ -5,6 +5,15 @@ on:
   push:
     branches: [master, main]
 
+# Every job here only reads the tree: fmt, clippy, the test matrix, the
+# cross-vendor gate, the skill-port parity check and `dist plan` all build or
+# inspect a checkout and none of them write to the repository or call the API.
+# Without this block they would inherit the default token scope, which on
+# `pull_request` means a fork's PR content is processed by a job holding a
+# token it has no use for.
+permissions:
+  contents: read
+
 # Cancel in-flight runs on the same ref when a new push comes in. Saves CI
 # minutes on PRs that get force-pushed.
 concurrency:
