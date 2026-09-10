@@ -65,14 +65,10 @@ impl Screen for PluginsManagerScreen {
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         let mut out = Vec::with_capacity(self.rows.len());
         if self.rows.is_empty() {
-            out.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.plugins-manager.no-plugins").to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            out.push(StyledLine::colored(
+                rust_i18n::t!("picker.plugins-manager.no-plugins").to_string(),
+                ThemeColor::Warning,
+            ));
             return out;
         }
         for (i, row) in self.rows.iter().enumerate() {
@@ -117,18 +113,8 @@ impl Screen for PluginsManagerScreen {
                         bg: None,
                         modifiers: mods_active,
                     },
-                    StyledSpan {
-                        text: format!("  {}", row.contribution_summary),
-                        fg: Some(ThemeColor::Muted),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
-                    StyledSpan {
-                        text: format!("  {origin_label}"),
-                        fg: Some(ThemeColor::Muted),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    },
+                    StyledSpan::muted(format!("  {}", row.contribution_summary)),
+                    StyledSpan::muted(format!("  {origin_label}")),
                 ],
             });
         }
@@ -155,15 +141,10 @@ impl Screen for PluginsManagerScreen {
                 };
                 if matches!(row.kind, PluginKind::Core) {
                     return Ok(vec![Effect::PushNote {
-                        line: StyledLine {
-                            spans: vec![StyledSpan {
-                                text: rust_i18n::t!("picker.plugins-manager.core-cannot-disable")
-                                    .to_string(),
-                                fg: Some(ThemeColor::Warning),
-                                bg: None,
-                                modifiers: TextMods::default(),
-                            }],
-                        },
+                        line: StyledLine::colored(
+                            rust_i18n::t!("picker.plugins-manager.core-cannot-disable").to_string(),
+                            ThemeColor::Warning,
+                        ),
                     }]);
                 }
                 row.enabled = !row.enabled;
@@ -217,6 +198,8 @@ mod tests {
                     ),
                     "expected core-cannot-disable text, got {joined:?}"
                 );
+                // Pins span colours so the #117 constructor rewrite cannot change them silently.
+                assert_eq!(line.spans[0].fg, Some(ThemeColor::Warning));
             }
             other => panic!("expected PushNote, got {other:?}"),
         }
@@ -358,5 +341,35 @@ mod tests {
             line1.contains(&external),
             "expected external suffix in row 1: {line1:?}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // Row 0 is the cursor (index 0), so its toggle/name spans are Accent+bold;
+        // row 1 is not the cursor, so Fg and not bold. Both rows' contribution-summary
+        // and origin-label spans are Muted regardless of cursor position.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Accent));
+        assert!(lines[0].spans[0].modifiers.bold);
+        assert_eq!(lines[0].spans[1].fg, Some(ThemeColor::Accent));
+        assert!(lines[0].spans[1].modifiers.bold);
+        assert_eq!(lines[0].spans[2].fg, Some(ThemeColor::Muted));
+        assert_eq!(lines[0].spans[3].fg, Some(ThemeColor::Muted));
+
+        assert_eq!(lines[1].spans[0].fg, Some(ThemeColor::Fg));
+        assert!(!lines[1].spans[0].modifiers.bold);
+        assert_eq!(lines[1].spans[1].fg, Some(ThemeColor::Fg));
+        assert!(!lines[1].spans[1].modifiers.bold);
+        assert_eq!(lines[1].spans[2].fg, Some(ThemeColor::Muted));
+        assert_eq!(lines[1].spans[3].fg, Some(ThemeColor::Muted));
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn empty_rows_renders_warning_colored_placeholder() {
+        let s = PluginsManagerScreen::empty();
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Warning));
     }
 }

@@ -9,7 +9,7 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, Region, SlotSpec, StyledLine, StyledSpan, TextMods, ThemeColor,
+    PluginKind, Region, SlotSpec, StyledLine, StyledSpan, ThemeColor,
 };
 
 /// TUI home-screen footer plugin.
@@ -104,14 +104,7 @@ impl Plugin for HomeFooterPlugin {
                     Some(id) => rust_i18n::t!("footer.turn-working", id = id).to_string(),
                     None => rust_i18n::t!("footer.idle").to_string(),
                 };
-                vec![StyledLine {
-                    spans: vec![StyledSpan {
-                        text: turn,
-                        fg: Some(ThemeColor::Accent),
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    }],
-                }]
+                vec![StyledLine::colored(turn, ThemeColor::Accent)]
             }
             "home.footer.right" => {
                 // Layout: working_dir · ~N ctx · $0.00 · vX.Y.Z
@@ -121,29 +114,21 @@ impl Plugin for HomeFooterPlugin {
                 // - $0.00 is a literal placeholder until real cost tracking
                 //   ships.
                 // TODO(v0.10): wire real cost via TurnOutcome.usage + per-model pricing table
-                let muted = |text: String| StyledSpan {
-                    text,
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                };
-                let accent = |text: String| StyledSpan {
-                    text,
-                    fg: Some(ThemeColor::Accent),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                };
-
                 let mut spans: Vec<StyledSpan> = Vec::with_capacity(7);
-                spans.push(muted(self.working_dir.clone()));
+                spans.push(StyledSpan::muted(self.working_dir.clone()));
                 if let Some(ctx_text) = format_context_segment(self.context_tokens) {
-                    spans.push(muted(" · ".into()));
-                    spans.push(muted(ctx_text));
+                    spans.push(StyledSpan::muted(" · "));
+                    spans.push(StyledSpan::muted(ctx_text));
                 }
-                spans.push(muted(" · ".into()));
-                spans.push(muted(rust_i18n::t!("footer.cost-zero").to_string()));
-                spans.push(muted(" · ".into()));
-                spans.push(accent(format!("v{}", env!("CARGO_PKG_VERSION"))));
+                spans.push(StyledSpan::muted(" · "));
+                spans.push(StyledSpan::muted(
+                    rust_i18n::t!("footer.cost-zero").to_string(),
+                ));
+                spans.push(StyledSpan::muted(" · "));
+                spans.push(StyledSpan::colored(
+                    format!("v{}", env!("CARGO_PKG_VERSION")),
+                    ThemeColor::Accent,
+                ));
 
                 vec![StyledLine { spans }]
             }
@@ -182,6 +167,10 @@ mod tests {
             lines[0].spans[0].text,
             rust_i18n::t!("footer.idle").as_ref()
         );
+        // Pins span colour so the #117 constructor rewrite cannot change it
+        // silently. `home.footer.center` is Accent in both the idle and
+        // turn-working states.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Accent));
     }
 
     #[tokio::test]
@@ -203,6 +192,8 @@ mod tests {
             lines[0].spans[0].text,
             rust_i18n::t!("footer.turn-working", id = 3u32).as_ref()
         );
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Accent));
     }
 
     #[tokio::test]
@@ -261,6 +252,16 @@ mod tests {
             !joined.contains("? for help"),
             "stale hint still present in: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them
+        // silently. With `context_tokens == 0` (the default) the ctx segment is
+        // omitted, so the row is: working_dir · cost-zero · version — every span
+        // is Muted except the trailing version span, which is Accent.
+        let spans = &lines[0].spans;
+        assert!(spans.len() >= 2, "expected at least dir + version spans");
+        for s in &spans[..spans.len() - 1] {
+            assert_eq!(s.fg, Some(ThemeColor::Muted), "expected Muted for {s:?}");
+        }
+        assert_eq!(spans.last().unwrap().fg, Some(ThemeColor::Accent));
     }
 
     #[tokio::test]

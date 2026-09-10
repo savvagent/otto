@@ -7,8 +7,7 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use serde::Deserialize;
 
@@ -35,15 +34,6 @@ impl ToolTaskSummaryPlugin {
 impl Default for ToolTaskSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -101,10 +91,10 @@ impl Plugin for ToolTaskSummaryPlugin {
             truncate(&input.description, DESCRIPTION_MAX_CHARS)
         };
         Some(vec![
-            span("task ", ThemeColor::Fg),
-            span(agent, ThemeColor::Accent),
-            span(" · ", ThemeColor::Muted),
-            span(format!("\"{desc}\""), ThemeColor::Success),
+            StyledSpan::colored("task ", ThemeColor::Fg),
+            StyledSpan::colored(agent, ThemeColor::Accent),
+            StyledSpan::muted(" · "),
+            StyledSpan::colored(format!("\"{desc}\""), ThemeColor::Success),
         ])
     }
 
@@ -125,16 +115,13 @@ impl Plugin for ToolTaskSummaryPlugin {
         let line_count = trimmed.lines().count();
         let first_line = trimmed.lines().next().unwrap_or("");
         let snippet = truncate(first_line, RESULT_MAX_CHARS);
-        let mut spans = vec![span(snippet, ThemeColor::Muted)];
+        let mut spans = vec![StyledSpan::muted(snippet)];
         if line_count > 1 {
-            spans.push(span(
-                format!(
-                    " (+{} more line{})",
-                    line_count - 1,
-                    if line_count > 2 { "s" } else { "" }
-                ),
-                ThemeColor::Muted,
-            ));
+            spans.push(StyledSpan::muted(format!(
+                " (+{} more line{})",
+                line_count - 1,
+                if line_count > 2 { "s" } else { "" }
+            )));
         }
         Some(spans)
     }
@@ -274,5 +261,46 @@ mod tests {
             .find(|s| s.text == "code-reviewer")
             .expect("agent span");
         assert_eq!(agent_span.fg, Some(ThemeColor::Accent));
+    }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn summarize_tool_call_span_colors_are_pinned() {
+        let p = ToolTaskSummaryPlugin::new();
+        let args = serde_json::json!({
+            "description": "review the auth diff",
+            "prompt": "...",
+            "subagent_type": "code-reviewer"
+        });
+        let spans = p.summarize_tool_call("task", &args).expect("summary");
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("task ", Some(ThemeColor::Fg)),
+                ("code-reviewer", Some(ThemeColor::Accent)),
+                (" · ", Some(ThemeColor::Muted)),
+                ("\"review the auth diff\"", Some(ThemeColor::Success)),
+            ]
+        );
+    }
+
+    #[test]
+    fn summarize_tool_result_span_colors_are_pinned() {
+        let p = ToolTaskSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_result("task", "first line\nsecond\nthird")
+            .expect("summary");
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("first line", Some(ThemeColor::Muted)),
+                (" (+2 more lines)", Some(ThemeColor::Muted)),
+            ]
+        );
     }
 }

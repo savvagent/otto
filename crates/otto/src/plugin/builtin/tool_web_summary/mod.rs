@@ -3,8 +3,7 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use tool_web::{FetchInput, FetchOutput, SearchInput, SearchOutput};
 
@@ -22,15 +21,6 @@ impl ToolWebSummaryPlugin {
 impl Default for ToolWebSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -61,16 +51,16 @@ impl Plugin for ToolWebSummaryPlugin {
             "web_fetch" => {
                 let input: FetchInput = serde_json::from_value(args.clone()).ok()?;
                 Some(vec![
-                    span("fetch ", ThemeColor::Fg),
-                    span(input.url, ThemeColor::Success),
+                    StyledSpan::colored("fetch ", ThemeColor::Fg),
+                    StyledSpan::colored(input.url, ThemeColor::Success),
                 ])
             }
             "web_search" => {
                 let input: SearchInput = serde_json::from_value(args.clone()).ok()?;
                 Some(vec![
-                    span("search '", ThemeColor::Fg),
-                    span(input.query, ThemeColor::Success),
-                    span("'", ThemeColor::Fg),
+                    StyledSpan::colored("search '", ThemeColor::Fg),
+                    StyledSpan::colored(input.query, ThemeColor::Success),
+                    StyledSpan::colored("'", ThemeColor::Fg),
                 ])
             }
             _ => None,
@@ -82,22 +72,22 @@ impl Plugin for ToolWebSummaryPlugin {
             "web_fetch" => {
                 let out: FetchOutput = serde_json::from_str(result_text).ok()?;
                 let mut spans = vec![
-                    span(out.status.to_string(), ThemeColor::Success),
-                    span(" · ", ThemeColor::Muted),
-                    span(out.content.len().to_string(), ThemeColor::Success),
-                    span(" chars", ThemeColor::Fg),
+                    StyledSpan::colored(out.status.to_string(), ThemeColor::Success),
+                    StyledSpan::muted(" · "),
+                    StyledSpan::colored(out.content.len().to_string(), ThemeColor::Success),
+                    StyledSpan::colored(" chars", ThemeColor::Fg),
                 ];
                 if out.truncated {
-                    spans.push(span(" (truncated)", ThemeColor::Muted));
+                    spans.push(StyledSpan::muted(" (truncated)"));
                 }
                 Some(spans)
             }
             "web_search" => {
                 let out: SearchOutput = serde_json::from_str(result_text).ok()?;
                 Some(vec![
-                    span(out.results.len().to_string(), ThemeColor::Success),
-                    span(" results via ", ThemeColor::Fg),
-                    span(out.backend, ThemeColor::Muted),
+                    StyledSpan::colored(out.results.len().to_string(), ThemeColor::Success),
+                    StyledSpan::colored(" results via ", ThemeColor::Fg),
+                    StyledSpan::muted(out.backend),
                 ])
             }
             _ => None,
@@ -202,6 +192,96 @@ mod tests {
         assert!(
             p.summarize_tool_call("web_fetch", &serde_json::json!({}))
                 .is_none()
+        );
+    }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn fetch_call_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call(
+                "web_fetch",
+                &serde_json::json!({"url": "https://example.com"}),
+            )
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("fetch ", Some(ThemeColor::Fg)),
+                ("https://example.com", Some(ThemeColor::Success)),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_call_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call("web_search", &serde_json::json!({"query": "rust async"}))
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("search '", Some(ThemeColor::Fg)),
+                ("rust async", Some(ThemeColor::Success)),
+                ("'", Some(ThemeColor::Fg)),
+            ]
+        );
+    }
+
+    #[test]
+    fn fetch_result_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let result = serde_json::json!({
+            "url": "https://example.com",
+            "status": 200,
+            "content_type": null,
+            "content": "hello",
+            "truncated": true
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("web_fetch", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("200", Some(ThemeColor::Success)),
+                (" · ", Some(ThemeColor::Muted)),
+                ("5", Some(ThemeColor::Success)),
+                (" chars", Some(ThemeColor::Fg)),
+                (" (truncated)", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_result_span_colors_are_pinned() {
+        let p = ToolWebSummaryPlugin::new();
+        let result = serde_json::json!({
+            "backend": "brave",
+            "results": [
+                {"title": "A", "url": "https://a.example", "snippet": ""},
+                {"title": "B", "url": "https://b.example", "snippet": ""}
+            ]
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("web_search", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("2", Some(ThemeColor::Success)),
+                (" results via ", Some(ThemeColor::Fg)),
+                ("brave", Some(ThemeColor::Muted)),
+            ]
         );
     }
 }

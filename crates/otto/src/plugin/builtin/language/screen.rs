@@ -39,18 +39,14 @@ impl Screen for LanguagePickerScreen {
 
         let filtered = self.inner.filtered();
         if filtered.is_empty() {
-            out.push(StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!(
-                        "picker.language.no-match",
-                        filter = self.inner.filter.clone()
-                    )
-                    .to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            });
+            out.push(StyledLine::colored(
+                rust_i18n::t!(
+                    "picker.language.no-match",
+                    filter = self.inner.filter.clone()
+                )
+                .to_string(),
+                ThemeColor::Warning,
+            ));
             return out;
         }
 
@@ -138,12 +134,7 @@ impl LanguagePickerScreen {
                         ..Default::default()
                     },
                 },
-                StyledSpan {
-                    text: format!("{native}{active_marker}"),
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                },
+                StyledSpan::muted(format!("{native}{active_marker}")),
             ],
         }
     }
@@ -237,5 +228,35 @@ mod tests {
                 l.native_name
             );
         }
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // Row 0 is the filter label, row 1 the spacer, row 2 the first language row —
+        // which is the cursor row since the picker opens on "en".
+        let cursor_row = &lines[2];
+        assert_eq!(cursor_row.spans[0].fg, Some(ThemeColor::Accent));
+        assert!(cursor_row.spans[0].modifiers.bold);
+        assert_eq!(cursor_row.spans[1].fg, Some(ThemeColor::Muted));
+
+        let other_row = &lines[3];
+        assert_eq!(other_row.spans[0].fg, Some(ThemeColor::Fg));
+        assert!(!other_row.spans[0].modifiers.bold);
+        assert_eq!(other_row.spans[1].fg, Some(ThemeColor::Muted));
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[tokio::test]
+    async fn no_match_state_is_warning_colored() {
+        let mut s = LanguagePickerScreen::new(LanguagePicker::new("en"));
+        for c in "zzzznomatch".chars() {
+            let _ = s.on_key(key(KeyCodePortable::Char(c))).await.unwrap();
+        }
+        assert!(s.inner.filtered().is_empty(), "filter should match nothing");
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        let no_match_line = &lines[2];
+        assert_eq!(no_match_line.spans[0].fg, Some(ThemeColor::Warning));
     }
 }

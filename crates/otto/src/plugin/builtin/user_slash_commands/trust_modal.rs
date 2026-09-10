@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, Region, Screen, ScreenArgs, StyledLine,
-    StyledSpan, TextMods, ThemeColor,
+    ThemeColor,
 };
 
 /// The trust modal pushed onto the screen stack via
@@ -35,14 +35,10 @@ impl Screen for TrustModal {
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         let path_str = self.project_root.display().to_string();
         vec![
-            StyledLine {
-                spans: vec![StyledSpan {
-                    text: format!("Commands in {path_str} use shell substitution (!cmd)."),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            },
+            StyledLine::colored(
+                format!("Commands in {path_str} use shell substitution (!cmd)."),
+                ThemeColor::Warning,
+            ),
             StyledLine::plain("Trust this project's commands?".to_string()),
             StyledLine::plain(
                 "  y = always   n = this session (text-only)   q = cancel".to_string(),
@@ -240,5 +236,20 @@ mod tests {
     fn from_args_rejects_wrong_variant() {
         let err = TrustModal::from_args(ScreenArgs::None).unwrap_err();
         assert!(matches!(err, PluginError::ScreenNotFound(_)));
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn render_warning_line_is_warning_colored_others_unstyled() {
+        let m = modal();
+        let lines = m.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 24,
+        });
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Warning));
+        assert_eq!(lines[1].spans[0].fg, None);
+        assert_eq!(lines[2].spans[0].fg, None);
     }
 }

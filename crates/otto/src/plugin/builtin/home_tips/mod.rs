@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, Region, SlotSpec, StyledLine, StyledSpan, TextMods, ThemeColor,
+    PluginKind, Region, SlotSpec, StyledLine,
 };
 
 /// TUI home-screen tips plugin.
@@ -62,14 +62,7 @@ impl Plugin for HomeTipsPlugin {
         } else {
             rust_i18n::t!("tips.connecting").to_string()
         };
-        vec![StyledLine {
-            spans: vec![StyledSpan {
-                text,
-                fg: Some(ThemeColor::Muted),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }]
+        vec![StyledLine::muted(text)]
     }
 
     async fn on_event(&mut self, event: HostEvent) -> Result<Vec<Effect>, PluginError> {
@@ -83,7 +76,10 @@ impl Plugin for HomeTipsPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `ThemeColor` is only referenced by the colour pins below, so it is imported
+    // here rather than at module scope where it would read as unused.
     use otto_plugin::ProviderId;
+    use otto_plugin::ThemeColor;
 
     #[test]
     fn renders_connecting_before_first_connect() {
@@ -102,6 +98,8 @@ mod tests {
             },
         );
         assert!(lines[0].spans[0].text.starts_with("Connecting"));
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Muted));
     }
 
     #[tokio::test]
@@ -125,5 +123,7 @@ mod tests {
             lines[0].spans[0].text,
             rust_i18n::t!("tips.press-slash").as_ref()
         );
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Muted));
     }
 }

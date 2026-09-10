@@ -92,7 +92,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use otto_plugin::{
-        Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
+        Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor,
         ToolSummarySpec,
     };
 
@@ -125,12 +125,10 @@ mod tests {
             _name: &str,
             _args: &serde_json::Value,
         ) -> Option<Vec<StyledSpan>> {
-            Some(vec![StyledSpan {
-                text: self.call_text.clone(),
-                fg: Some(ThemeColor::Fg),
-                bg: None,
-                modifiers: TextMods::default(),
-            }])
+            Some(vec![StyledSpan::colored(
+                self.call_text.clone(),
+                ThemeColor::Fg,
+            )])
         }
 
         fn summarize_tool_result(
@@ -138,12 +136,7 @@ mod tests {
             _name: &str,
             _result_text: &str,
         ) -> Option<Vec<StyledSpan>> {
-            Some(vec![StyledSpan {
-                text: self.result_text.clone(),
-                fg: Some(ThemeColor::Muted),
-                bg: None,
-                modifiers: TextMods::default(),
-            }])
+            Some(vec![StyledSpan::muted(self.result_text.clone())])
         }
     }
 
@@ -166,12 +159,16 @@ mod tests {
             .await
             .expect("plugin should claim read_file");
         assert_eq!(call[0].text, "read_file src/main.rs");
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(call[0].fg, Some(ThemeColor::Fg));
 
         let result = router
             .summarize_result("read_file", r#"{"bytes": 1234}"#)
             .await
             .expect("plugin should claim read_file");
         assert_eq!(result[0].text, "1.2 KiB");
+        // Pins span colour so the #117 constructor rewrite cannot change it silently.
+        assert_eq!(result[0].fg, Some(ThemeColor::Muted));
     }
 
     #[tokio::test]

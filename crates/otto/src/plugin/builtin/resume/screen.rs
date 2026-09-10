@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Effect, KeyCodePortable, KeyEventPortable, PluginError, Region, Screen, StyledLine, StyledSpan,
-    TextMods, ThemeColor, TranscriptHandle,
+    Effect, KeyCodePortable, KeyEventPortable, PluginError, Region, Screen, StyledLine, ThemeColor,
+    TranscriptHandle,
 };
 
 /// Fullscreen-modal picker that lists saved transcripts and lets the user
@@ -30,14 +30,10 @@ impl Screen for ResumePickerScreen {
 
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         if self.items.is_empty() {
-            return vec![StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.resume.no-transcripts").to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            }];
+            return vec![StyledLine::colored(
+                rust_i18n::t!("picker.resume.no-transcripts").to_string(),
+                ThemeColor::Warning,
+            )];
         }
         self.items
             .iter()
@@ -116,6 +112,8 @@ mod tests {
             joined.contains(rust_i18n::t!("picker.resume.no-transcripts").as_ref()),
             "expected no-transcripts text, got: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Warning));
     }
 
     #[tokio::test]

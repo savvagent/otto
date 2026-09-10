@@ -4,8 +4,7 @@ use std::collections::HashSet;
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use tool_grep::{SearchInput, SearchOutput};
 
@@ -22,15 +21,6 @@ impl ToolGrepSummaryPlugin {
 impl Default for ToolGrepSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -58,18 +48,18 @@ impl Plugin for ToolGrepSummaryPlugin {
         }
         let input: SearchInput = serde_json::from_value(args.clone()).ok()?;
         let mut spans = vec![
-            span("grep '", ThemeColor::Fg),
-            span(input.pattern, ThemeColor::Success),
-            span("'", ThemeColor::Fg),
+            StyledSpan::colored("grep '", ThemeColor::Fg),
+            StyledSpan::colored(input.pattern, ThemeColor::Success),
+            StyledSpan::colored("'", ThemeColor::Fg),
         ];
         if let Some(path) = input.path {
-            spans.push(span(format!(" in {path}"), ThemeColor::Muted));
+            spans.push(StyledSpan::muted(format!(" in {path}")));
         }
         if input.case_insensitive {
-            spans.push(span(" -i", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" -i"));
         }
         if input.multiline {
-            spans.push(span(" --multiline", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" --multiline"));
         }
         Some(spans)
     }
@@ -81,13 +71,13 @@ impl Plugin for ToolGrepSummaryPlugin {
         let out: SearchOutput = serde_json::from_str(result_text).ok()?;
         let unique_files: HashSet<&str> = out.matches.iter().map(|m| m.file.as_str()).collect();
         let mut spans = vec![
-            span(out.matches.len().to_string(), ThemeColor::Success),
-            span(" matches in ", ThemeColor::Fg),
-            span(unique_files.len().to_string(), ThemeColor::Success),
-            span(" files", ThemeColor::Fg),
+            StyledSpan::colored(out.matches.len().to_string(), ThemeColor::Success),
+            StyledSpan::colored(" matches in ", ThemeColor::Fg),
+            StyledSpan::colored(unique_files.len().to_string(), ThemeColor::Success),
+            StyledSpan::colored(" files", ThemeColor::Fg),
         ];
         if out.truncated {
-            spans.push(span(" (truncated)", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" (truncated)"));
         }
         Some(spans)
     }
@@ -184,6 +174,64 @@ mod tests {
         assert!(
             p.summarize_tool_call("search", &serde_json::json!({}))
                 .is_none()
+        );
+    }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn search_call_span_colors_are_pinned() {
+        let p = ToolGrepSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call(
+                "search",
+                &serde_json::json!({
+                    "pattern": "fn ",
+                    "path": "src",
+                    "case_insensitive": true,
+                    "multiline": true
+                }),
+            )
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("grep '", Some(ThemeColor::Fg)),
+                ("fn ", Some(ThemeColor::Success)),
+                ("'", Some(ThemeColor::Fg)),
+                (" in src", Some(ThemeColor::Muted)),
+                (" -i", Some(ThemeColor::Muted)),
+                (" --multiline", Some(ThemeColor::Muted)),
+            ]
+        );
+    }
+
+    #[test]
+    fn search_result_span_colors_are_pinned() {
+        let p = ToolGrepSummaryPlugin::new();
+        let result = serde_json::json!({
+            "pattern": "fn ",
+            "root": ".",
+            "matches": [
+                {"file": "a.rs", "line": 1, "column": 1, "text": "fn a() {}"}
+            ],
+            "truncated": true
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("search", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("1", Some(ThemeColor::Success)),
+                (" matches in ", Some(ThemeColor::Fg)),
+                ("1", Some(ThemeColor::Success)),
+                (" files", Some(ThemeColor::Fg)),
+                (" (truncated)", Some(ThemeColor::Muted)),
+            ]
         );
     }
 }

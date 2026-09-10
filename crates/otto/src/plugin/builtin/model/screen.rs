@@ -41,14 +41,10 @@ impl Screen for ModelPickerScreen {
 
     fn render(&self, _region: Region) -> Vec<StyledLine> {
         if self.models.is_empty() {
-            return vec![StyledLine {
-                spans: vec![StyledSpan {
-                    text: rust_i18n::t!("picker.model.no-models").to_string(),
-                    fg: Some(ThemeColor::Warning),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            }];
+            return vec![StyledLine::colored(
+                rust_i18n::t!("picker.model.no-models").to_string(),
+                ThemeColor::Warning,
+            )];
         }
         self.models
             .iter()
@@ -78,12 +74,7 @@ impl Screen for ModelPickerScreen {
                                 ..Default::default()
                             },
                         },
-                        StyledSpan {
-                            text: format!("  ({}){active_marker}", m.id),
-                            fg: Some(ThemeColor::Muted),
-                            bg: None,
-                            modifiers: TextMods::default(),
-                        },
+                        StyledSpan::muted(format!("  ({}){active_marker}", m.id)),
                     ],
                 }
             })
@@ -171,6 +162,29 @@ mod tests {
             joined.contains(rust_i18n::t!("picker.model.no-models").as_ref()),
             "expected no-models text, got: {joined}"
         );
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        assert_eq!(lines[0].spans[0].fg, Some(ThemeColor::Warning));
+    }
+
+    // Pins span colours so the #117 constructor rewrite cannot change them silently.
+    #[test]
+    fn row_spans_pin_cursor_accent_and_muted_id_column() {
+        let s = ModelPickerScreen::new("gemini-2.5-flash".into(), vec![flash(), pro()]);
+        let lines = s.render(Region {
+            x: 0,
+            y: 0,
+            width: 60,
+            height: 10,
+        });
+        let cursor_row = &lines[0];
+        assert_eq!(cursor_row.spans[0].fg, Some(ThemeColor::Accent));
+        assert!(cursor_row.spans[0].modifiers.bold);
+        assert_eq!(cursor_row.spans[1].fg, Some(ThemeColor::Muted));
+
+        let other_row = &lines[1];
+        assert_eq!(other_row.spans[0].fg, Some(ThemeColor::Fg));
+        assert!(!other_row.spans[0].modifiers.bold);
+        assert_eq!(other_row.spans[1].fg, Some(ThemeColor::Muted));
     }
 
     #[tokio::test]

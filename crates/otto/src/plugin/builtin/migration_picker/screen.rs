@@ -6,7 +6,6 @@
 use async_trait::async_trait;
 use otto_plugin::{
     Effect, KeyCodePortable, KeyEventPortable, PluginError, ProviderId, Region, Screen, StyledLine,
-    StyledSpan, TextMods, ThemeColor,
 };
 
 /// First-launch migration picker screen.
@@ -52,14 +51,7 @@ impl Screen for MigrationPickerScreen {
         let mut lines = vec![
             StyledLine::plain(title),
             StyledLine::plain(""),
-            StyledLine {
-                spans: vec![StyledSpan {
-                    text: hint,
-                    fg: Some(ThemeColor::Muted),
-                    bg: None,
-                    modifiers: TextMods::default(),
-                }],
-            },
+            StyledLine::muted(hint),
             StyledLine::plain(""),
         ];
 
@@ -125,7 +117,10 @@ impl Screen for MigrationPickerScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `ThemeColor` is only referenced by the colour pins below, so it is imported
+    // here rather than at module scope where it would read as unused.
     use otto_plugin::KeyMods;
+    use otto_plugin::ThemeColor;
 
     fn pid(s: &str) -> ProviderId {
         ProviderId::new(s).unwrap()
@@ -230,5 +225,12 @@ mod tests {
         // Both provider ids should appear.
         assert!(joined.contains("anthropic"), "anthropic missing: {joined}");
         assert!(joined.contains("gemini"), "gemini missing: {joined}");
+        // Pins span colours so the #117 constructor rewrite cannot change them silently.
+        // Title and row lines are unstyled (fg: None); only the hint line is Muted.
+        assert_eq!(lines[0].spans[0].fg, None);
+        assert_eq!(lines[1].spans[0].fg, None);
+        assert_eq!(lines[2].spans[0].fg, Some(ThemeColor::Muted));
+        assert_eq!(lines[3].spans[0].fg, None);
+        assert_eq!(lines[4].spans[0].fg, None);
     }
 }

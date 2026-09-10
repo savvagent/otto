@@ -203,12 +203,7 @@ async fn compute_tool_entries(
                     Some(spans) => spans,
                     None => match serde_json::from_str::<serde_json::Value>(text) {
                         Ok(v) => otto_plugin::styled::json_spans(&v),
-                        Err(_) => vec![otto_plugin::StyledSpan {
-                            text: text.clone(),
-                            fg: Some(otto_plugin::ThemeColor::Muted),
-                            bg: None,
-                            modifiers: otto_plugin::TextMods::default(),
-                        }],
+                        Err(_) => vec![otto_plugin::StyledSpan::muted(text.clone())],
                     },
                 };
                 Some(spans)
@@ -350,12 +345,7 @@ pub fn render(
     frame.render_widget(&textarea, chunks[4]);
 
     // Footer row — see `compose_footer_line` for the join semantics.
-    let separator = otto_plugin::StyledSpan {
-        text: " · ".into(),
-        fg: Some(otto_plugin::ThemeColor::Muted),
-        bg: None,
-        modifiers: otto_plugin::TextMods::default(),
-    };
+    let separator = otto_plugin::StyledSpan::muted(" · ");
     let footer_center = footer_center_lines(
         &frame_data.footer_center,
         frame_data.footer_center_turn_line,
@@ -1429,18 +1419,14 @@ fn footer_center_lines(
                 busy_turn_id.is_some() && Some(idx) == turn_line_idx && !line.spans.is_empty();
             let mut line = if rewrite_for_pending && !line.spans.is_empty() {
                 crate::plugin::convert::styled_line_to_ratatui(
-                    otto_plugin::StyledLine {
-                        spans: vec![otto_plugin::StyledSpan {
-                            text: rust_i18n::t!(
-                                "footer.turn-working",
-                                id = pending_turn_id.expect("checked is_some above")
-                            )
-                            .to_string(),
-                            fg: Some(otto_plugin::ThemeColor::Accent),
-                            bg: None,
-                            modifiers: otto_plugin::TextMods::default(),
-                        }],
-                    },
+                    otto_plugin::StyledLine::colored(
+                        rust_i18n::t!(
+                            "footer.turn-working",
+                            id = pending_turn_id.expect("checked is_some above")
+                        )
+                        .to_string(),
+                        otto_plugin::ThemeColor::Accent,
+                    ),
                     &palette,
                 )
             } else {
@@ -1565,26 +1551,10 @@ mod tests {
     use crate::plugin::builtin::themes::catalog::Theme;
     use async_trait::async_trait;
     use otto_plugin::{
-        Effect, KeyEventPortable, PluginError, Region, Screen, ScreenLayout, StyledLine,
-        StyledSpan, TextMods, ThemeColor,
+        Effect, KeyEventPortable, PluginError, Region, Screen, ScreenLayout, StyledLine, ThemeColor,
     };
     use ratatui::{Terminal, backend::TestBackend};
     use std::path::PathBuf;
-
-    fn span(text: &str) -> StyledSpan {
-        StyledSpan {
-            text: text.into(),
-            fg: None,
-            bg: None,
-            modifiers: TextMods::default(),
-        }
-    }
-
-    fn one_span_line(text: &str) -> StyledLine {
-        StyledLine {
-            spans: vec![span(text)],
-        }
-    }
 
     fn rline(text: &str) -> Line<'static> {
         Line::from(vec![Span::raw(text.to_string())])
@@ -1981,8 +1951,8 @@ mod tests {
         let buffer = render_paint_screen(
             &FakeScreen {
                 id: "splash".into(),
-                body: vec![one_span_line("fake splash body")],
-                tips: vec![one_span_line("fake splash tips")],
+                body: vec![StyledLine::plain("fake splash body")],
+                tips: vec![StyledLine::plain("fake splash tips")],
             },
             &ScreenLayout::Fullscreen { hide_chrome: false },
             palette(),
@@ -2020,8 +1990,8 @@ mod tests {
         let buffer = render_paint_screen(
             &FakeScreen {
                 id: "plugins.manager".into(),
-                body: vec![one_span_line("fullscreen body")],
-                tips: vec![one_span_line("fullscreen tips")],
+                body: vec![StyledLine::plain("fullscreen body")],
+                tips: vec![StyledLine::plain("fullscreen tips")],
             },
             &ScreenLayout::Fullscreen { hide_chrome: false },
             palette(),
@@ -2146,7 +2116,7 @@ mod tests {
     #[test]
     fn footer_turn_state_lines_idle_are_unchanged() {
         let _lock = locale_lock();
-        let turn_state = vec![one_span_line("idle")];
+        let turn_state = vec![StyledLine::plain("idle")];
         let palette = palette();
 
         let out = footer_center_lines(&turn_state, Some(0), None, None, 0, palette);
@@ -2162,14 +2132,7 @@ mod tests {
     fn footer_turn_state_lines_busy_include_working_label() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working.clone(),
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working.clone(), ThemeColor::Accent)];
 
         let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
 
@@ -2185,7 +2148,7 @@ mod tests {
         let _lock = locale_lock();
         let idle = rust_i18n::t!("footer.idle").to_string();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![one_span_line(&idle)];
+        let turn_state = vec![StyledLine::plain(&idle)];
 
         let out = footer_center_lines(&turn_state, Some(0), None, Some(3), 0, palette());
         let rendered = joined_ratatui(&out[0]);
@@ -2198,14 +2161,7 @@ mod tests {
     fn footer_turn_state_lines_busy_include_spinner_glyph_output() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working.clone(),
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working.clone(), ThemeColor::Accent)];
 
         let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette());
         let rendered = joined_ratatui(&out[0]);
@@ -2224,14 +2180,7 @@ mod tests {
     fn footer_turn_state_lines_busy_use_accent_and_muted_spinner_colors() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working.clone(),
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working.clone(), ThemeColor::Accent)];
         let palette = palette();
 
         let out = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);
@@ -2262,14 +2211,7 @@ mod tests {
     fn footer_turn_state_lines_busy_change_spinner_frame_across_ticks() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine {
-            spans: vec![StyledSpan {
-                text: working,
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }];
+        let turn_state = vec![StyledLine::colored(working, ThemeColor::Accent)];
         let palette = palette();
 
         let a = footer_center_lines(&turn_state, Some(0), Some(3), None, 0, palette);
@@ -2292,7 +2234,7 @@ mod tests {
     fn footer_turn_state_lines_skip_empty_leader_before_attaching_spinner() {
         let _lock = locale_lock();
         let working = rust_i18n::t!("footer.turn-working", id = 3u32).to_string();
-        let turn_state = vec![StyledLine { spans: vec![] }, one_span_line(&working)];
+        let turn_state = vec![StyledLine { spans: vec![] }, StyledLine::plain(&working)];
 
         let out = footer_center_lines(&turn_state, Some(1), Some(3), None, 0, palette());
         assert!(out[0].spans.is_empty());

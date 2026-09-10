@@ -269,14 +269,7 @@ mod tests {
     fn loaded_state(n_lines: usize) -> ChangelogState {
         ChangelogState::Loaded {
             lines: (0..n_lines)
-                .map(|i| StyledLine {
-                    spans: vec![StyledSpan {
-                        text: format!("line {i}"),
-                        fg: None,
-                        bg: None,
-                        modifiers: TextMods::default(),
-                    }],
-                })
+                .map(|i| StyledLine::plain(format!("line {i}")))
                 .collect(),
         }
     }

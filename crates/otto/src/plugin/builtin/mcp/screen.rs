@@ -627,12 +627,7 @@ impl Screen for McpManagerScreen {
                                         ..Default::default()
                                     },
                                 },
-                                StyledSpan {
-                                    text: row.state_text.clone(),
-                                    fg: Some(row.state_color),
-                                    bg: None,
-                                    modifiers: TextMods::default(),
-                                },
+                                StyledSpan::colored(row.state_text.clone(), row.state_color),
                             ],
                         });
                     }

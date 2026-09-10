@@ -18,7 +18,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, Region, SlashSpec, SlotSpec, StyledLine, StyledSpan, TextMods, ThemeColor,
+    PluginKind, Region, SlashSpec, SlotSpec, StyledLine, ThemeColor,
 };
 use tokio::time::MissedTickBehavior;
 
@@ -134,18 +134,11 @@ fn opt_out_active() -> bool {
 }
 
 /// Build a `PushNote` effect carrying a plain (un-styled) text line.
-/// Centralised so each call site doesn't repeat the `StyledSpan`
-/// scaffolding.
+/// Kept for the `Effect::PushNote` wrapper, not for the line itself —
+/// `StyledLine::plain` is what used to be spelled out here by hand.
 fn note_effect(text: String) -> Effect {
     Effect::PushNote {
-        line: StyledLine {
-            spans: vec![StyledSpan {
-                text,
-                fg: None,
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        },
+        line: StyledLine::plain(text),
     }
 }
 
@@ -519,14 +512,7 @@ impl Plugin for SelfUpdatePlugin {
             }
             _ => return vec![],
         };
-        vec![StyledLine {
-            spans: vec![StyledSpan {
-                text,
-                fg: Some(ThemeColor::Accent),
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
-        }]
+        vec![StyledLine::colored(text, ThemeColor::Accent)]
     }
 }
 

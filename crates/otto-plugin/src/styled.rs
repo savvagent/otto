@@ -131,17 +131,72 @@ pub struct TextMods {
     pub dim: bool,
 }
 
+impl StyledSpan {
+    /// Create a plain (unstyled) span: no foreground, no background, no modifiers.
+    ///
+    /// For anything this constructor does not cover — a background color, or any
+    /// [`TextMods`] flag — build the struct literal directly.
+    pub fn plain(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            fg: None,
+            bg: None,
+            modifiers: TextMods::default(),
+        }
+    }
+
+    /// Create a span with the given foreground color, no background, and no modifiers.
+    ///
+    /// Prefer a semantic [`ThemeColor`] slot (`Muted`, `Accent`, `Warning`, …) so the
+    /// span adapts to the active theme's palette.
+    pub fn colored(text: impl Into<String>, fg: ThemeColor) -> Self {
+        Self {
+            text: text.into(),
+            fg: Some(fg),
+            bg: None,
+            modifiers: TextMods::default(),
+        }
+    }
+
+    /// Create a [`ThemeColor::Muted`] span — the theme's secondary-text color.
+    ///
+    /// Exactly [`Self::colored(text, ThemeColor::Muted)`](Self::colored), and kept as
+    /// its own name deliberately: `Muted` is the default for descriptions, hints, empty
+    /// states and label text — the colour a span takes when no other choice was made.
+    /// `muted(t)` states that intent; `colored(t, ThemeColor::Muted)` states a mechanism. It is redundant by construction and still worth keeping — the
+    /// same argument does not extend to `Warning`/`Error`/`Accent`, which are each chosen
+    /// per-site against a real alternative and so read correctly through
+    /// [`Self::colored`].
+    pub fn muted(text: impl Into<String>) -> Self {
+        Self::colored(text, ThemeColor::Muted)
+    }
+}
+
 impl StyledLine {
     /// Create a plain (unstyled) line containing a single span with the given text.
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
-            spans: vec![StyledSpan {
-                text: text.into(),
-                fg: None,
-                bg: None,
-                modifiers: TextMods::default(),
-            }],
+            spans: vec![StyledSpan::plain(text)],
         }
+    }
+
+    /// Create a line holding a single span with the given foreground color, no
+    /// background, and no modifiers.
+    ///
+    /// The one-span, one-color shape that most screen and slot content takes. Anything
+    /// richer — several spans, a background, a modifier — builds the struct literal.
+    pub fn colored(text: impl Into<String>, fg: ThemeColor) -> Self {
+        Self {
+            spans: vec![StyledSpan::colored(text, fg)],
+        }
+    }
+
+    /// Create a line holding a single [`ThemeColor::Muted`] span.
+    ///
+    /// See [`StyledSpan::muted`] for why this has its own name alongside
+    /// [`Self::colored`].
+    pub fn muted(text: impl Into<String>) -> Self {
+        Self::colored(text, ThemeColor::Muted)
     }
 }
 
@@ -247,17 +302,67 @@ fn push_string_value(out: &mut Vec<StyledSpan>, s: &str) {
 }
 
 fn push(out: &mut Vec<StyledSpan>, text: impl Into<String>, fg: ThemeColor) {
-    out.push(StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
-    });
+    out.push(StyledSpan::colored(text, fg));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn styled_span_plain_leaves_fg_none() {
+        let s = StyledSpan::plain("x");
+        assert_eq!(s.text, "x");
+        assert_eq!(s.fg, None);
+        assert_eq!(s.bg, None);
+        assert_eq!(s.modifiers, TextMods::default());
+    }
+
+    #[test]
+    fn styled_span_colored_sets_only_fg() {
+        let s = StyledSpan::colored("x", ThemeColor::Warning);
+        assert_eq!(s.text, "x");
+        assert_eq!(s.fg, Some(ThemeColor::Warning));
+        assert_eq!(s.bg, None);
+        assert_eq!(s.modifiers, TextMods::default());
+    }
+
+    #[test]
+    fn styled_span_muted_is_colored_with_muted() {
+        // This equality is what licenses `muted` existing alongside `colored`: it is a
+        // second name, not a second behavior.
+        assert_eq!(
+            StyledSpan::muted("x"),
+            StyledSpan::colored("x", ThemeColor::Muted)
+        );
+    }
+
+    #[test]
+    fn styled_line_constructors_wrap_a_single_span() {
+        assert_eq!(StyledLine::plain("x").spans, vec![StyledSpan::plain("x")]);
+        assert_eq!(StyledLine::muted("x").spans, vec![StyledSpan::muted("x")]);
+        assert_eq!(
+            StyledLine::colored("x", ThemeColor::Accent).spans,
+            vec![StyledSpan::colored("x", ThemeColor::Accent)]
+        );
+    }
+
+    #[test]
+    fn styled_line_plain_is_unchanged() {
+        // Pins the pre-#117 output of `StyledLine::plain` against a hand-written literal
+        // so re-expressing its body through `StyledSpan::plain` cannot drift.
+        assert_eq!(
+            StyledLine::plain("x"),
+            StyledLine {
+                spans: vec![StyledSpan {
+                    text: "x".to_string(),
+                    fg: None,
+                    bg: None,
+                    modifiers: TextMods::default(),
+                }],
+            }
+        );
+    }
 
     #[test]
     fn pretty_bytes_formats_small_values_in_bytes() {

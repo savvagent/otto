@@ -2,8 +2,7 @@
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, TextMods, ThemeColor,
-    ToolSummarySpec,
+    Contributions, Manifest, Plugin, PluginId, PluginKind, StyledSpan, ThemeColor, ToolSummarySpec,
 };
 use tool_bash::{RunInput, RunOutput};
 
@@ -25,15 +24,6 @@ impl ToolBashSummaryPlugin {
 impl Default for ToolBashSummaryPlugin {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn span(text: impl Into<String>, fg: ThemeColor) -> StyledSpan {
-    StyledSpan {
-        text: text.into(),
-        fg: Some(fg),
-        bg: None,
-        modifiers: TextMods::default(),
     }
 }
 
@@ -74,8 +64,8 @@ impl Plugin for ToolBashSummaryPlugin {
         }
         let input: RunInput = serde_json::from_value(args.clone()).ok()?;
         Some(vec![
-            span("bash $ ", ThemeColor::Fg),
-            span(truncate_command(&input.command), ThemeColor::Success),
+            StyledSpan::colored("bash $ ", ThemeColor::Fg),
+            StyledSpan::colored(truncate_command(&input.command), ThemeColor::Success),
         ])
     }
 
@@ -85,18 +75,18 @@ impl Plugin for ToolBashSummaryPlugin {
         }
         let out: RunOutput = serde_json::from_str(result_text).ok()?;
         let mut spans = vec![
-            span("exit ", ThemeColor::Fg),
-            span(out.exit_code.to_string(), ThemeColor::Success),
-            span(format!(" in {}ms", out.elapsed_ms), ThemeColor::Muted),
+            StyledSpan::colored("exit ", ThemeColor::Fg),
+            StyledSpan::colored(out.exit_code.to_string(), ThemeColor::Success),
+            StyledSpan::muted(format!(" in {}ms", out.elapsed_ms)),
         ];
         if out.timed_out {
-            spans.push(span(" (timed out)", ThemeColor::Warning));
+            spans.push(StyledSpan::colored(" (timed out)", ThemeColor::Warning));
         }
         if out.stdout_truncated {
-            spans.push(span(" (stdout truncated)", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" (stdout truncated)"));
         }
         if out.stderr_truncated {
-            spans.push(span(" (stderr truncated)", ThemeColor::Muted));
+            spans.push(StyledSpan::muted(" (stderr truncated)"));
         }
         Some(spans)
     }
@@ -214,5 +204,53 @@ mod tests {
         // `\n` is treated as a multi-line marker, so the result IS truncated
         // with `…` to signal the trailing content was elided.
         assert_eq!(join(&spans), "bash $ ls -la…");
+    }
+
+    // Pins span colours so the #117 `span()` -> `StyledSpan::colored()` constructor
+    // rewrite cannot change them silently.
+    #[test]
+    fn run_call_span_colors_are_pinned() {
+        let p = ToolBashSummaryPlugin::new();
+        let spans = p
+            .summarize_tool_call("run", &serde_json::json!({"command": "ls -la"}))
+            .unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("bash $ ", Some(ThemeColor::Fg)),
+                ("ls -la", Some(ThemeColor::Success)),
+            ]
+        );
+    }
+
+    #[test]
+    fn run_result_span_colors_are_pinned() {
+        let p = ToolBashSummaryPlugin::new();
+        let result = serde_json::json!({
+            "exit_code": 124,
+            "stdout": "...",
+            "stderr": "",
+            "elapsed_ms": 5000,
+            "stdout_truncated": true,
+            "stderr_truncated": true,
+            "timed_out": true
+        })
+        .to_string();
+        let spans = p.summarize_tool_result("run", &result).unwrap();
+        let pairs: Vec<(&str, Option<ThemeColor>)> =
+            spans.iter().map(|s| (s.text.as_str(), s.fg)).collect();
+        assert_eq!(
+            pairs,
+            vec![
+                ("exit ", Some(ThemeColor::Fg)),
+                ("124", Some(ThemeColor::Success)),
+                (" in 5000ms", Some(ThemeColor::Muted)),
+                (" (timed out)", Some(ThemeColor::Warning)),
+                (" (stdout truncated)", Some(ThemeColor::Muted)),
+                (" (stderr truncated)", Some(ThemeColor::Muted)),
+            ]
+        );
     }
 }
