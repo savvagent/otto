@@ -39,7 +39,7 @@ Neither `.github/skills/otto-development/SKILL.md` nor `.github/skills/creating-
 - Create: `.github/scripts/check-claude-skill-stubs.sh`
 - Create: `.gitattributes`
 
-- [ ] **Step 1: Create `.gitattributes`**
+- [x] **Step 1: Create `.gitattributes`**
 
 Create `.gitattributes` at the repo root with exactly:
 
@@ -49,7 +49,7 @@ Create `.gitattributes` at the repo root with exactly:
 *.sh text eol=lf
 ```
 
-- [ ] **Step 2: Write the check script**
+- [x] **Step 2: Write the check script**
 
 Create `.github/scripts/check-claude-skill-stubs.sh`. Requirements, all from the spec's "Drift prevention" section:
 
@@ -67,13 +67,13 @@ Create `.github/scripts/check-claude-skill-stubs.sh`. Requirements, all from the
 - **Never `eval`s or unquotes an extracted value.** `creating-github-issues`' canonical `description` contains backticks (`` `otto-development` ``); it is safe under quoted parameter expansion and dangerous under any form that re-parses it. Every use of an extracted value is `"$quoted"`.
 - Treats the `> **Canonical body:**` line as a single unwrapped line — the extractor is line-scoped, so a stub that wraps that line across two lines is a stub the check cannot read. Say so in the script's failure message for the "line absent" case.
 
-- [ ] **Step 3: Run it; confirm it fails for the right reason**
+- [x] **Step 3: Run it; confirm it fails for the right reason**
 
 Run: `bash .github/scripts/check-claude-skill-stubs.sh; echo "exit=$?"`
 
 Expected: `exit=1`, with two parity failures — one naming `.claude/skills/otto-development/SKILL.md` and one naming `.claude/skills/creating-github-issues/SKILL.md` as missing. It must **not** fail with a bash syntax error, an unbound variable, or a message about `rust-engineer`/`tui-engineer` (which it does not iterate). If the output mentions either of those two skills, the iteration source is wrong — fix it before continuing.
 
-- [ ] **Step 4: Set the executable bit and commit**
+- [x] **Step 4: Set the executable bit and commit**
 
 ```bash
 chmod +x .github/scripts/check-claude-skill-stubs.sh
@@ -90,13 +90,13 @@ Confirm the mode landed as `100755` with `git ls-files -s .github/scripts/check-
 **Files:**
 - Create: `.claude/skills/creating-github-issues/SKILL.md`
 
-- [ ] **Step 1: Read the canonical frontmatter verbatim**
+- [x] **Step 1: Read the canonical frontmatter verbatim**
 
 Run: `sed -n '1,5p' .github/skills/creating-github-issues/SKILL.md`
 
 Copy the `name:` and `description:` values **byte-for-byte**. Do not re-wrap, re-punctuate, shorten, or "improve" the description — the parity check compares it exactly, and a rewrite would make Claude Code and Copilot trigger differently on the same request (the exact drift this change exists to prevent).
 
-- [ ] **Step 2: Write the stub**
+- [x] **Step 2: Write the stub**
 
 Create `.claude/skills/creating-github-issues/SKILL.md`:
 
@@ -106,13 +106,13 @@ Create `.claude/skills/creating-github-issues/SKILL.md`:
 - An explicit note that **no host-mechanism translation is needed**: the canonical body is plain `gh issue` / `gh label` invocations, which work identically from Claude Code.
 - No copy of the canonical body's rules. If a rule is worth stating, it is worth stating once, in the canonical file.
 
-- [ ] **Step 3: Run the check; confirm one failure remains**
+- [x] **Step 3: Run the check; confirm one failure remains**
 
 Run: `bash .github/scripts/check-claude-skill-stubs.sh; echo "exit=$?"`
 
 Expected: `exit=1`, and now exactly **one** parity failure, naming `.claude/skills/otto-development/SKILL.md`. `creating-github-issues` must no longer appear in the output. If it still appears with a frontmatter mismatch, the description was not copied byte-for-byte — fix the stub, not the check.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .claude/skills/creating-github-issues/SKILL.md
@@ -126,13 +126,13 @@ git commit -m "docs: add creating-github-issues Claude Code adapter stub"
 **Files:**
 - Create: `.claude/skills/otto-development/SKILL.md`
 
-- [ ] **Step 1: Read the canonical frontmatter verbatim**
+- [x] **Step 1: Read the canonical frontmatter verbatim**
 
 Run: `sed -n '1,5p' .github/skills/otto-development/SKILL.md`
 
 Same rule as Task 2 step 1 — byte-for-byte, including the em-dashes and the trailing "For other repositories use general-development." sentence.
 
-- [ ] **Step 2: Write the stub**
+- [x] **Step 2: Write the stub**
 
 Create `.claude/skills/otto-development/SKILL.md`:
 
@@ -164,13 +164,13 @@ Create `.claude/skills/otto-development/SKILL.md`:
 - An explicit carry-over of the two rules most likely to be lost in translation, because they are host-mechanism-shaped rather than workflow-shaped: **dispatch prompts must be fully self-contained** (paste the actual spec/plan/task text inline; a Claude Code subagent has no access to this session's context), and the **security review must receive only the PR diff** — never the spec, plan, brief, PR body, or implementer report (canonical Non-Negotiable Rule 5). Both are stated as pointers to the canonical rule, not as replacements for it.
 - Nothing else. No phase list, no rule summary, no convention table — those would be a partial copy, which is what this design rejects.
 
-- [ ] **Step 3: Run the check; confirm it passes**
+- [x] **Step 3: Run the check; confirm it passes**
 
 Run: `bash .github/scripts/check-claude-skill-stubs.sh; echo "exit=$?"`
 
 Expected: `exit=0` and the success summary naming 2 skills checked.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add .claude/skills/otto-development/SKILL.md
@@ -183,7 +183,7 @@ git commit -m "docs: add otto-development Claude Code adapter stub"
 
 **Files:** none modified permanently — this task proves the check actually catches what the spec claims. Every mutation is reverted before the task ends.
 
-- [ ] **Step 1: Missing stub**
+- [x] **Step 1: Missing stub**
 
 Back the file up outside the repo, then restore it. The backup directory is created inline so the step is self-contained — do not rely on an ambient scratch-path variable:
 
@@ -198,25 +198,25 @@ Run these as one block in one shell, so `$BACKUP` is still set for the restoring
 
 Expected: `exit=1`, output names `creating-github-issues` and the missing path.
 
-- [ ] **Step 2: Mismatched frontmatter**
+- [x] **Step 2: Mismatched frontmatter**
 
 Temporarily append a word to the `description:` in `.claude/skills/creating-github-issues/SKILL.md`, run the check, then restore with `git checkout -- .claude/skills/creating-github-issues/SKILL.md`.
 
 Expected: `exit=1`, output prints both description values labelled by path.
 
-- [ ] **Step 3: Dangling pointer**
+- [x] **Step 3: Dangling pointer**
 
 Temporarily edit the `> **Canonical body:**` line in `.claude/skills/otto-development/SKILL.md` to name `` `.github/skills/otto-development/agent-prompts-typo.md` ``, run the check, then restore with `git checkout --`.
 
 Expected: `exit=1`, output names the non-existent path. **This step specifically proves the `agent-prompts.md` slot is validated, not just the first path on the line** — if the check passes here, the extractor is only reading one path and must be fixed (then re-run Tasks 1–3's checks).
 
-- [ ] **Step 3b: Missing frontmatter key**
+- [x] **Step 3b: Missing frontmatter key**
 
 Task 1 Step 2 requires the script to fail *loudly* when a `name:` or `description:` key is absent or empty on either side, rather than silently comparing empty strings. The spec names only three failure modes, so this is one extra mutation beyond them — it is cheap and it covers the one path where a bug would make the check silently useless. Temporarily delete the `description:` line from `.claude/skills/creating-github-issues/SKILL.md`, run the check, then restore with `git checkout --`.
 
 Expected: `exit=1` with a message naming the missing key and the file — **not** a pass, and not a mismatch report comparing two empty values.
 
-- [ ] **Step 4: Confirm the tree is clean and the check is green**
+- [x] **Step 4: Confirm the tree is clean and the check is green**
 
 ```bash
 git status --porcelain -- .claude/skills .github/skills .github/scripts    # must be empty
@@ -234,7 +234,7 @@ No commit for this task — it produces no lasting change beyond the plan's own 
 **Files:**
 - Modify: `.github/workflows/ci.yml` — the existing `lint` job.
 
-- [ ] **Step 1: Add the step**
+- [x] **Step 1: Add the step**
 
 In `.github/workflows/ci.yml`, in the `lint` job, add a step invoking the script **immediately after `- uses: actions/checkout@v4`** — i.e. as the job's second step, before the toolchain install, `rust-cache` and `apt-get`. That exact slot is the point: the script needs only the checkout, so a stub-parity failure surfaces in seconds instead of after a toolchain install and a full clippy build. Placing it merely "somewhere before `rustfmt`" would still pay all of that first and defeat the purpose.
 
@@ -245,17 +245,17 @@ In `.github/workflows/ci.yml`, in the `lint` job, add a step invoking the script
 
 Invoke via `bash …` (not `./…`) so the git executable bit is not load-bearing, per the spec.
 
-- [ ] **Step 2: Verify the YAML parses and the step is in the right job**
+- [x] **Step 2: Verify the YAML parses and the step is in the right job**
 
 Run: `sed -n '/^  lint:/,/^  test:/p' .github/workflows/ci.yml`
 
 Confirm by eye: the new step sits inside `lint`'s `steps:` list at the same indentation as `- name: rustfmt` (six spaces before the `-`), immediately after `- uses: actions/checkout@v4`. Indentation errors here are the one way this task can break CI for every job at once.
 
-- [ ] **Step 2b: Update the job's display name**
+- [x] **Step 2b: Update the job's display name**
 
 The `lint` job is currently `name: fmt + clippy`. With a third check in it that name is stale — change it to `name: fmt + clippy + skill stubs` (or similarly accurate). This is cosmetic but it is the label a contributor reads on a failed run, so an unrelated-looking name costs debugging time.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add .github/workflows/ci.yml
@@ -269,7 +269,7 @@ git commit -m "ci: run the skill-stub parity check in the lint job"
 **Files:**
 - Modify: `CLAUDE.md` — the `## Claude Code skills` section (currently four paragraphs at `CLAUDE.md:87-95`).
 
-- [ ] **Step 1: Rewrite the section**
+- [x] **Step 1: Rewrite the section**
 
 Keep what is still true and add what this change makes true. The section must state:
 
@@ -279,7 +279,7 @@ Keep what is still true and add what this change makes true. The section must st
 - **The revised precedence rule.** Replace the old blanket "`.github/skills/` governs" sentence with the distinction the layout now encodes: for a repo-authored skill, the **canonical body governs the workflow** and the **stub governs only host-mechanism translation** — a stub never overrides a rule, it only says how to perform it with Claude Code's tools. For a *personal* skill from `~/.claude/skills/` that overlaps a repo skill in purpose, this repo's own skill still governs, unchanged.
 - **Unchanged, keep it:** personal/generic Claude Code skills stay machine-local in `~/.claude/skills/` and are never committed here; any tracker-related skill defers to GitHub Issues via `gh`, never JIRA.
 
-- [ ] **Step 2: Verify the cross-references resolve**
+- [x] **Step 2: Verify the cross-references resolve**
 
 Run: `bash .github/scripts/check-claude-skill-stubs.sh; echo "exit=$?"` (still `0`), and confirm every path the new section names exists:
 
@@ -287,7 +287,7 @@ Run: `bash .github/scripts/check-claude-skill-stubs.sh; echo "exit=$?"` (still `
 ls .github/skills/ .claude/skills/ .github/scripts/check-claude-skill-stubs.sh
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add CLAUDE.md
@@ -308,7 +308,7 @@ git commit -m "docs: document the Claude Code adapter-stub layout in CLAUDE.md"
 > origin/main..HEAD` in Step 6 is two-dot and correct — that form already means "commits on HEAD
 > not on origin/main".)
 
-- [ ] **Step 1: Confirm the canonical bodies are untouched**
+- [x] **Step 1: Confirm the canonical bodies are untouched**
 
 ```bash
 git diff --stat origin/main...HEAD -- .github/skills/
@@ -316,7 +316,7 @@ git diff --stat origin/main...HEAD -- .github/skills/
 
 Expected: **empty**. The spec puts editing the canonical bodies out of scope; a non-empty diff here means scope crept.
 
-- [ ] **Step 2: Confirm the changed-file set matches the plan's File Structure exactly**
+- [x] **Step 2: Confirm the changed-file set matches the plan's File Structure exactly**
 
 ```bash
 git diff --name-status origin/main...HEAD
@@ -324,15 +324,15 @@ git diff --name-status origin/main...HEAD
 
 Expected exactly: `A .claude/skills/creating-github-issues/SKILL.md`, `A .claude/skills/otto-development/SKILL.md`, `A .gitattributes`, `A .github/scripts/check-claude-skill-stubs.sh`, `M .github/workflows/ci.yml`, `M CLAUDE.md`, plus the two `A docs/superpowers/{specs,plans}/…` design docs. Nothing else — no Rust file, no `Cargo.toml`, no `Cargo.lock`.
 
-- [ ] **Step 3: Public-interface record**
+- [x] **Step 3: Public-interface record**
 
 No public interface changed — no SPP wire type, no `ProviderHandler`/`ProviderClient` method, no tool MCP schema, no plugin ABI surface, no slash command, no env var, no on-disk transcript/keyring format. Non-Negotiable Rule 6 is not engaged and no `CHANGELOG.md` interface note is needed from this PR. (The `v0.28.1` entry itself is written in the release PR — see Task 8.)
 
-- [ ] **Step 4: Rust invariants — confirmed not applicable**
+- [x] **Step 4: Rust invariants — confirmed not applicable**
 
 This change touches no Rust. Explicitly: no `crates/otto/src/app.rs` or `tui.rs` edit, so the host-swap `RwLock` rule is not engaged; no streaming provider path, so the `rmcp` `ProgressDispatcher` forwarder-abort pattern is not engaged; no crate boundary or dependency edge changes. Verify with the Step 2 file list rather than by assertion.
 
-- [ ] **Step 5: Lint gates still pass**
+- [x] **Step 5: Lint gates still pass**
 
 `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` are unaffected by a docs/CI-only change, but run them once so the PR is not the place that discovers otherwise:
 
@@ -345,7 +345,7 @@ Expected: both clean. (Requires `libdbus-1-dev`, `libfontconfig1-dev`, `pkg-conf
 
 `cargo build --workspace --all-targets` and `cargo test --workspace` are deliberately **not** run here. Step 2 has already established that no Rust file, `Cargo.toml`, or `Cargo.lock` is in the diff, so there is no mechanism by which this branch could change build or test behaviour; CI's `test` job runs the full matrix on the PR regardless. The two lint gates are run anyway — not because they are at risk, but because `fmt`/`clippy` are the gates that fail for environmental reasons rather than code reasons, and the PR should not be where that is discovered.
 
-- [ ] **Step 6: No attribution anywhere**
+- [x] **Step 6: No attribution anywhere**
 
 ```bash
 git log origin/main..HEAD --format='%s%n%b' | grep -niE 'co-authored-by|generated with|🤖' || echo "clean"
@@ -354,11 +354,11 @@ git diff origin/main...HEAD | grep -niE 'co-authored-by|generated with|🤖' || 
 
 Expected: `clean` from both. **Neither grep searches for the word "Claude"** — this whole change is *about* Claude Code, so the term appears legitimately in the diff *and* in every commit subject this plan prescribes (`docs: add otto-development Claude Code adapter stub`, and so on). Searching for it would guarantee a false positive on a perfectly clean branch. What is being checked for is an AI-credit *trailer or footer*, which is what the three patterns above match.
 
-- [ ] **Step 7: Format and commit**
+- [x] **Step 7: Format and commit**
 
 Nothing to `cargo fmt` (no Rust changed). If any step above produced a fix, commit it as `<scope>: <subject>` with no attribution.
 
-- [ ] **Step 8: Record what the PR body must state**
+- [x] **Step 8: Record what the PR body must state**
 
 The PR body is written in Phase 4 step 7, but three of its contents are requirements of *this* plan and the spec, not free choices — carry them forward:
 
@@ -372,7 +372,7 @@ The PR body is written in Phase 4 step 7, but three of its contents are requirem
 
 **Files:** none in this PR.
 
-- [ ] **Step 1: Record the release line**
+- [x] **Step 1: Record the release line**
 
 The release is cut in a **dedicated release PR after this PR merges**, per the canonical body's Phase 4 step 12 and `RELEASING.md`. This PR must **not** bump `workspace.package.version` and must **not** add the `0.28.1` `CHANGELOG.md` section — doing so here would collide with the release PR.
 
@@ -380,7 +380,7 @@ The release PR will: bump `workspace.package.version` and every internal `worksp
 
 **Note the version at cut time.** `0.28.1` assumes trunk is still at `0.28.0` when this merges. `origin/main` moves while this branch is open — re-read `workspace.package.version` before cutting, and bump from whatever is actually there.
 
-- [ ] **Step 2: Record the out-of-band verification (performed post-merge, not here)**
+- [x] **Step 2: Record the out-of-band verification (performed post-merge, not here)**
 
 The spec's Success Criteria carries one check that cannot run on this branch, and it covers this design's **single untested assumption** — that a Claude Code session will follow a pointer out of `.claude/skills/` into `.github/skills/` and read the canonical body before acting. After the PR merges and the release is cut, in Phase 5:
 
