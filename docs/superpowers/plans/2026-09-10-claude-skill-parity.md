@@ -18,7 +18,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-10-claude-skill-parity-design.md` — read it first. This plan implements it exactly.
 
-**Release line:** `v0.28.1` (PATCH — contributor-facing tooling and docs, no runtime behaviour change; workspace version was `0.28.0` at plan time — re-read it at cut time).
+**Release line:** `v0.28.2` (PATCH — contributor-facing tooling and docs, no runtime behaviour change; trunk is at `0.28.1` as of the rebase — re-read `workspace.package.version` at cut time, since trunk moves while this branch is open).
 
 **Branch:** `docs/claude-skills-parity`
 
@@ -167,7 +167,7 @@
 
 **Files:** none in this PR.
 
-- [ ] **Step 1: Release line.** Cut in a **dedicated release PR after this merges**, per `RELEASING.md` and the canonical Phase 4 step 12. This PR must **not** bump `workspace.package.version` and must **not** add the `CHANGELOG.md` section — that would collide with the release PR. The release PR bumps `workspace.package.version` and every internal `workspace.dependencies` version from `0.28.0` to `0.28.1`, adds the `## 0.28.1` section describing the ports and the parity check, tags `v0.28.1`, and pushes the tag so `release.yml` publishes the release. **Re-read `workspace.package.version` at cut time** — `origin/main` moves while this branch is open.
+- [ ] **Step 1: Release line.** Cut in a **dedicated release PR after this merges**, per `RELEASING.md` and the canonical Phase 4 step 12. This PR must **not** bump `workspace.package.version` and must **not** add the `CHANGELOG.md` section — that would collide with the release PR. The release PR bumps `workspace.package.version` and every internal `workspace.dependencies` version from `0.28.1` to `0.28.2`, adds the `## 0.28.2` section describing the ports and the parity check, tags `v0.28.2`, and pushes the tag so `release.yml` publishes the release. **Re-read `workspace.package.version` at cut time** — `origin/main` moves while this branch is open.
 
 - [ ] **Step 2: Out-of-band verification (Phase 5, post-merge).** One success criterion cannot run on this branch:
   - `git clone` the merged trunk into a fresh directory — not this worktree, not the main checkout — so discovery is exercised as a new contributor would experience it.

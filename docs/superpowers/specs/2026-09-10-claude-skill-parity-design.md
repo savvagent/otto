@@ -209,7 +209,7 @@ command, no env var, and no on-disk transcript/keyring format is added, renamed,
   adding a crate whose tests would run on every `cargo test`.
 - **Release line is a PATCH.** Per `CHANGELOG.md`'s convention (MINOR for features and breaking
   boundary changes, PATCH for fixes), contributor-facing tooling and docs with no runtime behaviour
-  change is a PATCH: `v0.28.1` from the current `0.28.0`.
+  change is a PATCH: `v0.28.2` from the current `0.28.1`.
 
 ## Goal & Success Criteria
 
