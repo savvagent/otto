@@ -77,9 +77,14 @@ of the same area is not a duplicate — use judgment, don't over-block.
 gh issue create --repo savvagent/otto \
   --title "<concise, imperative title>" \
   --body "<body with Acceptance criteria checklist>" \
-  --label bug \                    # or: enhancement / documentation
-  --assignee <login>                # omit entirely if no assignee was requested — see below
+  --label bug \
+  --assignee <login>
 ```
+
+`--label` takes one of `bug`, `enhancement` or `documentation`. When no
+assignee was requested, drop the whole `--assignee` line — and with it the
+trailing `\` on the `--label` line above, so the command still ends on a line
+that does not continue.
 
 **Assignee default: leave unassigned.** This repo's existing open issues are
 consistently unassigned (`gh issue list --repo savvagent/otto` shows no
