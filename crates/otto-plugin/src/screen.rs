@@ -19,7 +19,12 @@ pub trait Screen: Send {
     fn id(&self) -> String;
 
     /// Render the screen's content lines for the given inner region. Chrome
-    /// (borders, title, centering) is painted by the runtime around this content.
+    /// (borders, title, centering) is painted by the runtime around this
+    /// content — never inside it. For `Fullscreen`/`BottomSheet` layouts,
+    /// when [`Screen::tips`] returns a non-empty line, the runtime reserves
+    /// that line's row for it *before* calling `render`, so `region` here
+    /// already excludes it; `render` is free to fill the full region it's
+    /// given without checking `tips()` itself.
     fn render(&self, region: Region) -> Vec<StyledLine>;
 
     /// Handle a key event while this screen is on top of the runtime's stack.
@@ -37,7 +42,11 @@ pub trait Screen: Send {
 
     /// Optional tips line shown above the prompt while this screen is active.
     /// Default impl returns no tips. When non-empty, replaces the `home.tips` slot
-    /// contributions for the duration of this screen's lifetime.
+    /// contributions for the duration of this screen's lifetime. For
+    /// `Fullscreen`/`BottomSheet` layouts, only the first returned line is
+    /// painted, on its own row at the bottom of the frame/sheet — that row is
+    /// reserved out of the region passed to [`Screen::render`], not overlaid
+    /// on top of it.
     fn tips(&self) -> Vec<StyledLine> {
         vec![]
     }

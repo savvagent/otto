@@ -1236,7 +1236,16 @@ fn paint_screen(
             // Full-frame overlay: paint content directly.
             f.render_widget(Clear, area);
             f.buffer_mut().set_style(area, palette.base_style());
-            let region = crate::plugin::convert::rect_to_region(area);
+
+            // Reserve the bottom row for tips() before handing the region to
+            // the screen, so its content never lands under the tips line.
+            let tips = active_screen.screen.tips();
+            let content_area = if !tips.is_empty() && area.height > 0 {
+                Rect::new(area.x, area.y, area.width, area.height - 1)
+            } else {
+                area
+            };
+            let region = crate::plugin::convert::rect_to_region(content_area);
             let lines: Vec<Line<'static>> = active_screen
                 .screen
                 .render(region)
@@ -1244,10 +1253,9 @@ fn paint_screen(
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
                 .collect();
             let para = Paragraph::new(lines).style(palette.base_style());
-            f.render_widget(para, area);
+            f.render_widget(para, content_area);
 
             // Tips row at the very bottom of the frame.
-            let tips = active_screen.screen.tips();
             if !tips.is_empty() && area.height > 0 {
                 let tips_row = Rect::new(area.x, area.y + area.height - 1, area.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips
@@ -1322,16 +1330,27 @@ fn paint_screen(
             let sheet = bottom_sheet_rect(area, input_top, *height);
             f.render_widget(Clear, sheet);
             f.buffer_mut().set_style(sheet, palette.base_style());
-            let region = crate::plugin::convert::rect_to_region(sheet);
+
+            // Reserve the bottom row for tips() before handing the region to
+            // the screen, so its content never lands under the tips line.
+            let tips = active_screen.screen.tips();
+            let content_sheet = if !tips.is_empty() && sheet.height > 0 {
+                Rect::new(sheet.x, sheet.y, sheet.width, sheet.height - 1)
+            } else {
+                sheet
+            };
+            let region = crate::plugin::convert::rect_to_region(content_sheet);
             let lines: Vec<Line<'static>> = active_screen
                 .screen
                 .render(region)
                 .into_iter()
                 .map(|l| crate::plugin::convert::styled_line_to_ratatui(l, &palette))
                 .collect();
-            f.render_widget(Paragraph::new(lines).style(palette.base_style()), sheet);
+            f.render_widget(
+                Paragraph::new(lines).style(palette.base_style()),
+                content_sheet,
+            );
 
-            let tips = active_screen.screen.tips();
             if !tips.is_empty() && sheet.height > 0 {
                 let tips_row = Rect::new(sheet.x, sheet.y + sheet.height - 1, sheet.width, 1);
                 let tips_lines: Vec<Line<'static>> = tips
@@ -2004,6 +2023,105 @@ mod tests {
         assert!(
             !text.contains("the savvy MCP-native terminal coding agent"),
             "non-splash fullscreen screens must not be rerouted through splash rendering: {text}"
+        );
+    }
+
+    /// A screen that records the exact `Region` it was asked to render into,
+    /// so a test can assert on `Screen::render`'s contract directly instead
+    /// of inferring it from painted buffer text (which can't distinguish
+    /// "the region was correctly shrunk before `render`" from "the region
+    /// was left full-size and `tips()` painted over the result" — both
+    /// produce an identical final buffer for a fixed-size body).
+    struct RegionRecordingScreen {
+        tips: Vec<StyledLine>,
+        seen_region: std::cell::Cell<Option<Region>>,
+    }
+
+    #[async_trait]
+    impl Screen for RegionRecordingScreen {
+        fn id(&self) -> String {
+            "region-recording".into()
+        }
+
+        fn render(&self, region: Region) -> Vec<StyledLine> {
+            self.seen_region.set(Some(region));
+            vec![]
+        }
+
+        async fn on_key(&mut self, _key: KeyEventPortable) -> Result<Vec<Effect>, PluginError> {
+            Ok(vec![])
+        }
+
+        fn tips(&self) -> Vec<StyledLine> {
+            self.tips.clone()
+        }
+    }
+
+    /// Regression for the tips-overpaint fix: `paint_screen` must reserve
+    /// the tips row by shrinking the region passed to `Screen::render`
+    /// *before* calling it — not by painting over the screen's output
+    /// afterward. Checked directly against the region `render` receives
+    /// (see `RegionRecordingScreen`) for both layouts that paint a tips row,
+    /// rather than inferred from painted output.
+    #[test]
+    fn paint_screen_reserves_tips_row_out_of_the_region_before_render() {
+        let fullscreen = RegionRecordingScreen {
+            tips: vec![StyledLine::plain("tips_row_text")],
+            seen_region: std::cell::Cell::new(None),
+        };
+        let _ = render_paint_screen(
+            &fullscreen,
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            palette(),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        // `render_paint_screen`'s TestBackend is 100x30; a non-empty
+        // `tips()` must shrink the 30-row frame to a 29-row region.
+        let fullscreen_region = fullscreen
+            .seen_region
+            .get()
+            .expect("Fullscreen must call render");
+        assert_eq!(
+            fullscreen_region.height, 29,
+            "Fullscreen render region must exclude the reserved tips row: {fullscreen_region:?}"
+        );
+
+        let bottom_sheet = RegionRecordingScreen {
+            tips: vec![StyledLine::plain("tips_row_text")],
+            seen_region: std::cell::Cell::new(None),
+        };
+        let _ = render_paint_screen(
+            &bottom_sheet,
+            &ScreenLayout::BottomSheet { height: 12 },
+            palette(),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let sheet_region = bottom_sheet
+            .seen_region
+            .get()
+            .expect("BottomSheet must call render");
+        assert_eq!(
+            sheet_region.height, 11,
+            "BottomSheet render region must exclude the reserved tips row: {sheet_region:?}"
+        );
+
+        let no_tips = RegionRecordingScreen {
+            tips: vec![],
+            seen_region: std::cell::Cell::new(None),
+        };
+        let _ = render_paint_screen(
+            &no_tips,
+            &ScreenLayout::Fullscreen { hide_chrome: false },
+            palette(),
+            crate::splash::SandboxSplashState::OnDefault,
+        );
+        let no_tips_region = no_tips
+            .seen_region
+            .get()
+            .expect("Fullscreen must call render");
+        assert_eq!(
+            no_tips_region.height, 30,
+            "with no tips to reserve for, render should get the full frame: {no_tips_region:?}"
         );
     }
 
