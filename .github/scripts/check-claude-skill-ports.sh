@@ -29,10 +29,18 @@
 # Verify is the default and the only thing CI runs: it exits non-zero on any
 # mismatch and never writes. `--update` regenerates every expected-diff record
 # through the same `port_diff` function the verifier compares against, and
-# reports which records it rewrote. It is not a bypass: a missing port, an
-# orphaned record, an orphaned port, a zero-divergence port and
-# `name`/`description` drift are all still failures under `--update`, because
-# regenerating a record cannot fix any of them.
+# reports which records it rewrote.
+#
+# `--update` is not a bypass for the *structural* failures: a missing port, an
+# orphaned record, an orphaned port, a zero-divergence port, a port missing its
+# "Ported for Claude Code" note and `name`/`description` drift are all still
+# failures under `--update`, because regenerating a record cannot fix any of
+# them. It *is* exactly the bypass for the mismatch failure -- which is the one
+# this whole arrangement exists to catch. Editing a canonical, not mirroring the
+# edit into the port, and running `--update` produces a clean green build over a
+# port that is missing the new text. So run `--update` only after mirroring the
+# edit by hand; reaching for it *because* the build is red is the wrong reflex,
+# and nothing here can stop you.
 #
 # For every skill directory under `.github/skills/` it asserts:
 #
@@ -55,7 +63,18 @@
 #      too), and is non-empty -- a port with zero divergence is a verbatim
 #      copy, which is precisely the arrangement the port exists to avoid, and a
 #      zero-byte record would otherwise bless one;
-#   4. `name:` and `description:` match between the canonical `SKILL.md` and its
+#   4. every port carries the `Ported for Claude Code` note, and every directory
+#      under `.claude/skills/` is either a port or a name declared in
+#      `NATIVE_SKILLS`. CLAUDE.md requires the note on every port so a reader
+#      knows the file is derived rather than authoritative and does not edit it
+#      in place, and the verbatim-copy failure message cites it as the minimum
+#      divergence -- yet nothing asserted it, so it could be dropped from every
+#      port on a green build. The `NATIVE_SKILLS` half is the companion: a port
+#      whose canonical directory is deleted takes its records with it and is
+#      never iterated, so without an explicit allowlist of the skills that
+#      legitimately have no canonical, such a port stays live, executed by
+#      Claude Code, and verified by nothing;
+#   5. `name:` and `description:` match between the canonical `SKILL.md` and its
 #      port (one optional layer of YAML quotes aside). This is reported as its
 #      own failure rather than as an opaque diff mismatch because it is the
 #      failure that silently changes which requests each host triggers on. It
@@ -66,8 +85,9 @@
 #      different key (`name:s: v`), rather than comparing whatever it can find.
 #
 # It also refuses to read hostile repository content. CI runs this check on
-# `pull_request`, so a fork's tree reaches it: a canonical file, a port or a
-# record committed as a *symlink* is rejected rather than followed (following
+# `pull_request`, so a fork's tree reaches it: a canonical file, a port, a
+# record or a `claude-port/` directory committed as a *symlink* is rejected
+# rather than followed (following
 # one would print an arbitrary file -- `.git/config`, which `actions/checkout`
 # leaves the job token in -- into the public log via the diff-of-diffs), and a
 # skill directory or path segment outside `[A-Za-z0-9._-]` is rejected rather
@@ -97,7 +117,11 @@
 #
 # Claude-Code-native skills with no canonical counterpart (`rust-engineer`,
 # `tui-engineer`) are deliberately not iterated: they have nothing to drift
-# from.
+# from. They must, however, be *declared* in `NATIVE_SKILLS` below. Nothing in
+# this check verifies their content -- that is human review's job -- so the
+# allowlist is what keeps "nothing verifies this" a deliberate, one-line,
+# reviewable statement rather than something a directory can drift into by
+# having its canonical deleted.
 #
 # Every failure is reported before the script exits 1, so a contributor fixing
 # two ports does not need two CI runs. Failures are emitted as GitHub
@@ -111,6 +135,15 @@ set -euo pipefail
 # Pinned for `diff`'s translated `\ No newline at end of file` marker (see the
 # header) and, incidentally, for stable glob and `sort` collation.
 export LC_ALL=C
+
+# Both directory sweeps below iterate `<root>/*/`, which does not match a
+# dot-prefixed directory. Without this, `.github/skills/.hidden/SKILL.md` needs
+# no port and no record and does not even increment `dirs_seen` -- an unexamined
+# skill file behind a green build, which is the outcome this check exists to
+# make impossible. `valid_path` accepts a leading dot (while still rejecting `.`
+# and `..`), so such a directory is verified like any other rather than named in
+# an error.
+shopt -s dotglob
 
 usage() {
     printf 'usage: bash .github/scripts/check-claude-skill-ports.sh [--update]\n'
@@ -145,6 +178,21 @@ cd "$(dirname "$0")/../.."
 CANONICAL_ROOT=".github/skills"
 PORT_ROOT=".claude/skills"
 DIFF_SUBDIR="claude-port"
+
+# Claude-Code-native skills: entries under `.claude/skills/` that legitimately
+# have no canonical counterpart and nothing to drift from. Declared here, as a
+# space-delimited allowlist, rather than *inferred* from the absence of the
+# "Ported for Claude Code" note -- because inference makes the note the sole
+# thing separating "native skill" from "port whose canonical was deleted", and
+# the note is a line in a file anyone can remove. Deleting a canonical directory
+# takes its `claude-port/` records with it, so a stripped note plus a deleted
+# canonical used to leave a port live, executed by Claude Code, and verified by
+# nothing, on a green build.
+#
+# Adding a genuinely native skill means adding its name here. That is the point:
+# it is one reviewable line, and it is the only way a directory under
+# `.claude/skills/` is allowed to exist with nothing checking it.
+NATIVE_SKILLS="rust-engineer tui-engineer"
 UPDATE_CMD="bash .github/scripts/check-claude-skill-ports.sh --update"
 
 failures=0
@@ -157,8 +205,13 @@ updated=0
 # Scratch space for the byte-exact record comparison. `$(port_diff ...)` would
 # strip trailing newlines from both sides, hiding exactly the trailing-newline
 # drift a byte-for-byte comparison is supposed to catch.
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
+# `mktemp -d` with no template is a GNU extension; BSD/macOS `mktemp` has
+# accepted it only since a relatively recent version, and a failure here kills
+# the script under `set -e` before a single check runs. Pass an explicit
+# template, which every implementation accepts. INT/TERM join EXIT on the trap
+# so an interrupted local run does not leave the scratch directory behind.
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/skillports.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 # Frontmatter extraction results, set by frontmatter_value. Globals because the
 # extractor has to hand back two things -- a value and, on failure, a message --
@@ -372,7 +425,8 @@ find_md() {
     find "$1" -path "$2" -prune -o -type f -name '*.md' -print0
 }
 
-# Emits every symlink under $1 at any depth, NUL-separated, pruning $2.
+# Emits every symlink under $1 at any depth, NUL-separated. Deliberately prunes
+# *nothing*.
 #
 # `find_md` filters on `-type f`, which excludes symlinks, and `find` defaults
 # to `-P`, so it does not descend into a symlinked directory either. Without
@@ -382,8 +436,29 @@ find_md() {
 # symlinked subdirectory would hide every file beneath it. All three are exit-0
 # with an unexamined skill file, which is the outcome this whole check exists to
 # make impossible.
+#
+# The absent `-prune` is the point, and it is a fixed bug rather than an
+# oversight: pruning `claude-port/` here also prunes the *symlink named*
+# `claude-port`, so this sweep structurally could not reject a `claude-port`
+# committed as a link to a directory outside both trees -- and `[ -d ]` and
+# `[ -f ]` below follow straight through it, reading records from wherever it
+# points while the orphan walk (`find -P` on a symlinked start point) sees
+# nothing. It also hid a symlinked *orphaned record*: pruned from this sweep,
+# and excluded from the orphan walk by its `-type f`. `find_md` still prunes,
+# because a `.diff` is not a canonical file; this sweep must see everything.
 find_links() {
-    find "$1" -path "$2" -prune -o -type l -print0
+    find "$1" -type l -print0
+}
+
+# Emits every expected-diff record under $1, and every port `*.md` under $1,
+# NUL-separated. Named functions rather than inline `find`s so both reverse
+# orphan walks can be routed through `run_find` -- see the note there.
+find_records() {
+    find "$1" -type f -name '*.diff' -print0
+}
+
+find_ports() {
+    find "$1" -type f -name '*.md' -print0
 }
 
 # Runs a NUL-emitting find into $tmp_dir/list and fails if find itself had
@@ -422,6 +497,14 @@ for dir in "$CANONICAL_ROOT"/*/; do
     port_skill="$port_dir/SKILL.md"
     diff_dir="$canonical_dir/$DIFF_SUBDIR"
 
+    # The records directory itself, before anything reads through it. `[ -d ]`
+    # and `[ -f ]` follow symlinks, so a `claude-port` committed as a link to a
+    # directory outside both trees would otherwise have every record read from
+    # wherever it points, with the orphan walk below silently seeing nothing.
+    if [ -e "$diff_dir" ] || [ -L "$diff_dir" ]; then
+        reject_symlink "$diff_dir" || continue
+    fi
+
     if [ -L "$canonical_skill" ] || [ ! -f "$canonical_skill" ]; then
         fail "skill '$name': $canonical_skill is not a regular file, so there is nothing to port. Add it, or remove the directory."
         continue
@@ -432,7 +515,7 @@ for dir in "$CANONICAL_ROOT"/*/; do
     #    symlink rather than reject it, leaving a skill file unexamined.
     for tree in "$canonical_dir" "$port_dir"; do
         [ -d "$tree" ] || continue
-        if run_find "skill '$name': $tree" "$tmp_dir/link_list" find_links "$tree" "$diff_dir"; then
+        if run_find "skill '$name': $tree" "$tmp_dir/link_list" find_links "$tree"; then
             while IFS= read -r -d '' link; do
                 fail "skill '$name': $link is a symlink. This check refuses to follow links inside a skill tree — a symlinked file is skipped by the walks rather than verified, and a symlinked directory hides every file beneath it. Commit a regular file."
             done < "$tmp_dir/link_list"
@@ -463,6 +546,18 @@ for dir in "$CANONICAL_ROOT"/*/; do
         if [ ! -f "$port" ]; then
             fail "skill '$name': no Claude Code port of $rel. Create $port as an adapted copy of $canonical, then record the divergence by running, from the repo root: $UPDATE_CMD"
             continue
+        fi
+
+        # 4. The note, asserted here because this loop is already reading every
+        #    port. One `grep` per port file. Nothing else verifies it, and three
+        #    things depend on it: CLAUDE.md requires it, the verbatim-copy
+        #    message cites it as the minimum divergence, and the
+        #    orphaned-port-directory check at the bottom of this script uses it
+        #    to word its message. (That check *decides* on `NATIVE_SKILLS`, not
+        #    on the note -- deciding on the note would mean stripping one line
+        #    and deleting a canonical directory together produced a green build.)
+        if ! grep -q 'Ported for Claude Code' "$port"; then
+            fail "skill '$name': $port does not carry the 'Ported for Claude Code' note. Every port must open with a line of the form '> **Ported for Claude Code** from $canonical, which is the canonical body' — without it a reader has no way to know the file is derived rather than authoritative, and would edit it in place, which is lost work as soon as the next re-port lands."
         fi
 
         if [ -e "$expected" ] || [ -L "$expected" ]; then
@@ -503,15 +598,27 @@ for dir in "$CANONICAL_ROOT"/*/; do
 
         if ! cmp -s "$actual" "$expected"; then
             fail "skill '$name': the port of $rel no longer diverges from its canonical body in the recorded way. Either the canonical was edited without mirroring the edit into the port, or the port was edited directly. Fix the port first: a canonical edit that lands outside the adapted regions is mirrored into the port verbatim, while an edit that lands on an adapted line needs the host-mechanism adaptation re-applied there. Then regenerate the record by running, from the repo root: $UPDATE_CMD"
-            printf '  --- diff-of-diffs (expected vs. recomputed) for %s ---\n' "$rel"
-            diff -u -L "$expected" -L "recomputed" "$expected" "$actual" || true
+            # Capped, and every line prefixed. Capped because a single
+            # full-file mismatch has emitted 633 lines and all three ports at
+            # once would be ~1,900 -- enough to bury the `::error::`
+            # annotations that say what to do. Prefixed because a *context*
+            # line of a unified diff begins with a space: two of them and a
+            # `::`, and the runner (which trims leading whitespace before
+            # matching workflow commands) would see a forged annotation at
+            # column 0. `fail` escapes its own inputs, but this dump is raw
+            # file content, so the prefix is what makes it inert. `head`
+            # closing the pipe early raises SIGPIPE under `pipefail`; the
+            # existing `|| true` absorbs it.
+            printf '  --- diff-of-diffs (expected vs. recomputed) for %s, first 200 lines ---\n' "$rel"
+            diff -u -L "$expected" -L "recomputed" "$expected" "$actual" | sed 's/^/    │ /' | head -n 200 || true
+            printf '  --- end diff-of-diffs; run the check locally for the full text ---\n'
         fi
     done < "$tmp_dir/canonical_list"
 
     # 2 (reverse). An expected diff with no canonical file verifies nothing and
     #    hides a rename: the record survives while the file it described is
     #    gone.
-    if [ -d "$diff_dir" ]; then
+    if [ -d "$diff_dir" ] && run_find "skill '$name': $diff_dir" "$tmp_dir/record_list" find_records "$diff_dir"; then
         while IFS= read -r -d '' record; do
             records_seen=$((records_seen + 1))
             record_rel="${record#"$diff_dir"/}"
@@ -523,14 +630,14 @@ for dir in "$CANONICAL_ROOT"/*/; do
             if [ ! -f "$canonical_dir/$record_rel" ]; then
                 fail "skill '$name': orphaned expected-diff record $record — there is no $canonical_dir/$record_rel for it to describe. Delete the record, or restore the canonical file it was generated from."
             fi
-        done < <(find "$diff_dir" -type f -name '*.diff' -print0)
+        done < "$tmp_dir/record_list"
     fi
 
     # 2 (other reverse). A port with no canonical file is a rule Claude Code
     #    executes that the source of truth does not contain — the precedence
     #    rule in CLAUDE.md says the canonical body is authoritative, so an
     #    extra port is drift, not a local override.
-    if [ -d "$port_dir" ]; then
+    if [ -d "$port_dir" ] && run_find "skill '$name': $port_dir" "$tmp_dir/port_list" find_ports "$port_dir"; then
         while IFS= read -r -d '' port_file; do
             ports_seen=$((ports_seen + 1))
             port_rel="${port_file#"$port_dir"/}"
@@ -541,10 +648,10 @@ for dir in "$CANONICAL_ROOT"/*/; do
             if [ ! -f "$canonical_dir/$port_rel" ]; then
                 fail "skill '$name': orphaned port $port_file — there is no $canonical_dir/$port_rel it was ported from. Claude Code would execute it while the canonical workflow does not contain it. Add the canonical file and re-port, or delete the port."
             fi
-        done < <(find "$port_dir" -type f -name '*.md' -print0)
+        done < "$tmp_dir/port_list"
     fi
 
-    # 4. Frontmatter match, key by key. SKILL.md only: companion files such as
+    # 5. Frontmatter match, key by key. SKILL.md only: companion files such as
     #    agent-prompts.md carry no frontmatter by design.
     if [ -f "$port_skill" ] && [ ! -L "$port_skill" ]; then
         for key in name description; do
@@ -574,15 +681,35 @@ done
 # cannot fire for a skill whose canonical directory is gone: deleting
 # `.github/skills/<name>/` takes its `claude-port/` records with it, the loop
 # never sees the name, and the port is left live and unowned on a green build.
-# A port is identified as ported (rather than Claude-Code-native, like
-# `rust-engineer`) by the "Ported for Claude Code" note every port must carry.
+#
+# Every directory here must therefore be one of two things: a port (it has a
+# canonical directory) or a declared native skill (it is named in
+# `NATIVE_SKILLS`). Anything else fails. The "Ported for Claude Code" note is
+# used only to word the message, never to decide it -- keying the decision on
+# the note would mean deleting one line from a port and deleting its canonical
+# directory together produced a green build over a live, unverified skill, which
+# is exactly the hole this loop exists to close.
 if [ -d "$PORT_ROOT" ]; then
     for port_dir_top in "$PORT_ROOT"/*/; do
         [ -d "$port_dir_top" ] || continue
         port_name="$(basename "$port_dir_top")"
-        [ -d "$CANONICAL_ROOT/$port_name" ] && continue
+        # `fail` escapes the characters that matter, so this is consistency with
+        # the script's own stated policy rather than a second line of defence:
+        # no name from the tree reaches a message without passing valid_path.
+        if ! valid_path "$port_name"; then
+            fail "unsupported skill directory name under $PORT_ROOT. A skill directory name must match [A-Za-z0-9._-]+; this check will not interpolate anything else into its output."
+            continue
+        fi
+        if [ -d "$CANONICAL_ROOT/$port_name" ]; then
+            continue
+        fi
+        case " $NATIVE_SKILLS " in
+            *" $port_name "*) continue ;;
+        esac
         if grep -qlr 'Ported for Claude Code' "$port_dir_top" 2>/dev/null; then
             fail "skill '$port_name': $port_dir_top carries the 'Ported for Claude Code' note, but $CANONICAL_ROOT/$port_name does not exist. Its canonical body — and, since the records live beside it, its divergence records — were deleted while the port was left live: Claude Code still executes it and nothing verifies it. Restore the canonical, or delete the port."
+        else
+            fail "skill '$port_name': $port_dir_top is neither a port (there is no $CANONICAL_ROOT/$port_name) nor a declared Claude-Code-native skill (it is not named in NATIVE_SKILLS in this script). Claude Code executes it and nothing verifies it. If it is a port whose canonical was deleted, restore the canonical — or delete the port. If it is genuinely native, add '$port_name' to NATIVE_SKILLS."
         fi
     done
 fi
