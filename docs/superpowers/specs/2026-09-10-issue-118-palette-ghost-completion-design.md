@@ -182,8 +182,9 @@ a textarea edit does not.
 **In:**
 - `crates/otto-plugin/src/screen.rs` — new `Screen::ghost_completion` default method.
 - `crates/otto/src/plugin/builtin/command_palette/screen.rs` — `PaletteScreen` implements it.
-- `crates/otto/src/ui.rs` — the render-time overlay in `render()`, plus the small
-  `prompt_inner_rect` helper.
+- `crates/otto/src/ui.rs` — the render-time overlay in `render()`, plus factoring the prompt's
+  `Block` construction into a shared `prompt_block` helper reused by both the textarea and the
+  overlay.
 - `CHANGELOG.md` — an `Added` entry.
 - Tests: unit tests for `PaletteScreen::ghost_completion` (prefix match, substring-only match,
   exact match, empty filter, no highlight); a `ui.rs` render test asserting the ghost text appears

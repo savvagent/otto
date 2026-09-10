@@ -42,7 +42,8 @@ opening the release PR (Task 4 / Phase 4 step 12) rather than assuming.
 - `crates/otto-plugin/src/screen.rs` — new `Screen::ghost_completion` default trait method.
 - `crates/otto/src/plugin/builtin/command_palette/screen.rs` — `PaletteScreen` implements
   `ghost_completion`; new unit tests.
-- `crates/otto/src/ui.rs` — new `prompt_inner_rect` helper; render-time ghost-text overlay in
+- `crates/otto/src/ui.rs` — factor the prompt's `Block` construction into a shared `prompt_block`
+  helper reused by both the textarea and the new overlay; render-time ghost-text overlay in
   `render()`; new render tests.
 - `CHANGELOG.md` — an `Added` entry under `## [Unreleased]`.
 - `docs/superpowers/specs/2026-09-10-issue-118-palette-ghost-completion-design.md` — the design
