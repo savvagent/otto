@@ -40,7 +40,7 @@ and the reason is content, not mechanism:
    (`:384-388`), `read_agent` for collecting background results (`:388`), `ask_user` for the
    security-review output contract (`:400-406`), and "the orchestrating CLI's own `sql` tool and
    its session-scoped `todos` table" for progress tracking (`:349`). `agent-prompts.md` repeats
-   `agent_type:` in all nine dispatch templates. Symlinked verbatim, a Claude Code session would
+   `agent_type:` in all ten dispatch templates. Symlinked verbatim, a Claude Code session would
    read ~100KB of workflow whose every dispatch step names a tool it does not have — and whose own
    text tells it that it is not the intended reader.
 2. **A full copy is not the only alternative to a symlink.** The issue treats "port" as
@@ -119,11 +119,20 @@ job and runnable locally. It asserts, for every directory under `.github/skills/
   being reachable from Claude Code);
 - that stub's `name:` and `description:` frontmatter match the canonical skill's byte-for-byte
   after stripping optional wrapping quotes (so trigger behaviour cannot silently diverge);
-- the stub's `> **Canonical body:**` pointer names a path that exists (so a rename or move of the
+- **every** path the stub's `> **Canonical body:**` line names exists — for `otto-development` that
+  is both `SKILL.md` and `agent-prompts.md`, not just the first (so a rename or move of either
   canonical file fails CI instead of leaving a dangling instruction).
 
 Claude-Code-native skills with no canonical counterpart (`rust-engineer`, `tui-engineer`) are not
 iterated and need no marker.
+
+`.github/scripts/` does not exist yet and the repo currently contains no `.sh` file anywhere, so
+this script has no local precedent to copy. Three consequences, settled here rather than left to
+the implementer: the script opens with `set -euo pipefail`; CI invokes it as
+`bash .github/scripts/check-claude-skill-stubs.sh` so the git executable bit is never
+load-bearing (it is set anyway, for local ergonomics); and a new `.gitattributes` pins `*.sh text
+eol=lf` so a `core.autocrlf=true` clone does not produce a CRLF shebang that fails locally with a
+confusing error.
 
 ## Scope
 
@@ -136,6 +145,7 @@ iterated and need no marker.
 - `.github/scripts/check-claude-skill-stubs.sh` — the parity + frontmatter-match + pointer-target
   check.
 - `.github/workflows/ci.yml` — one step in the existing `lint` job invoking that script.
+- `.gitattributes` (new) — `*.sh text eol=lf`.
 - `CLAUDE.md`'s "Claude Code skills" section — the two-directory layout, the adapter-stub mechanism
   and why, the parity check, and the revised precedence rule.
 
@@ -180,6 +190,14 @@ dependency edge.
 - **Release line is a PATCH.** Per `CHANGELOG.md`'s stated convention (MINOR for features and
   breaking boundary changes, PATCH for fixes), repo tooling and contributor docs with no runtime
   behaviour change is a PATCH: `v0.28.1` from the current `0.28.0`.
+- **AC-2's "including its `agent-prompts.md` companion file" is satisfied by reference, not by
+  placement.** The issue asks that `otto-development` be available to Claude Code "including its
+  `agent-prompts.md` companion file". Under this design that file is *named and required* by the
+  stub and *validated* by the parity check, but stays at
+  `.github/skills/otto-development/agent-prompts.md` rather than being copied under
+  `.claude/skills/`. That is the whole point of a single canonical body — but it is a
+  reinterpretation of the AC's literal wording, so the PR body states it explicitly rather than
+  leaving whoever closes the issue to compare phrasing.
 
 ## Goal & Success Criteria
 
@@ -189,8 +207,9 @@ copy of each workflow body and a CI check that keeps the two hosts from drifting
 
 - `.claude/skills/otto-development/` and `.claude/skills/creating-github-issues/` each contain a
   committed `SKILL.md` whose `name`/`description` match the canonical skill byte-for-byte.
-- Both stubs name an existing canonical path; `otto-development`'s stub additionally maps every
-  Copilot dispatch mechanism its canonical body names to a built-in Claude Code equivalent.
+- Both stubs name existing canonical paths — all of them, `agent-prompts.md` included;
+  `otto-development`'s stub additionally maps every Copilot dispatch mechanism its canonical body
+  names to a built-in Claude Code equivalent.
 - `.github/scripts/check-claude-skill-stubs.sh` exits 0 on the committed tree, and exits non-zero
   for each of its three failure modes (missing stub, mismatched frontmatter, dangling pointer) when
   those are injected.
@@ -198,7 +217,10 @@ copy of each workflow body and a CI check that keeps the two hosts from drifting
 - `CLAUDE.md`'s "Claude Code skills" section documents the layout, the mechanism, the check, and the
   revised precedence rule.
 - Verified out-of-band (Phase 5): a fresh `git clone` of the merged trunk, listing the skills a
-  Claude Code session in it discovers, shows all four.
+  Claude Code session in it discovers, shows all four — and, because delegation (not discovery) is
+  this design's one untested assumption, the verification also confirms **execution**: a session
+  that triggers `otto-development` in that clone actually reads the canonical body rather than
+  acting off the stub alone.
 
 ## Error Handling & Edge Cases
 
