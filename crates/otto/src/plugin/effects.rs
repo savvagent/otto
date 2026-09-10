@@ -659,10 +659,12 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         let screen: Box<dyn otto_plugin::Screen> = Box::new(PluginsManagerScreen::with_rows(rows));
         (screen, layout)
     } else if id == "palette" {
-        // The palette mirrors its selection into the prompt — `open_screen`
-        // seeds the preview below and `PaletteScreen` clears it again on
-        // Esc / empty-result Enter / no-arg Enter — so it owns the draft
-        // from the first frame. It may therefore only open over an empty
+        // The palette owns the prompt while it is open — `open_screen`
+        // seeds a bare `/` below, `PaletteScreen` echoes the typed filter
+        // into it on every keystroke, and clears it again on Esc /
+        // empty-result Enter / no-arg Enter / backspace past the slash. It
+        // owns the draft from the first frame, and may therefore only
+        // open over an empty
         // prompt: the TUI already refuses to emit
         // `OpenScreen { id: "palette" }` while text is present, because it
         // routes `/` to the palette only on an empty prompt. This guard
@@ -694,8 +696,9 @@ async fn open_screen(app: &mut App, id: &str, args: ScreenArgs) -> Result<(), St
         };
         let commands = build_palette_commands(&reg, &idx).await;
         let screen = PaletteScreen::with_commands(commands);
-        // Seed the prompt preview with the first highlighted command so
-        // the prompt and palette are synchronized from the first frame.
+        // Seed the prompt with the palette's preview — a bare `/`, since a
+        // freshly built screen has an empty filter — so the prompt and the
+        // sheet agree from the first frame.
         let preview = screen.prompt_preview();
         app.prefill_input(preview);
         let screen: Box<dyn otto_plugin::Screen> = Box::new(screen);
@@ -3080,7 +3083,7 @@ mod tests {
     /// immediately prefill the prompt with the first highlighted slash command
     /// so the palette and prompt are synchronized from the first frame.
     #[tokio::test]
-    async fn palette_open_screen_prefills_prompt_with_first_command() {
+    async fn palette_open_screen_prefills_prompt_with_a_bare_slash() {
         use crate::plugin::manifests::Indexes;
         use crate::plugin::register_builtins;
         use crate::plugin::registry::PluginRegistry;
@@ -3123,27 +3126,32 @@ mod tests {
         .await
         .expect("open palette screen");
 
-        // The prompt should be prefilled with the first highlighted command.
-        // Get the first line of the input_textarea.
+        // The prompt is seeded with a bare `/` — the palette's empty filter
+        // echoed back — not with the first highlighted command. Seeding the
+        // resolved command here is exactly what #96 removed: it put a
+        // command the user had not chosen into the prompt before they had
+        // typed anything at all.
         let prompt_lines = app.input_textarea.lines();
         let first_line = prompt_lines.first().map(|s| s.as_str()).unwrap_or("");
 
-        // Build the expected first command by sorting the slash commands alphabetically.
+        assert_eq!(
+            first_line, "/",
+            "opening the palette should seed a bare slash, got: '{first_line}'"
+        );
+
+        // Guard the regression directly: the seed must not be any real
+        // slash command, however the builtin set changes.
         let idx = app.plugin_indexes.as_ref().unwrap().read().await;
         let mut entries: Vec<String> = idx.slash.keys().cloned().collect();
         drop(idx);
         entries.sort();
         assert!(
             !entries.is_empty(),
-            "the builtin slash index must be non-empty for the seed assertion below"
+            "the builtin slash index must be non-empty for the assertion below to mean anything"
         );
-
-        let expected_first_command = format!("/{}", entries[0]);
-
-        // The prompt should equal the expected first command, not just start with /.
-        assert_eq!(
-            first_line, expected_first_command,
-            "prompt should equal the first highlighted command, got: '{first_line}' but expected: '{expected_first_command}'"
+        assert!(
+            !entries.iter().any(|e| first_line == format!("/{e}")),
+            "the seeded prompt must not resolve to a command; got '{first_line}'"
         );
 
         // Verify the screen was pushed to the stack.
@@ -3192,9 +3200,10 @@ mod tests {
         );
     }
 
-    /// The palette mirrors its selection into the prompt (and clears it
-    /// again on Esc / empty-result Enter / no-arg Enter), so it may only
-    /// open over an empty prompt. Applying `Effect::OpenScreen { id:
+    /// The palette owns the prompt while it is open — it echoes the typed
+    /// filter into it and clears it again on Esc / empty-result Enter /
+    /// no-arg Enter / backspace past the slash — so it may only open over
+    /// an empty prompt. Applying `Effect::OpenScreen { id:
     /// "palette" }` while the textarea holds a real draft must neither
     /// overwrite that draft nor push a palette screen — the effects layer
     /// refuses the open instead of letting the palette seize the user's

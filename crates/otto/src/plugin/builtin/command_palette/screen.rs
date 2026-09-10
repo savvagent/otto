@@ -68,24 +68,21 @@ impl PaletteScreen {
             .collect()
     }
 
-    /// Derive the prompt preview text from the current palette state.
+    /// The text the prompt should show while this screen owns input: the
+    /// leading `/` plus exactly what the user has typed.
     ///
-    /// This returns the text that should appear in the prompt to mirror the
-    /// currently highlighted command or the typed filter as a fallback.
+    /// This deliberately does *not* resolve the highlighted row into the
+    /// prompt. #92 did, and #96 reversed it: the prompt is the one surface a
+    /// terminal user expects to echo their keystrokes, so showing `/connect`
+    /// while they typed `/co` made backspace look like it replaced the word.
+    /// The `\u{25b6}` marker in the list is what communicates the pending
+    /// selection; the resolved name reaches the prompt only on `Enter`.
     ///
-    /// Rules:
-    /// - If the filtered list has a highlighted command: `/<command name>`
-    /// - Else if the user typed a filter: `/<filter>` (fallback when no match)
-    /// - Else: `/` (empty palette or empty filter)
+    /// The empty-filter case (`/`) and the no-match case (`/<filter>`) both
+    /// fall out of this rather than needing their own branches.
+    #[must_use]
     pub fn prompt_preview(&self) -> String {
-        let filtered = self.filtered();
-        if let Some((_, cmd)) = filtered.get(self.cursor) {
-            format!("/{}", cmd.name)
-        } else if !self.filter.is_empty() {
-            format!("/{}", self.filter)
-        } else {
-            "/".to_string()
-        }
+        format!("/{}", self.filter)
     }
 }
 
@@ -102,12 +99,35 @@ impl Screen for PaletteScreen {
     }
 
     fn render(&self, region: Region) -> Vec<StyledLine> {
-        let mut lines = vec![StyledLine::plain(format!("> {}", self.filter))];
+        // No `> <filter>` header here: the sheet is anchored directly above
+        // the prompt (`ui.rs::bottom_sheet_rect`), and the prompt now echoes
+        // the filter itself, so a header would put the same string on two
+        // adjacent rows. The prompt is the input surface; this is the list.
+        let mut lines: Vec<StyledLine> = Vec::new();
         if self.commands.is_empty() {
             lines.push(StyledLine::plain(""));
             lines.push(StyledLine {
                 spans: vec![StyledSpan {
                     text: rust_i18n::t!("picker.command-palette.no-commands").to_string(),
+                    fg: Some(ThemeColor::Muted),
+                    bg: None,
+                    modifiers: TextMods::default(),
+                }],
+            });
+            return lines;
+        }
+        // Computed once: `render` runs at >=20Hz and `filtered` allocates
+        // both a lowercased needle and a Vec on every call.
+        let filtered = self.filtered();
+        // A filter matching nothing needs its own empty state, and it has to
+        // return here — before the windowing arithmetic — so the blank
+        // spacer row below doesn't land above it. Without the old header
+        // this state would otherwise render as a blank rectangle.
+        if filtered.is_empty() {
+            lines.push(StyledLine::plain(""));
+            lines.push(StyledLine {
+                spans: vec![StyledSpan {
+                    text: rust_i18n::t!("picker.command-palette.no-matches").to_string(),
                     fg: Some(ThemeColor::Muted),
                     bg: None,
                     modifiers: TextMods::default(),
@@ -121,7 +141,6 @@ impl Screen for PaletteScreen {
         // namespace is filtered out at palette-build time (in
         // `effects.rs::build_palette_commands`), so the dynamic width
         // only needs to accommodate the remaining (shorter) command names.
-        let filtered = self.filtered();
         let name_col_width = filtered
             .iter()
             .map(|(_, c)| c.name.chars().count())
@@ -130,18 +149,28 @@ impl Screen for PaletteScreen {
             .max(12)
             + 2;
         // The list lives in a fixed-height `BottomSheet`, so a long,
-        // unfiltered command set (30+ builtins) won't fit. Window the
-        // rows around the cursor, budgeting *three* of the region's rows
-        // for non-command chrome: the `> filter` line (already pushed),
-        // the spacer/scroll-hint line, and the sheet's last row — which
-        // the host overpaints with our `tips()` after the paragraph
-        // (`ui.rs::paint_screen`). Reserving only two would put a row we
-        // still drew underneath the tips line, and since the window is
-        // anchored so the cursor sits on its *last* row that hidden row
-        // is the selected one: the `▶` highlight would vanish for every
-        // scrolled list. Then show a scroll hint in place of the usual
-        // blank spacer row whenever the window doesn't reach an edge.
-        let capacity = (region.height as usize).saturating_sub(3).max(1);
+        // unfiltered command set (30+ builtins) won't fit. Window the rows
+        // around the cursor, budgeting *two* of the region's rows for
+        // non-command chrome: the spacer/scroll-hint line, and the sheet's
+        // last row — which the host overpaints with our `tips()` after the
+        // paragraph (`ui.rs::paint_screen`). Reserving one fewer would put
+        // a row we still drew underneath the tips line, and since the
+        // window is anchored so the cursor sits on its *last* row, that
+        // hidden row is the selected one: the `▶` highlight would vanish
+        // for every scrolled list. (This was three while `render` also
+        // drew a `> filter` header; dropping that header freed a row.)
+        //
+        // The spacer stays unconditional even with the header gone.
+        // Reclaiming it when there is no hint would be circular: `hint`
+        // derives from `hidden_above`/`hidden_below`, which derive from
+        // `capacity`, which would then derive from `hint`.
+        //
+        // `.max(1)` is a floor, not panic-protection — a capacity of 0
+        // yields a valid empty slice. What it does at `height <= 2` is
+        // force one row into a budget with no room for it, so `tips()`
+        // overpaints the `▶` row. That boundary is pre-existing and this
+        // change shrinks it: it used to bite at `height <= 3`.
+        let capacity = (region.height as usize).saturating_sub(2).max(1);
         let window_start = if filtered.len() <= capacity {
             0
         } else {
@@ -223,29 +252,43 @@ impl Screen for PaletteScreen {
                     },
                 ])
             }
+            // Navigation moves the highlight, which is not an edit to the
+            // user's text — so it emits nothing, matching `connect`'s picker.
+            // The prompt keeps whatever was typed. Safe for rendering: the
+            // main loop redraws unconditionally every iteration and polls on
+            // a 50ms timeout, so the marker repaints without an effect.
             KeyCodePortable::Up => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
                 }
-                // Emit the updated preview.
-                Ok(vec![Effect::PrefillInput {
-                    text: self.prompt_preview(),
-                }])
+                Ok(vec![])
             }
             KeyCodePortable::Down => {
                 let max = self.filtered().len().saturating_sub(1);
                 if self.cursor < max {
                     self.cursor += 1;
                 }
-                // Emit the updated preview.
-                Ok(vec![Effect::PrefillInput {
-                    text: self.prompt_preview(),
-                }])
+                Ok(vec![])
             }
             KeyCodePortable::Backspace => {
-                self.filter.pop();
+                // Backspacing past the leading `/` closes the palette. Now
+                // that the prompt is a literal echo of what was typed, a
+                // `/` that cannot be deleted would contradict that — and
+                // would leave backspace as the one editing key with no
+                // effect in a prompt the user believes they are editing.
+                // This is the codebase's own established intent: see the
+                // legacy helper's doc comment in `app.rs`, "the caller can
+                // use this to close the palette on Backspace past the
+                // leading `/`".
+                if self.filter.pop().is_none() {
+                    return Ok(vec![
+                        Effect::CloseScreen,
+                        Effect::PrefillInput {
+                            text: String::new(),
+                        },
+                    ]);
+                }
                 self.cursor = 0;
-                // Emit the updated preview.
                 Ok(vec![Effect::PrefillInput {
                     text: self.prompt_preview(),
                 }])
@@ -294,14 +337,50 @@ impl Screen for PaletteScreen {
                     ])])
                 }
             }
+            // Everything else is inert, and deliberately so: the prompt is
+            // an *echo* of `self.filter`, not an editable buffer. The
+            // filter is append-only (plus the backspace above), so there is
+            // no cursor within it for Left/Right/Home/End/Delete/Ctrl-W to
+            // address. Do not read the backspace rationale above as a
+            // general principle and wire these up without first giving the
+            // filter a cursor position of its own.
             _ => Ok(vec![]),
         }
     }
 
+    /// The tips row names the command `Enter` will actually dispatch.
+    ///
+    /// This is load-bearing, not decoration. `filtered` matches on
+    /// `name.contains(filter)` — a substring, not a prefix — over slash
+    /// commands contributed by *any* enabled plugin, including third-party
+    /// ones. So the highlighted row is not necessarily the command whose
+    /// name the user is partway through typing: a plugin registering
+    /// `acl-export` captures the highlight for someone typing `cl` on
+    /// their way to `clear`, and `RunSlash` is applied with no further
+    /// confirmation.
+    ///
+    /// Until #96 the prompt itself showed the resolved name, which was the
+    /// signal that the pending command was not the one being typed. Now
+    /// that the prompt echoes the raw filter, that signal has to live
+    /// somewhere, and this row is the right place: the host paints it last
+    /// (`ui.rs::paint_screen`), so it survives even at sheet heights too
+    /// short to show the `\u{25b6}` row at all.
     fn tips(&self) -> Vec<StyledLine> {
-        vec![StyledLine::plain(
-            rust_i18n::t!("picker.command-palette.tips").to_string(),
-        )]
+        let filtered = self.filtered();
+        match filtered.get(self.cursor) {
+            Some((_, cmd)) => vec![StyledLine::plain(
+                rust_i18n::t!(
+                    "picker.command-palette.tips-run",
+                    cmd = format!("/{}", cmd.name)
+                )
+                .to_string(),
+            )],
+            // Nothing is highlighted, so there is nothing for `Enter` to
+            // name — fall back to the generic affordance line.
+            None => vec![StyledLine::plain(
+                rust_i18n::t!("picker.command-palette.tips").to_string(),
+            )],
+        }
     }
 }
 
@@ -459,7 +538,7 @@ mod tests {
     async fn long_list_fits_shows_no_scroll_hint() {
         let commands: Vec<_> = (0..5).map(|i| cmd(&format!("cmd{i}"), false)).collect();
         let p = PaletteScreen::with_commands(commands);
-        // capacity = height(12) - 3 = 9, which comfortably fits all 5 rows.
+        // capacity = height(12) - 2 = 10, which comfortably fits all 5 rows.
         let lines = p.render(Region {
             x: 0,
             y: 0,
@@ -486,7 +565,7 @@ mod tests {
     async fn overflowing_list_windows_around_cursor_with_scroll_hint() {
         let commands: Vec<_> = (0..20).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
         let mut p = PaletteScreen::with_commands(commands);
-        // capacity = height(6) - 3 = 3 visible rows out of 20 commands.
+        // capacity = height(6) - 2 = 4 visible rows out of 20 commands.
         let region = Region {
             x: 0,
             y: 0,
@@ -499,13 +578,14 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
-        // Cursor starts at 0: window is [0, 3), nothing hidden above but
-        // 17 rows hidden below.
+        // Cursor starts at 0: window is [0, 4), nothing hidden above but
+        // 16 rows hidden below.
         assert!(joined.contains("/cmd00"));
         assert!(joined.contains("/cmd01"));
         assert!(joined.contains("/cmd02"));
-        assert!(!joined.contains("/cmd03"));
-        assert!(joined.contains("↓17 more below"));
+        assert!(joined.contains("/cmd03"));
+        assert!(!joined.contains("/cmd04"));
+        assert!(joined.contains("↓16 more below"));
         assert!(
             !joined.contains("more above"),
             "nothing is hidden above at the top of the list, got: {joined}"
@@ -522,7 +602,7 @@ mod tests {
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
         assert!(joined.contains("/cmd19"));
-        assert!(joined.contains("↑17 more above"));
+        assert!(joined.contains("↑16 more above"));
         assert!(
             !joined.contains("more below"),
             "nothing is hidden below at the end of the list, got: {joined}"
@@ -535,38 +615,105 @@ mod tests {
     /// sits on its last row, which is precisely the row that would be
     /// swallowed — leaving the `▶` selection invisible for the rest of
     /// the list once it scrolls.
+    ///
+    /// Swept across region heights rather than pinned to one, because the
+    /// reserved-row count is a constant that a future edit can move by
+    /// one without any single height noticing.
+    ///
+    /// The sweep starts at 3: at `height <= 2` the `.max(1)` floor forces
+    /// one command row into a budget with no room for it, so the
+    /// line-count bound is false by construction there. That boundary is
+    /// pre-existing and documented at the `capacity` binding; the `▶`
+    /// presence half is asserted at every height including those.
     #[tokio::test]
-    async fn cursor_row_never_lands_on_the_tips_row() {
-        let commands: Vec<_> = (0..30).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
-        let mut p = PaletteScreen::with_commands(commands);
-        let region = Region {
+    async fn cursor_row_never_lands_on_the_tips_row_at_any_height() {
+        for height in 1..=14u16 {
+            let commands: Vec<_> = (0..30).map(|i| cmd(&format!("cmd{i:02}"), false)).collect();
+            let mut p = PaletteScreen::with_commands(commands);
+            let region = Region {
+                x: 0,
+                y: 0,
+                width: 80,
+                height,
+            };
+
+            // Walk the whole list; at no point may the selected row fall
+            // on (or past) the row the tips line will claim.
+            for step in 0..30 {
+                let lines = p.render(region);
+                let cursor_row = lines
+                    .iter()
+                    .position(|l| l.spans.iter().any(|s| s.text.starts_with("▶")))
+                    .unwrap_or_else(|| {
+                        panic!("selected row missing at height {height}, step {step}")
+                    });
+
+                if height >= 3 {
+                    let visible = height as usize - 1; // tips row is not ours
+                    assert!(
+                        lines.len() <= visible,
+                        "height {height}: render emitted {} lines into {visible} usable rows",
+                        lines.len()
+                    );
+                    assert!(
+                        cursor_row < visible,
+                        "height {height}: cursor row {cursor_row} would be overpainted by tips"
+                    );
+                }
+                p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+            }
+        }
+    }
+
+    /// The sheet must never render as a blank panel. With commands loaded
+    /// but a filter matching none of them, the old `> <filter>` header was
+    /// the only line drawn; removing it without an empty state would leave
+    /// an empty rectangle above the prompt.
+    #[tokio::test]
+    async fn no_match_renders_an_empty_state_not_a_blank_sheet() {
+        let mut p = fixture();
+        for ch in "xyz".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert!(p.filtered().is_empty(), "filter should match nothing");
+        let lines = p.render(Region {
             x: 0,
             y: 0,
             width: 80,
             height: 12,
-        };
+        });
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
+            .collect();
+        assert!(
+            joined.contains(rust_i18n::t!("picker.command-palette.no-matches").as_ref()),
+            "no-match render should show the empty state, got: {joined:?}"
+        );
+        assert!(
+            !joined.trim().is_empty(),
+            "the sheet must not be blank when the filter matches nothing"
+        );
+    }
 
-        // Walk the whole list; at no point may the selected row fall on
-        // (or past) the row the tips line will claim.
-        for _ in 0..30 {
-            let lines = p.render(region);
-            let visible = region.height as usize - 1; // tips row is not ours
-            assert!(
-                lines.len() <= visible,
-                "render emitted {} lines into {} usable rows",
-                lines.len(),
-                visible
-            );
-            let cursor_row = lines
+    /// The sheet no longer draws its own `> <filter>` header — the prompt
+    /// one row below echoes the filter, so a header would duplicate it.
+    #[tokio::test]
+    async fn render_has_no_filter_header() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        let lines = p.render(Region {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 12,
+        });
+        assert!(
+            !lines
                 .iter()
-                .position(|l| l.spans.iter().any(|s| s.text.starts_with("▶")))
-                .expect("the selected row must always be rendered");
-            assert!(
-                cursor_row < visible,
-                "cursor row {cursor_row} would be overpainted by the tips row"
-            );
-            p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        }
+                .any(|l| l.spans.iter().any(|s| s.text.starts_with("> "))),
+            "no rendered line may start with the old header prefix"
+        );
     }
 
     /// A filtered list whose length is exactly the capacity must render in
@@ -574,8 +721,8 @@ mod tests {
     /// while reporting `0 more below`.
     #[tokio::test]
     async fn list_exactly_filling_capacity_renders_every_row() {
-        // capacity = height(12) - 3 = 9.
-        let commands: Vec<_> = (0..9).map(|i| cmd(&format!("cmd{i}"), false)).collect();
+        // capacity = height(12) - 2 = 10.
+        let commands: Vec<_> = (0..10).map(|i| cmd(&format!("cmd{i}"), false)).collect();
         let p = PaletteScreen::with_commands(commands);
         let lines = p.render(Region {
             x: 0,
@@ -587,86 +734,85 @@ mod tests {
             .iter()
             .flat_map(|l| l.spans.iter().map(|s| s.text.clone()))
             .collect();
-        for i in 0..9 {
+        for i in 0..10 {
             assert!(joined.contains(&format!("/cmd{i}")), "missing /cmd{i}");
         }
         assert!(!joined.contains("more below"));
     }
 
-    // --- Prompt preview tests (issue #80) ---
+    // --- Prompt preview tests (issues #80, #96) ---
 
-    /// The palette should derive a prompt preview from the currently
-    /// highlighted command: `/<highlighted command name>`.
+    /// The preview echoes the typed filter, not the highlighted row. A
+    /// fresh palette has an empty filter, so it previews a bare `/`.
     #[test]
-    fn prompt_preview_shows_highlighted_command() {
+    fn prompt_preview_starts_as_a_bare_slash() {
         let p = fixture();
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/");
     }
 
-    /// When the palette is empty, the preview should be just `/`.
+    /// An empty palette previews `/` for the same reason: empty filter.
     #[test]
     fn prompt_preview_empty_palette_shows_slash() {
         let p = PaletteScreen::empty();
         assert_eq!(p.prompt_preview(), "/");
     }
 
-    /// When the filter returns no matches but the user has typed a filter,
-    /// the preview should show the filter as fallback: `/<filter>`.
+    /// Typing echoes character-for-character, even though the highlighted
+    /// row resolves to a longer name. This is the #96 behavior: typing
+    /// `cl` must not turn the prompt into `/clear`.
+    #[tokio::test]
+    async fn prompt_preview_echoes_typed_characters() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/c");
+        p.on_key(key(KeyCodePortable::Char('l'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/cl");
+        assert_eq!(
+            p.filtered().first().map(|(_, c)| c.name.as_str()),
+            Some("clear"),
+            "a row should be highlighted — the point is that it does not \
+             reach the prompt"
+        );
+    }
+
+    /// A filter matching nothing still echoes the filter.
     #[tokio::test]
     async fn prompt_preview_no_match_shows_filter() {
         let mut p = fixture();
-        // Type a filter that matches nothing.
         for ch in "xyz".chars() {
-            p.on_key(KeyEventPortable {
-                code: KeyCodePortable::Char(ch),
-                modifiers: KeyMods::default(),
-            })
-            .await
-            .unwrap();
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
         }
         assert!(p.filtered().is_empty(), "filter should match nothing");
         assert_eq!(p.prompt_preview(), "/xyz");
     }
 
-    /// Pressing `Up` should update the preview to the previous command.
+    /// Backspace on a non-empty filter removes exactly one character.
     #[tokio::test]
-    async fn prompt_preview_updates_on_up() {
+    async fn prompt_preview_backspace_removes_one_character() {
         let mut p = fixture();
-        // Start at "clear" (index 0)
-        assert_eq!(p.prompt_preview(), "/clear");
-        // Move down to "demo"
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        p.on_key(key(KeyCodePortable::Char('o'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/co");
+        p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/c");
+    }
+
+    /// Navigation moves the highlight without touching the prompt.
+    #[tokio::test]
+    async fn prompt_preview_is_unchanged_by_navigation() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('e'))).await.unwrap();
+        assert_eq!(p.prompt_preview(), "/e");
+        let before = p.cursor;
         p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/demo");
-        // Move up back to "clear"
+        assert_ne!(p.cursor, before, "Down should move the highlight");
+        assert_eq!(p.prompt_preview(), "/e");
         p.on_key(key(KeyCodePortable::Up)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/e");
     }
 
-    /// Pressing `Down` should update the preview to the next command.
-    #[tokio::test]
-    async fn prompt_preview_updates_on_down() {
-        let mut p = fixture();
-        assert_eq!(p.prompt_preview(), "/clear");
-        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/demo");
-        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/exit");
-    }
-
-    /// Typing a character that has no match should show the filter as
-    /// fallback, not a stale command preview.
-    #[tokio::test]
-    async fn prompt_preview_shows_filter_on_no_match() {
-        let mut p = fixture();
-        for ch in "xyz".chars() {
-            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
-        }
-        assert!(p.filtered().is_empty());
-        assert_eq!(p.prompt_preview(), "/xyz");
-    }
-
-    /// `Char`, `Backspace`, `Up`, and `Down` should emit `PrefillInput`
-    /// effects to keep the prompt in sync with the palette selection.
+    /// `Char` and `Backspace` edit the user's text, so they emit
+    /// `PrefillInput`. `Up` and `Down` do not — see the two tests below.
     #[tokio::test]
     async fn char_emits_prefill_input() {
         let mut p = fixture();
@@ -697,26 +843,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn up_emits_prefill_input() {
+    async fn up_emits_no_effects() {
         let mut p = fixture();
         p.on_key(key(KeyCodePortable::Down)).await.unwrap();
         let effs = p.on_key(key(KeyCodePortable::Up)).await.unwrap();
-        let has_prefill = effs
-            .iter()
-            .any(|e| matches!(e, Effect::PrefillInput { .. }));
-        assert!(has_prefill, "Up should emit PrefillInput, got: {:?}", effs);
+        assert!(
+            effs.is_empty(),
+            "Up must not touch the prompt, got: {:?}",
+            effs
+        );
     }
 
     #[tokio::test]
-    async fn down_emits_prefill_input() {
+    async fn down_emits_no_effects() {
         let mut p = fixture();
         let effs = p.on_key(key(KeyCodePortable::Down)).await.unwrap();
-        let has_prefill = effs
-            .iter()
-            .any(|e| matches!(e, Effect::PrefillInput { .. }));
         assert!(
-            has_prefill,
-            "Down should emit PrefillInput, got: {:?}",
+            effs.is_empty(),
+            "Down must not touch the prompt, got: {:?}",
             effs
         );
     }
@@ -807,27 +951,142 @@ mod tests {
         }
     }
 
-    /// Typing should update the preview to the first matching command.
-    /// Using 'd' which matches only 'demo' (alphabetically first).
+    /// Typing narrows the list but the prompt still shows only what was
+    /// typed. `d` matches exactly one command, `demo` — the case where
+    /// resolving the highlight into the prompt is most tempting and most
+    /// wrong, because the user typed one character, not four.
     #[tokio::test]
-    async fn prompt_preview_updates_on_char() {
+    async fn prompt_preview_echoes_the_char_not_the_sole_match() {
         let mut p = fixture();
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/");
         p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
-        // Filter now matches only "demo"; cursor resets to 0 → "demo"
-        assert_eq!(p.prompt_preview(), "/demo");
+        assert_eq!(
+            p.filtered().len(),
+            1,
+            "'d' should narrow the fixture to exactly one command"
+        );
+        assert_eq!(p.prompt_preview(), "/d");
     }
 
-    /// Backspacing should update the preview based on the new filter.
+    /// Backspacing back to an empty filter returns the prompt to a bare
+    /// slash rather than to the newly highlighted command.
     #[tokio::test]
-    async fn prompt_preview_updates_on_backspace() {
+    async fn prompt_preview_returns_to_slash_on_backspace() {
         let mut p = fixture();
-        // Type "d" to filter to ["demo"]
         p.on_key(key(KeyCodePortable::Char('d'))).await.unwrap();
-        assert_eq!(p.prompt_preview(), "/demo");
-        // Backspace to clear the filter
+        assert_eq!(p.prompt_preview(), "/d");
         p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
-        // Back to full list, cursor at 0 → "clear"
-        assert_eq!(p.prompt_preview(), "/clear");
+        assert_eq!(p.prompt_preview(), "/");
+    }
+
+    /// Backspace on a non-empty filter edits, and does not close.
+    #[tokio::test]
+    async fn backspace_on_a_non_empty_filter_does_not_close() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        let effs = p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        assert!(
+            !effs.iter().any(|e| matches!(e, Effect::CloseScreen)),
+            "backspace over a typed character must not close, got: {effs:?}"
+        );
+        match effs.as_slice() {
+            [Effect::PrefillInput { text }] => assert_eq!(text, "/"),
+            other => panic!("expected a single PrefillInput, got: {other:?}"),
+        }
+    }
+
+    /// Navigation still drives selection. The old code proved this
+    /// incidentally, because `Down` emitted a `PrefillInput` naming the new
+    /// row; now that it emits nothing, assert the coupling directly.
+    #[tokio::test]
+    async fn navigation_still_drives_what_enter_dispatches() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        let effs = p.on_key(key(KeyCodePortable::Enter)).await.unwrap();
+        match effs.first() {
+            Some(Effect::Stack(children)) => match &children[2] {
+                Effect::RunSlash { name, .. } => assert_eq!(name, "exit"),
+                other => panic!("expected RunSlash for the third row, got {other:?}"),
+            },
+            other => panic!("expected Stack, got {other:?}"),
+        }
+    }
+
+    /// The tips row names what `Enter` will dispatch, so the pending
+    /// command is stated somewhere even though the prompt now echoes only
+    /// the raw filter.
+    #[tokio::test]
+    async fn tips_name_the_command_enter_will_run() {
+        let mut p = fixture();
+        assert!(
+            p.tips()[0].spans.iter().any(|s| s.text.contains("/clear")),
+            "tips should name the highlighted command, got: {:?}",
+            p.tips()
+        );
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        assert!(
+            p.tips()[0].spans.iter().any(|s| s.text.contains("/demo")),
+            "tips should follow the highlight, got: {:?}",
+            p.tips()
+        );
+    }
+
+    /// The case the tips row exists for. `filtered` is a substring match
+    /// over commands contributed by any enabled plugin, so a plugin can
+    /// register a name that captures the highlight from the builtin the
+    /// user is typing toward. The prompt shows what they typed; the tips
+    /// row must show what would actually run.
+    #[tokio::test]
+    async fn tips_name_a_plugin_command_that_captures_the_highlight() {
+        // Sorts before "clear" and contains "cl".
+        let mut p =
+            PaletteScreen::with_commands(vec![cmd("acl-export", false), cmd("clear", false)]);
+        for ch in "cl".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert_eq!(
+            p.prompt_preview(),
+            "/cl",
+            "the prompt echoes what was typed"
+        );
+        let tips = p.tips();
+        let text: String = tips[0].spans.iter().map(|s| s.text.clone()).collect();
+        assert!(
+            text.contains("/acl-export"),
+            "tips must name the command that would actually run, got: {text}"
+        );
+    }
+
+    /// With nothing highlighted there is no command to name, so the tips
+    /// row falls back to the generic affordance line rather than naming a
+    /// stale command.
+    #[tokio::test]
+    async fn tips_fall_back_when_nothing_is_highlighted() {
+        let mut p = fixture();
+        for ch in "xyz".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert!(p.filtered().is_empty());
+        let text: String = p.tips()[0].spans.iter().map(|s| s.text.clone()).collect();
+        assert_eq!(
+            text,
+            rust_i18n::t!("picker.command-palette.tips").to_string(),
+            "with nothing highlighted the tips row must be the generic line"
+        );
+    }
+
+    /// Backspace past the leading `/` closes the palette and clears the
+    /// prompt — otherwise the `/` would be undeletable.
+    #[tokio::test]
+    async fn backspace_past_the_slash_closes_and_clears() {
+        let mut p = fixture();
+        let effs = p.on_key(key(KeyCodePortable::Backspace)).await.unwrap();
+        match effs.as_slice() {
+            [Effect::CloseScreen, Effect::PrefillInput { text }] => {
+                assert!(text.is_empty(), "prompt should be cleared, got: {text:?}");
+            }
+            other => panic!("expected CloseScreen then an empty PrefillInput, got: {other:?}"),
+        }
     }
 }
