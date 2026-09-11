@@ -27,38 +27,28 @@ pub mod discovery;
 pub mod frontmatter;
 pub mod spec;
 
-// Levels 1-3 of the disclosure ladder are implemented but not yet wired:
-// registering the `skill` tool and its trust gate is Task 2, and until that
-// lands nothing outside these modules constructs them. The allow is scoped
-// to the three unwired modules rather than the whole file so `discovery`,
-// `frontmatter`, `spec`, and the `/skills` plugin below stay dead-code
-// checked. REMOVE these three allows in Task 2 — if the crate still builds
-// clean without them, the tool wiring landed correctly.
-#[allow(dead_code)]
 pub mod index;
-#[allow(dead_code)]
 pub mod skill_tool;
-#[allow(dead_code)]
 pub mod trust;
 
 use std::path::PathBuf;
 
 use async_trait::async_trait;
 use otto_plugin::{
-    Contributions, Effect, Manifest, Plugin, PluginError, PluginId, PluginKind, SlashSpec,
-    StyledLine,
+    Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
+    PluginKind, SlashSpec, StyledLine,
 };
 
 use crate::plugin::builtin::user_skills::discovery::discover;
 
-#[allow(unused_imports)] // Consumed by the `skill` tool and picker in Tasks 2-3.
 pub use index::SkillIndex;
-#[allow(unused_imports)] // Consumed by the `skill` tool and picker in Tasks 2-3.
+#[allow(unused_imports)] // Consumed by the picker in Task 3.
 pub use spec::{SkillScope, SkillSpec, ToolScope};
 
 pub struct UserSkillsPlugin {
     project_root: PathBuf,
     user_home: PathBuf,
+    index: SkillIndex,
 }
 
 impl UserSkillsPlugin {
@@ -80,7 +70,24 @@ impl UserSkillsPlugin {
         Self {
             project_root,
             user_home,
+            index: SkillIndex::empty(),
         }
+    }
+
+    /// Build the `skill` tool's registration effect, or none while no
+    /// skill has been discovered yet — mirrors
+    /// `UserAgentsPlugin::register_task_tool_effects`.
+    async fn register_skill_tool_effects(&self) -> Vec<Effect> {
+        if self.index.is_empty().await {
+            return vec![];
+        }
+        let spec = skill_tool::build_tool_def(&self.index).await;
+        let handler = skill_tool::handler_arc(
+            self.index.clone(),
+            self.project_root.clone(),
+            self.user_home.clone(),
+        );
+        vec![Effect::RegisterInProcessTool { spec, handler }]
     }
 }
 
@@ -107,6 +114,7 @@ impl Plugin for UserSkillsPlugin {
             requires_arg: false,
             suppress_prompt_segments: vec![],
         }];
+        contributions.hooks = vec![HookKind::HostStarting];
         Manifest {
             id: PluginId::new("internal:user-skills").expect("valid built-in id"),
             name: "User skills".into(),
@@ -164,6 +172,22 @@ impl Plugin for UserSkillsPlugin {
         }
         Ok(effects)
     }
+
+    async fn on_event(&mut self, event: HostEvent) -> Result<Vec<Effect>, PluginError> {
+        if matches!(event, HostEvent::HostStarting) {
+            let discovered = discover(&self.project_root, &self.user_home);
+            if !discovered.warnings.is_empty() {
+                tracing::warn!(
+                    "user-skills: skipped {} invalid skill definition(s) during startup discovery: {:?}",
+                    discovered.warnings.len(),
+                    discovered.warnings
+                );
+            }
+            self.index.replace(discovered.skills).await;
+            return Ok(self.register_skill_tool_effects().await);
+        }
+        Ok(vec![])
+    }
 }
 
 #[cfg(test)]
@@ -201,6 +225,18 @@ mod tests {
                 .slash_commands
                 .iter()
                 .any(|slash| slash.name == "skills")
+        );
+    }
+
+    #[test]
+    fn manifest_subscribes_to_host_starting() {
+        let plugin = UserSkillsPlugin::default();
+        let manifest = plugin.manifest();
+        assert!(
+            manifest
+                .contributions
+                .hooks
+                .contains(&HookKind::HostStarting)
         );
     }
 
@@ -319,6 +355,47 @@ mod tests {
         assert_eq!(
             lines[2],
             "warning: skipped 1 invalid skill definition(s); see logs for details"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_tool_not_registered_when_index_empty() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        let plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+
+        let effects = plugin.register_skill_tool_effects().await;
+
+        assert!(
+            effects.is_empty(),
+            "no skill tool until at least one skill discovered"
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_tool_registered_when_index_has_skills() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "otto-development",
+            "---\nname: otto-development\ndescription: Build Otto changes\n---\nBody",
+        );
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+
+        let effects = plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        assert_eq!(effects.len(), 1);
+        assert!(
+            matches!(effects[0], Effect::RegisterInProcessTool { .. }),
+            "expected RegisterInProcessTool, got {:?}",
+            effects[0]
         );
     }
 }

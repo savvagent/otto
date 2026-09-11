@@ -8,6 +8,16 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Added
+
+- The model now has a built-in `skill` tool for loading the full instructions of a discovered
+  skill by name. Discovery (from `.otto/skills/`, `.claude/skills/`, and `.github/skills/` in
+  project and user scope) already ran for `/skills`; this wires the same index into an
+  in-process tool whose `name` argument is a live enum of currently-known skills, so a stale or
+  mistyped name fails schema validation before it reaches the handler. A project-scope skill
+  that bundles scripts still requires the same per-project trust consent as project slash
+  commands before its body is returned. (#83)
+
 ## 0.30.0 - 2026-09-11
 
 ### Added

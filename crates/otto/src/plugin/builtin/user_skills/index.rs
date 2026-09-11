@@ -14,10 +14,12 @@ use crate::plugin::builtin::user_skills::spec::SkillSpec;
 
 /// Upper bound on catalog entries. A pathological skills directory must
 /// not silently consume the context window.
+#[allow(dead_code)] // Consumed by the level-1 system-prompt segment in Task 3.
 pub const MAX_CATALOG_ENTRIES: usize = 200;
 
 /// Upper bound on one description, in characters. Matches the ceiling
 /// Claude Code applies to the same field.
+#[allow(dead_code)] // Consumed by the level-1 system-prompt segment in Task 3.
 pub const MAX_DESCRIPTION_CHARS: usize = 1024;
 
 #[derive(Clone, Default)]
@@ -42,6 +44,7 @@ impl SkillIndex {
         self.inner.read().await.get(name).cloned()
     }
 
+    #[allow(dead_code)] // Consumed by the /skills picker in Task 3.
     pub async fn len(&self) -> usize {
         self.inner.read().await.len()
     }
@@ -52,6 +55,7 @@ impl SkillIndex {
 
     /// All specs, ordered by scope precedence then name — the order the
     /// `/skills` picker renders.
+    #[allow(dead_code)] // Consumed by the /skills picker in Task 3.
     pub async fn sorted_snapshot(&self) -> Vec<Arc<SkillSpec>> {
         let mut all: Vec<Arc<SkillSpec>> = self.inner.read().await.values().cloned().collect();
         all.sort_by(|a, b| a.scope.cmp(&b.scope).then_with(|| a.name.cmp(&b.name)));
@@ -70,6 +74,7 @@ impl SkillIndex {
     /// pay zero tokens for the feature (spec acceptance criterion 3).
     /// The caller must omit the system-prompt segment entirely rather
     /// than emitting an empty one.
+    #[allow(dead_code)] // Consumed by the live prompt-segment refresh in Task 3.
     pub async fn catalog(&self) -> Option<String> {
         let all = self.sorted_snapshot().await;
         if all.is_empty() {
@@ -107,6 +112,7 @@ impl SkillIndex {
 }
 
 /// Truncate on a char boundary, appending an ellipsis when cut.
+#[allow(dead_code)] // Consumed by `catalog` once Task 3 wires the prompt segment.
 fn truncate_chars(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         return s.to_string();
