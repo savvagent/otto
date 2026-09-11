@@ -12,8 +12,11 @@ fixed separately.
 
 `otto-development`'s Non-Negotiable Rule 8 states, in both the canonical
 `.github/skills/otto-development/SKILL.md` and its Claude Code port
-`.claude/skills/otto-development/SKILL.md` (each twice — once in "The Iron Law" and once in the
-numbered rule itself): a release is "not optional and not batchable across PRs."
+`.claude/skills/otto-development/SKILL.md`: a release is "not optional and not batchable across
+PRs." The claim is not confined to the rule's own paragraph — it is restated in "The Iron Law"
+summary, in Phase 4 step 12's intro ("This is not optional, not batchable, and not skippable..."),
+and in the rationalization table's answer to "I'll batch the release with the next one" — four
+restatements per file, eight across canonical and port.
 
 Actual practice already contradicts this, with the repository owner's standing approval:
 same-session merges are batched into a single release. v0.29.0 (`#135`) batches three PRs
@@ -54,11 +57,14 @@ knock-on problems:
 
 This is a pure documentation/workflow-text change — no Rust, no crate, no runtime behavior. Five
 edits, all textual, in the canonical `.github/skills/otto-development/SKILL.md`, each mirrored
-verbatim into the Claude Code port `.claude/skills/otto-development/SKILL.md` (the two files are
-near-identical at these locations, offset by ~5 lines throughout because the port carries earlier,
-already-shipped port-only additions — see `CLAUDE.md`'s "Claude Code skills" section: a canonical
-edit that lands nowhere near an adapted line is copied into the port as-is, which is the case for
-every edit below; none of the five touched passages carries a host-mechanism substitution).
+verbatim into the Claude Code port `.claude/skills/otto-development/SKILL.md`. The two files are
+near-identical at these locations but not at a fixed offset: the port carries earlier,
+already-shipped port-only additions, so the first two edit sites (Iron Law, Rule 8) sit +5 lines
+in the port versus canonical, while the latter two (Phase 4 step 12 intro, rationalization table)
+sit +39 lines — edits are therefore applied by matching the anchor text quoted below, never by
+line-number arithmetic. See `CLAUDE.md`'s "Claude Code skills" section: a canonical edit that
+lands nowhere near an adapted line is copied into the port as-is, which is the case for every edit
+below; none of the five touched passages carries a host-mechanism substitution.
 
 ### 1. Reword "The Iron Law"'s release-mandatory paragraph
 
@@ -163,11 +169,13 @@ removed. Non-Negotiable Rule 6 is not engaged.
   prose about releases, identical in meaning for both hosts. This matches `CLAUDE.md`'s own
   description of the common case: "a canonical edit that lands nowhere near an adapted line ... is
   copied into the port as-is."
-- **The five locations are exhaustive** for the phrase "batch"/"batchable" in the canonical
-  `SKILL.md` (confirmed via `grep -n "batch" .github/skills/otto-development/SKILL.md`, which
-  returns exactly the four load-bearing hits addressed by edits 1, 2, 5, plus the intro paragraph
-  addressed by edit 4 that itself doesn't use the word but restates the same "not batchable"
-  claim). No other file in either skill references batching.
+- **The five edits are exhaustive** for the phrase "batch"/"batchable" in the canonical
+  `SKILL.md`: `grep -n "batch" .github/skills/otto-development/SKILL.md` returns exactly four
+  hits (the Iron Law paragraph, Rule 8, Phase 4 step 12's intro, and the rationalization table),
+  and edits 1, 2, 4, and 5 address exactly those four, one each — edit 3 (the `Release line:`
+  floor reframing) is the one edit of the five that isn't a grep hit, since it's a knock-on
+  consequence of Rule 8 rather than a restatement of the batching prohibition itself. No other
+  file in either skill references batching.
 - **The `Release line:` floor wording keeps the field required**, not making it optional — the
   acceptance criterion asks for reframing the *guidance*, not removing the field; a plan still
   states its own PATCH/MINOR floor, it just no longer implies that floor is the number the release
