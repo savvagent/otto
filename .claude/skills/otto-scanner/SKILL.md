@@ -47,18 +47,29 @@ context) with this task:
    `list_repos`; if truly unregistered, `register_repo` it before continuing.
 2. `gh issue list --repo savvagent/otto --state open --json number,title,labels
    --limit 500` — collect every open issue's number and labels.
-3. Drop issues carrying `wontfix`, `duplicate`, `invalid`, or `question` —
-   those are housekeeping/non-actionable, never queue them.
-4. `list_jobs` for that repo slug, with no `status` filter (so every status
-   comes back). For each job with a `ticketRef` matching
+3. Drop issues carrying `wontfix`, `duplicate`, or `invalid` — those are
+   housekeeping labels, never queue them. `question` is **not** in this
+   list: per `creating-github-issues`, `question` is a normal stock label,
+   not housekeeping. A `question`-labeled issue stays a candidate; if it
+   turns out to need real work, Step 2's compliance check will re-type it
+   (to `bug`/`enhancement`/`documentation`) like any other non-compliant
+   issue.
+4. `list_jobs` for that repo slug, with no `status` filter and an explicit
+   `limit` (e.g. `1000` — don't rely on the server's unstated default,
+   which may be much smaller). For each job with a `ticketRef` matching
    `savvagent/otto#<n>`, bucket it:
    - `pending` / `in-progress` / `active` / `completed` → "already handled",
      skip permanently.
    - `failed` / `cancelled` → "needs a human call", do **not** auto-requeue
      it — list it separately, don't fold it into either bucket below.
-5. Return *only*: the list of candidate issue numbers (open, not
-   housekeeping-labeled, not already handled), and the separate list of
-   failed/cancelled-job issue numbers (for the final report — see Step 4).
+   If the call returns exactly `limit` rows, the job history may extend
+   further than this single call can see (this tool has no pagination
+   cursor) — note that as "job list possibly truncated" rather than
+   silently trusting a complete view.
+5. Return *only*: the resolved repo slug, the list of candidate issue
+   numbers (open, not housekeeping-labeled, not already handled), the
+   separate list of failed/cancelled-job issue numbers, and the
+   possibly-truncated flag from step 4 (for the final report — see Step 4).
    Nothing else — no titles, no job descriptions, no raw `gh`/`list_jobs`
    output.
 
@@ -70,8 +81,12 @@ and stop here.
 
 For every candidate issue number, dispatch one subagent in parallel (a single
 message with one Agent call per issue — never sequential, and never more than
-one issue per subagent). Give each subagent only the issue number and this
-task:
+one issue per subagent). Cap each parallel batch at 15 subagents; if there are
+more candidates than that, process them in successive batches of at most 15,
+waiting for each batch to finish before dispatching the next — a single
+message firing hundreds of concurrent subagents against a large backlog is
+not a batch, it's a rate-limit incident. Give each subagent the issue number,
+the repo slug from Step 1, and this task:
 
 1. `gh issue view <n> --repo savvagent/otto --json title,body,labels,state`.
 2. Check compliance against `creating-github-issues`' Step 1 and Step 3 (read
@@ -95,17 +110,28 @@ task:
    - Do **not** create a second issue. You are editing issue `<n>` in place,
      never `gh issue create`.
 3. Once compliant (or if it already was), queue it:
-   - `add_job` with `repo` = the resolved slug, `title` = the issue title,
-     `description` = the issue body (post-fix) plus the issue URL,
+   - `add_job` with `repo` = the slug you were given, `title` = the issue
+     title, `description` = the issue body (post-fix) plus the issue URL,
      `ticketRef` = `savvagent/otto#<n>`, and `idempotencyKey` =
      `otto-scanner-issue-<n>` (guards against a dropped-connection retry
      double-queueing).
-   - Then `link_ticket` on the returned job with `tracker: "github"` and
-     `ticketRef: "savvagent/otto#<n>"` — `add_job`'s own `ticketRef` records
-     it, but `link_ticket` is what makes future job-status transitions
-     write back to the issue as comments, which is the point of linking it.
-4. Return exactly one line:
-   `#<n> — queued as <job-id> (compliance: ok | fixed: <what you changed>)`
+   - If `add_job` fails because that `idempotencyKey` was already used with
+     *different* arguments, this issue is already queued under a job
+     Step 1's dedup missed (e.g. the job list was truncated, or this issue
+     just got re-typed out of `question` in step 2 above and wasn't visible
+     as "already handled" yet). Do not treat this as a fresh error: run
+     `list_jobs` for this repo, find the job whose `ticketRef` is
+     `savvagent/otto#<n>`, and use that job's id in your report as
+     "already queued" instead of retrying or escalating.
+   - Otherwise, `link_ticket` on the newly returned job with
+     `tracker: "github"` and `ticketRef: "savvagent/otto#<n>"` —
+     `add_job`'s own `ticketRef` records it, but `link_ticket` is what
+     makes future job-status transitions write back to the issue as
+     comments, which is the point of linking it.
+4. Return exactly one line, one of:
+   - `#<n> — queued as <job-id> (compliance: ok | fixed: <what you changed>)`
+   - `#<n> — already queued as <job-id> (idempotency conflict — Step 1's
+     dedup missed it)`
 
 ## Step 3 — Nothing else in the orchestrator
 
@@ -123,10 +149,12 @@ Otto Scanner — savvagent/otto
 Queued (<n>):
   #<n> — queued as <job-id> (compliance: ok)
   #<n> — queued as <job-id> (compliance: fixed: added `bug` label)
+  #<n> — already queued as <job-id> (idempotency conflict — Step 1's dedup missed it)
   ...
 
 Skipped, already handled: #<n>, #<n>, ...
 Needs a human call (failed/cancelled job on file, not auto-requeued): #<n>
+Job list possibly truncated at Step 1 — dedup may be incomplete for older jobs: yes/no
 ```
 
 Then STOP. Do not start implementing any queued issue — claiming and working
@@ -141,6 +169,8 @@ a job is `otto-development`'s job, done by whichever agent picks it up next.
 | "I'll run the duplicate-check step since I'm already in creating-github-issues' head" | That step is for *creating* an issue. This issue already exists — don't search for duplicates of it. |
 | "The job failed once, I'll just requeue it to keep the pipeline moving" | A failed/cancelled job is a signal something needs a human look, not a silent retry. Report it, don't requeue it. |
 | "I'll process all the candidate issues in one subagent to save calls" | One subagent per issue, dispatched in parallel — that's what keeps a bad edit or a stuck `gh` call from blocking the rest of the batch. |
+| "There are 80 candidates, I'll fire all 80 subagents in one message" | Cap parallel batches at 15; run the rest in successive batches. |
+| "add_job errored on the idempotency key, something's broken" | It means this issue is already queued under a job the roster step missed — look it up and report it as already-queued, don't escalate. |
 
 ## Red Flags — STOP
 
@@ -150,6 +180,7 @@ a job is `otto-development`'s job, done by whichever agent picks it up next.
 - About to requeue an issue whose existing job is `failed` or `cancelled`
 - About to run a duplicate-check search against an issue you're fixing
 - About to call `gh issue create` for an issue that already exists
+- About to dispatch more than 15 Step-2 subagents in a single message
 
 Each = stop, do the step correctly, continue.
 
