@@ -14,11 +14,14 @@ on:
 permissions:
   contents: read
 
-# Cancel in-flight runs on the same ref when a new push comes in. Saves CI
-# minutes on PRs that get force-pushed.
+# Cancel in-flight runs on the same ref when a new push comes in. Saves CI minutes on PRs that get
+# force-pushed. cancel-in-progress is a pure function of github.ref (not github.event_name) so
+# every run sharing a group computes the identical value — a push to main/master is always false,
+# every PR ref is always true, with no room for two runs in the same group to disagree. See
+# docs/superpowers/specs/2026-09-11-ci-concurrency-group-fix-design.md for the incident this fixes.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,6 +33,7 @@ jobs:
   lint:
     name: fmt + clippy + skill ports
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       # Runs before the toolchain install and rust-cache on purpose: the check
@@ -64,6 +68,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 45 }}
     steps:
       - uses: actions/checkout@v4
       - name: Install rust toolchain
@@ -107,6 +112,7 @@ jobs:
   cross-vendor-gate:
     name: cross-vendor compatibility gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Install rust toolchain
@@ -123,6 +129,7 @@ jobs:
   dist-plan:
     name: dist plan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Install dist
