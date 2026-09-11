@@ -2638,4 +2638,44 @@ mod tests {
              handle, got: {buf:?}"
         );
     }
+
+    /// Static guard for the fix in this file, complementing the dynamic
+    /// regression test above: `TokioChildProcess::new(cmd)` (rmcp's plain
+    /// convenience constructor) silently re-applies `Stdio::inherit()` for
+    /// stderr at spawn time, discarding whatever the caller configured —
+    /// this is the exact root cause of `savvagent/otto#146`.
+    /// `spawn_tool_transport` is the only sanctioned way to construct a
+    /// `TokioChildProcess` in this file. A dynamic test alone only proves
+    /// the helper itself is correct; it can't catch a *new* call site
+    /// reintroducing the bare, buggy constructor instead of routing through
+    /// the helper. This test fails loudly if that happens, rather than
+    /// relying on code review alone to catch the regression.
+    #[test]
+    fn no_call_site_bypasses_spawn_tool_transport() {
+        let source = include_str!("tools.rs");
+        // Only scan production code, i.e. everything before this file's own
+        // `#[cfg(test)] mod tests {` block — the invariant under guard is
+        // "no *production* call site bypasses the helper," and this test's
+        // own source text legitimately mentions the buggy constructor's name
+        // (in this doc comment, in the dynamic regression test above, and in
+        // this assertion's own message), which would otherwise self-flag as
+        // a false positive.
+        let production_source = source
+            .split("#[cfg(test)]\nmod tests {")
+            .next()
+            .expect("tools.rs must contain its own #[cfg(test)] mod tests block");
+        let offending: Vec<&str> = production_source
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !trimmed.starts_with("//") && line.contains("TokioChildProcess::new(")
+            })
+            .collect();
+        assert!(
+            offending.is_empty(),
+            "found a production call site still using the buggy \
+             TokioChildProcess::new(...) convenience constructor instead of \
+             spawn_tool_transport: {offending:?}"
+        );
+    }
 }
