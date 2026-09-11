@@ -36,8 +36,8 @@ only because the orchestrator hand-added a read-only line the template does not 
 template alone would not have constrained it. Non-Negotiable Rule 4 makes these review passes
 mandatory on every PR; an auditor that can also write is not an independent gate.
 
-The issue also folds in five smaller defects in the same two port files, found in the same review
-pass:
+The issue also folds in five smaller defects found in the same review pass — three in the same two
+port files, one in the skill-parity design spec, and one in the check script:
 
 1. `.claude/skills/otto-development/SKILL.md:640` ("No Critical/Important → mark the task's todo
    `done`") uses a status value (`done`) that does not exist in the port's own vocabulary. The port's
@@ -81,7 +81,8 @@ pass:
 
 ## Approach
 
-All five defects are prose/script corrections in three files, no Rust, no public interface.
+All defects are prose/script corrections across four files — `agent-prompts.md`, `SKILL.md`, the
+design spec, and the check script — no Rust, no public interface.
 
 ### 1. Add the read-only constraint to the two code-review templates (port-only)
 
@@ -153,7 +154,7 @@ edits:
   the actual (correct, already-shipped) behavior, matching how `CLAUDE.md`'s "Claude Code skills"
   section already documents it.
 
-This spec's own `> **Status:**` stays `IMPLEMENTED` — the feature it describes is shipped and this is
+This spec's own `Status:` header stays `IMPLEMENTED` — the feature it describes is shipped and this is
 a documentation-accuracy correction to an already-implemented spec, not a status regression.
 
 ### 6. Fix the `checked` increment ordering (script, not a port)

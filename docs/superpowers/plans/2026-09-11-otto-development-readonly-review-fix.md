@@ -3,10 +3,12 @@
 **Goal:** Restore the read-only guarantee on the Claude Code port's Code Quality Review (Phase 3
 step E) and Final Code Review (Phase 3 step H) dispatch templates in
 `.claude/skills/otto-development/agent-prompts.md`, so the three port assertions that already claim
-this property become true; fix four smaller drifts in the same skill body per `savvagent/otto#137`
-(a `done`→`completed` vocabulary slip, an inaccurate `/clear` claim, a contradiction in the security
-prompt's diff-delivery prose, and two stale bullets in the skill-parity design spec); and fix a
-counter-ordering bug in `.github/scripts/check-claude-skill-ports.sh`.
+this property become true; and fix five smaller drifts found in the same review pass per
+`savvagent/otto#137` — three in the same skill body (a `done`→`completed` vocabulary slip, an
+inaccurate `/clear` claim, and a contradiction in the security prompt's diff-delivery prose), one in
+the skill-parity design spec (two stale bullets in
+`docs/superpowers/specs/2026-09-10-claude-skill-parity-design.md`), and one counter-ordering bug in
+`.github/scripts/check-claude-skill-ports.sh`.
 
 **Architecture:** Six independent, mechanical prose/script edits across four files: two are
 port-only edits to `.claude/skills/otto-development/{agent-prompts.md,SKILL.md}` with no canonical
@@ -223,7 +225,7 @@ checks.
      design" in this file describe the same claim and must be corrected together, or the check in
      Step 14 below will find one fixed and one still stale.
 
-  Do not touch this spec's `> **Status:**` header (stays `IMPLEMENTED`) or any other section — this
+  Do not touch this spec's `Status:` header line (stays `IMPLEMENTED`) or any other section — this
   is a targeted accuracy correction to an already-shipped spec, not a scope change.
 
 - [ ] **Step 14: Verify Step 13.**
