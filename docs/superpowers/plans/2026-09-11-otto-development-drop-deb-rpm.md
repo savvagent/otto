@@ -52,9 +52,11 @@ No Rust, so no `cargo test` step in this task. The verification step is
   ```bash
   grep -niE '\.deb|\.rpm|package-linux' .github/skills/otto-development/SKILL.md
   ```
-  Expect 9 matching lines (the 7 references from the issue, two of which are 2-line spans:
-  `798-800` and `881-882`). Record the exact current line numbers — the issue notes they "may have
-  drifted."
+  Expect 8 matching lines: the release-conventions row (209), item 6's two-line span (798-799 — note
+  line 800, the broken `gh workflow run "Package (deb/rpm)"` command, has no literal `.deb`/`.rpm`
+  substring so it doesn't match this pattern even though it's part of the item being deleted), item
+  7's text (802), the Phase 5 intro (827), the out-of-band item (867), and step 16's two-line span
+  (881-882). Record the exact current line numbers — the issue notes they "may have drifted."
 
 - [ ] **Step 2: Edit the canonical file**, `.github/skills/otto-development/SKILL.md`, six edits:
 
@@ -131,11 +133,12 @@ No Rust, so no `cargo test` step in this task. The verification step is
   ```bash
   grep -niE '\.deb|\.rpm|package-linux' RELEASING.md CLAUDE.md
   ```
-  Expect `RELEASING.md:79-80`'s existing correct statement, plus (harmlessly) two `CLAUDE.md` hits
-  that are substring matches on the word "debugging", not real `.deb`/`.rpm`/`package-linux`
-  references — read each hit rather than asserting the grep is silent. If `CLAUDE.md` has any
-  *genuine* `.deb`/`.rpm`/packaging claim, stop and report it — the plan did not anticipate that and
-  it needs a decision, not a silent edit.
+  Expect only `RELEASING.md:79`'s existing correct statement; this escaped pattern (`\.deb`,
+  `\.rpm`) returns zero `CLAUDE.md` hits, since "debugging" only matches an unescaped `deb`
+  alternation, not `\.deb`. (A looser `grep -niE 'deb|rpm|package-linux' CLAUDE.md` does surface two
+  such "debugging" false positives — harmless, not real references, and not what this step's command
+  returns.) If `CLAUDE.md` has any *genuine* `.deb`/`.rpm`/packaging claim, stop and report it — the
+  plan did not anticipate that and it needs a decision, not a silent edit.
 
 - [ ] **Step 8: Regenerate the port-parity record.**
   ```bash
