@@ -311,8 +311,8 @@ abandoned plans, half-finished refactors. **Note:** `README.md`'s `/clear` docum
 in the *otto product being developed* (resets its own TUI conversation) — it is not a tool
 available to the orchestrating agent running this skill. Claude Code ships a user-facing `/clear`
 command, but a running agent cannot invoke it on itself mid-run to reset its own context — `/clear`
-is not a tool call this session can make. So the only fresh-context mechanism available to a
-dispatched step is the isolated subagent context created by the `Agent` tool (see "How dispatch works in
+is not a tool call this session can make. So the only fresh-context mechanism available to the
+orchestrating session is dispatching isolated subagents via the `Agent` tool (see "How dispatch works in
 this environment" below) — every reviewer, critique, and implementer step in this skill runs as its
 own `Agent` dispatch specifically so it gets a clean context window built from a self-contained
 prompt, not from whatever has accumulated in the orchestrating session. The orchestrating session
