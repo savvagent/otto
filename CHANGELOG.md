@@ -23,6 +23,12 @@ boundary changes and PATCH captures fixes).
   table, previously absent. Documentation-only; no Rust, `.wit`, or runtime behavior changed.
   (#140)
 
+### Changed
+
+- `tool-stderr-inherit-fix` record-as-shipped update: the plan's remaining checkboxes are ticked
+  and the design spec's `Status:` is flipped to `IMPLEMENTED` for the fix already released in
+  0.30.5 (no functional change). (#171)
+
 ## 0.30.5 - 2026-09-11
 
 ### Fixed
