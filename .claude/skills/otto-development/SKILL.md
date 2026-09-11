@@ -211,7 +211,7 @@ has more than a one-sentence AC → STOP. Write the spec. The fast-path is for g
 | Lint / format          | `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` (CI runs with `RUSTFLAGS=-D warnings`) — `RELEASING.md` writes the equivalent rustfmt invocation as `cargo fmt --all -- --check`; both forms check the same thing, use whichever the doc you're following writes. `bacon` (default job `check`), `bacon clippy-all` (clippy across the workspace), `bacon test` for continuous local checking.                                                                              |
 | Linux system deps      | `libdbus-1-dev` (keyring's secret-service backend) and `libfontconfig1-dev` + `pkg-config` (Blitz, pulled in by `otto-canvas` and `otto` via the `internal:html-canvas` built-in plugin) — neither is preinstalled on the GitHub `ubuntu-latest` runner image; install both before `cargo build`/`test`/`clippy` on a fresh Linux box.                                                                                                                                                                     |
 | CI                     | `.github/workflows/ci.yml` — `lint` (fmt + clippy, Linux only), `test` (matrix: ubuntu/macos/windows — Windows excludes `otto-canvas`/`otto` due to a Blitz font-discovery hang on the GH Windows runner), `cross-vendor-gate` (`cargo test -p otto-host --test cross_vendor_history`), `dist-plan` (validates the `cargo-dist` config parses). Runs on every PR and on pushes to `master`/`main`. **The merge gate is the CI run YOUR merge commit triggered, by run ID** — never "the latest run". |
-| Release                | **Manual** per `RELEASING.md` (release-plz automation is currently broken upstream — see that file for the tracking issue). Bump `workspace.package.version` + every internal `workspace.dependencies` version in `Cargo.toml`, update `CHANGELOG.md`, tag `vX.Y.Z`, push the tag. `.github/workflows/release.yml` (cargo-dist) then builds and publishes platform binaries/installers; `.github/workflows/package-linux.yml` attaches `.deb`/`.rpm` automatically afterward.                                    |
+| Release                | **Manual** per `RELEASING.md` (release-plz automation is currently broken upstream — see that file for the tracking issue). Bump `workspace.package.version` + every internal `workspace.dependencies` version in `Cargo.toml`, update `CHANGELOG.md`, tag `vX.Y.Z`, push the tag. `.github/workflows/release.yml` (cargo-dist) then builds and publishes platform binaries/installers. otto does not ship .deb/.rpm packages — Linux installs go through the shell installer or the platform tarball.                                    |
 | Known pre-existing gap | Windows test coverage for `otto-canvas`/`otto` is intentionally excluded from CI (Blitz font-discovery hang at process init) — do not treat this as a regression you caused; see the comment in `ci.yml`.                                                                                                       |
 | Versioning             | The whole workspace shares one pre-1.0 `0.MINOR.PATCH` version (`workspace.package.version` in the root `Cargo.toml`). Per `CHANGELOG.md`'s convention: MINOR bumps for features and breaking changes, PATCH for fixes. Public-interface changes are governed by Non-Negotiable Rule 6.                                  |
 
@@ -833,11 +833,8 @@ becomes `release/0-20-0`, not `release/v0.20.0`).
    ```
    This triggers `.github/workflows/release.yml` (cargo-dist), which builds binaries/installers for
    macOS arm64, Linux x86_64/aarch64, and Windows msvc, and publishes the GitHub Release.
-6. **`.deb`/`.rpm` packages attach automatically** once `release.yml` finishes, via
-   `.github/workflows/package-linux.yml`'s `workflow_run` trigger. If it fails or needs a manual
-   re-run: `gh workflow run "Package (deb/rpm)" -f tag=vX.Y.Z`.
-7. **Verify the release:** `gh release view vX.Y.Z` — confirm all expected platform
-   archives/installers plus `.deb`/`.rpm` are attached.
+6. **Verify the release:** `gh release view vX.Y.Z` — confirm all expected platform
+   archives/installers are attached.
 
 **Capture `T_release_start = now`** at the tag push (ISO-8601 with offset), and hold the release
 version for the Phase 6 summary.
@@ -862,7 +859,7 @@ history.
 ## Phase 5 — Deploy, verify, close
 
 **CI exists; there is no server deploy pipeline.** otto ships as cross-platform binaries
-built by `cargo-dist` and published as GitHub Release assets (plus `.deb`/`.rpm` packages) — there is
+built by `cargo-dist` and published as GitHub Release assets — there is
 no hosted service to deploy. `.github/workflows/ci.yml` gates every PR and every push to
 `master`/`main`; the release build (step 12) IS the deploy. Phase 5 is: confirm YOUR CI run is green,
 run the out-of-band checklist for what the change touched, confirm the release artifacts published
@@ -901,8 +898,8 @@ CI does NOT apply these. Verify whatever the change touched, explicitly:
   Linux/macOS (the Windows CI exclusion for this crate is expected, not a regression you introduced).
 - **CI** — if `.github/workflows/` changed: confirm the workflow parses and the jobs actually ran on
   this PR (`gh run list --repo savvagent/otto --branch <branch>`).
-- **Packaging/dist config** — if `[workspace.metadata.dist]` or `.github/workflows/release*.yml` /
-  `package-linux.yml` changed: `dist plan` locally, and treat the next real release tag as the actual
+- **Packaging/dist config** — if `[workspace.metadata.dist]` or `.github/workflows/release.yml`
+  changed: `dist plan` locally, and treat the next real release tag as the actual
   verification (the release step below).
 
 A vacuously-satisfied item ("no out-of-band surface touched") is satisfied, not skipped — state it
@@ -916,9 +913,13 @@ Confirm the release cut in step 12 actually published cleanly:
 gh release view vX.Y.Z --repo savvagent/otto
 ```
 
-Confirm the expected platform archives/installers are attached, plus `.deb`/`.rpm` once
-`package-linux.yml` finishes. If any platform artifact is missing or the workflow failed, treat it as
-a Phase 5 failure — do not close the loop on a partially-published release.
+Confirm the expected 14-asset cargo-dist release set is attached — the same set v0.29.0,
+v0.28.1 and v0.28.0 each carry: `dist-manifest.json`, `sha256.sum`, the source tarball plus its
+`.sha256`, both installer scripts (`otto-installer.sh`, `otto-installer.ps1`), and the four
+platform archives plus their `.sha256` files (`otto-aarch64-apple-darwin.tar.gz`,
+`otto-aarch64-unknown-linux-gnu.tar.gz`, `otto-x86_64-unknown-linux-gnu.tar.gz`,
+`otto-x86_64-pc-windows-msvc.zip`). If any of these is missing or the release build failed,
+treat it as a Phase 5 failure — do not close the loop on a partially-published release.
 
 ### Step 17: Close
 
