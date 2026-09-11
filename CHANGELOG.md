@@ -8,6 +8,18 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.30.4 - 2026-09-11
+
+### Changed
+
+- `otto-development`'s Non-Negotiable Rule 8 no longer says a release is "not optional and not
+  batchable across PRs" — it now permits batching already-merged, unreleased work into one release
+  at cut time (matching standing, owner-approved practice), states that a batched release's line
+  is the highest SemVer bump required across the batch, and requires the release PR body to
+  enumerate every issue/PR the release covers. The plan format's `Release line:` field is reframed
+  as a floor rather than a predicted version. Canonical and Claude Code port skill docs updated
+  together, per the repo's skill-porting convention. (#138)
+
 ## 0.30.3 - 2026-09-11
 
 ### Fixed
