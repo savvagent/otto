@@ -1,7 +1,7 @@
 # Record a native-vs-WASM plugin ABI parity policy and enumerate the current gap — design
 
 Date: 2026-09-11
-Status: pending review
+Status: approved
 Source: savvagent/otto#140
 Related: v0.28.0 (#117, `StyledSpan`/`StyledLine` constructors), v0.29.0 (#118,
 `Screen::ghost_completion`) — the two "for now" changelog entries this issue is about. Surfaced by
@@ -57,11 +57,11 @@ Surveyed every public trait/type in `crates/otto-plugin/src/*.rs` against the fo
 `plugin-provider.wit`) and `crates/otto-plugin-wasm/src/adapter/*.rs`'s actual trait impls. Three
 concrete gaps, in order of size:
 
-| Native surface | otto-plugin-wit counterpart | Gap |
-|---|---|---|
-| `Screen::ghost_completion` (`screen.rs:69`) | none | `screen-instance` resource (`plugin-interactive.wit`) has `on-key`/`on-event`/`render`/`tips` only. `impl Screen for WasmScreen` doesn't override it, so every WASM screen gets the native default (`None`). |
-| `StyledSpan::plain/colored/muted`, `StyledLine::plain/colored/muted` (`styled.rs:134-201`) | `styled-span`/`styled-line` records exist (`shared.wit`), no constructors | WIT records cannot carry associated functions, so this was never closeable by a WIT edit. Every WASM plugin builds the struct literal by hand (`examples/plugin-hello-interactive/src/lib.rs`'s local `styled_line` helper is the same 10 lines every example/fixture re-implements). |
-| `ContentRenderer` (`content.rs` — `id`/`render`/`dispatch`/`freeze`/`thaw`/`focusable_elements`/`focused_index`/`set_focus`/`snapshot_state`/`restore_state`) and `Plugin::create_renderer` (`plugin.rs:115-123`) | **none at all** | There is no `plugin-canvas.wit` (or equivalent) alongside `plugin-static.wit`/`plugin-interactive.wit`/`plugin-provider.wit`. A WASM plugin cannot register an inline content-block renderer today — not a partial gap like the other two, a whole missing capability family. |
+| Native surface | otto-plugin-wit counterpart | Gap | Tracked |
+|---|---|---|---|
+| `Screen::ghost_completion` (`screen.rs:69`) | none | `screen-instance` resource (`plugin-interactive.wit`) has `on-key`/`on-event`/`render`/`tips` only. `impl Screen for WasmScreen` doesn't override it, so every WASM screen gets the native default (`None`). | #165 |
+| `StyledSpan::plain/colored/muted`, `StyledLine::plain/colored/muted` (`styled.rs:134-201`) | `styled-span`/`styled-line` records exist (`shared.wit`), no constructors | WIT records cannot carry associated functions, so this was never closeable by a WIT edit. Every WASM plugin builds the struct literal by hand (`examples/plugin-hello-interactive/src/lib.rs`'s local `styled_line` helper is the same 10 lines every example/fixture re-implements). | #166 |
+| `ContentRenderer` (`content.rs` — `id`/`render`/`dispatch`/`freeze`/`thaw`/`focusable_elements`/`focused_index`/`set_focus`/`snapshot_state`/`restore_state`) and `Plugin::create_renderer` (`plugin.rs:115-123`) | **none at all** | There is no `plugin-canvas.wit` (or equivalent) alongside `plugin-static.wit`/`plugin-interactive.wit`/`plugin-provider.wit`. A WASM plugin cannot register an inline content-block renderer today — not a partial gap like the other two, a whole missing capability family. | #167 |
 
 Checked and found **not** a gap (host-side validation helpers a WASM guest never needs to call
 across the ABI, because the guest never constructs these native types itself): `PluginId::new`
