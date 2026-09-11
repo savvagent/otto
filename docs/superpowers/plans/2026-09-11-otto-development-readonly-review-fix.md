@@ -64,13 +64,13 @@ No Rust, so no `cargo test` step in this task. Verification is
 `bash .github/scripts/check-claude-skill-ports.sh`, run before and after, plus targeted `grep`
 checks.
 
-- [ ] **Step 1: Confirm the current state.** From the worktree root:
+- [x] **Step 1: Confirm the current state.** From the worktree root:
   ```bash
   bash .github/scripts/check-claude-skill-ports.sh
   ```
   Expect exit 0 (the tree is currently in sync — this run is a baseline, not a fix target).
 
-- [ ] **Step 2: Add the read-only constraint to the Code Quality Review template**, in
+- [x] **Step 2: Add the read-only constraint to the Code Quality Review template**, in
   `.claude/skills/otto-development/agent-prompts.md`, at the `## Code Quality Review — Phase 3 Step
   E` section. Insert a new paragraph immediately after the existing prose paragraph ("Claude Code's
   read-only diff reviewer is the built-in `/code-review` skill... the body is what constrains a
@@ -102,7 +102,7 @@ checks.
   what actually reaches the dispatched agent, matching how the Independent Security Review template
   further down in the same file carries its constraint inside its own `prompt: |` block.)
 
-- [ ] **Step 3: Add the identical read-only constraint to the Final Code Review template**, at the
+- [x] **Step 3: Add the identical read-only constraint to the Final Code Review template**, at the
   `## Final Code Review — Phase 3 Step H` section, same shape: a prose-paragraph addition after "Same
   substitution as Step E: the built-in `/code-review` skill, or `general-purpose` with this body
   verbatim." and before the code fence, plus the constraint as the opening lines inside the
@@ -110,7 +110,7 @@ checks.
   text as Step 2 (word-for-word — both templates get the identical constraint, since both are the
   same kind of read-only diff review).
 
-- [ ] **Step 4: Fix the security prompt's diff-delivery contradiction.** In the same file's
+- [x] **Step 4: Fix the security prompt's diff-delivery contradiction.** In the same file's
   `### Independent security review` section, find the sentence "Pass the diff by writing `gh pr diff
   <N>` to a file and naming that path in the prompt, or inline it — but never pass the spec, the
   plan, the brief, the PR body or an implementer report." Replace it with: "Pass the diff by having
@@ -118,7 +118,7 @@ checks.
   never pass the spec, the plan, the brief, the PR body or an implementer report." Do not touch the
   `prompt: |` body itself — it already says the true thing ("Read ONLY the diff: `gh pr diff <N>`.").
 
-- [ ] **Step 5: Verify Steps 2-4.**
+- [x] **Step 5: Verify Steps 2-4.**
   ```bash
   grep -n "READ-ONLY, HARD CONSTRAINT" .claude/skills/otto-development/agent-prompts.md
   ```
@@ -130,12 +130,12 @@ checks.
   ```
   Must return nothing (the contradiction is gone).
 
-- [ ] **Step 6: Fix the `done`→`completed` vocabulary slip.** In
+- [x] **Step 6: Fix the `done`→`completed` vocabulary slip.** In
   `.claude/skills/otto-development/SKILL.md`, Phase 3 step F ("Quality fix loop"), find "No
   Critical/Important → mark the task's todo `done`; record any Minor issues in per-task ledger."
   Change `done` to `completed`.
 
-- [ ] **Step 7: Correct the `/clear` claim.** In `.claude/skills/otto-development/SKILL.md`'s Phase 0
+- [x] **Step 7: Correct the `/clear` claim.** In `.claude/skills/otto-development/SKILL.md`'s Phase 0
   pre-flight section, find: "This orchestrating CLI has no `/clear`-and-reinvoke primitive of its own
   within a session, so the only fresh-context mechanism available to it is dispatching isolated
   subagents via the `Agent` tool". Replace with wording that states the narrower, correct claim — a
@@ -150,7 +150,7 @@ checks.
   documenting the otto *product's* own slash command) unchanged — only the "This orchestrating CLI
   has no..." sentence is being corrected.
 
-- [ ] **Step 8: Verify Steps 6-7.**
+- [x] **Step 8: Verify Steps 6-7.**
   ```bash
   grep -n "mark the task's todo \`done\`" .claude/skills/otto-development/SKILL.md
   ```
@@ -170,13 +170,13 @@ checks.
   Expect a match (adjust the pattern if Step 7's exact replacement wording differs, but some
   positive assertion of the new text must be checked, not just the old text's absence).
 
-- [ ] **Step 9: Confirm no canonical file was touched.**
+- [x] **Step 9: Confirm no canonical file was touched.**
   ```bash
   git status --porcelain .github/skills/otto-development/SKILL.md .github/skills/otto-development/agent-prompts.md
   ```
   Must return nothing — Steps 2-8 only touch the port files.
 
-- [ ] **Step 10: Regenerate the port-parity records.**
+- [x] **Step 10: Regenerate the port-parity records.**
   ```bash
   bash .github/scripts/check-claude-skill-ports.sh --update
   ```
@@ -185,13 +185,13 @@ checks.
   `.github/skills/otto-development/claude-port/SKILL.md.diff` (both port files changed; no other
   skill's record should be touched).
 
-- [ ] **Step 11: Verify the check passes.**
+- [x] **Step 11: Verify the check passes.**
   ```bash
   bash .github/scripts/check-claude-skill-ports.sh
   ```
   Must exit 0.
 
-- [ ] **Step 12: Eyeball the regenerated records.**
+- [x] **Step 12: Eyeball the regenerated records.**
   ```bash
   git diff --stat .github/skills/otto-development/claude-port/
   cat .github/skills/otto-development/claude-port/agent-prompts.md.diff | grep -c "READ-ONLY, HARD CONSTRAINT"
@@ -200,7 +200,7 @@ checks.
   `+` lines) and the removed "write to a file" sentence (as a `-`/`+` pair), and that
   `SKILL.md.diff` shows the `done`→`completed` and `/clear` hunks. No unrelated hunks should appear.
 
-- [ ] **Step 13: Align the design spec's failure-mode enumerations.** In
+- [x] **Step 13: Align the design spec's failure-mode enumerations.** In
   `docs/superpowers/specs/2026-09-10-claude-skill-parity-design.md`:
 
   1. In `## Goal & Success Criteria`, find the bullet "`.github/scripts/check-claude-skill-ports.sh`
@@ -228,7 +228,7 @@ checks.
   Do not touch this spec's `Status:` header line (stays `IMPLEMENTED`) or any other section — this
   is a targeted accuracy correction to an already-shipped spec, not a scope change.
 
-- [ ] **Step 14: Verify Step 13.**
+- [x] **Step 14: Verify Step 13.**
   ```bash
   grep -n "Ported for Claude Code.*note\|NATIVE_SKILLS" docs/superpowers/specs/2026-09-10-claude-skill-parity-design.md
   ```
@@ -239,7 +239,7 @@ checks.
   ```
   Must return nothing (the stale bullet has been reworded).
 
-- [ ] **Step 15: Fix the `checked` increment-ordering bug.** In
+- [x] **Step 15: Fix the `checked` increment-ordering bug.** In
   `.github/scripts/check-claude-skill-ports.sh`, find the loop body around the "1-3. Every canonical
   Markdown file" comment. Currently:
   ```bash
@@ -280,7 +280,7 @@ checks.
   Do not change any other line in the loop, and do not change the `fail`/`continue` control flow
   itself — only the position of the increment.
 
-- [ ] **Step 16: Verify Step 15 behaviorally.**
+- [x] **Step 16: Verify Step 15 behaviorally.**
   ```bash
   bash .github/scripts/check-claude-skill-ports.sh
   ```
@@ -288,15 +288,15 @@ checks.
   nothing about which files pass, only where in the loop `checked` is incremented — on a fully
   passing tree every file reaches the new increment point exactly as it reached the old one).
 
-- [ ] **Step 17: Public-interface note.** No SPP wire type, tool schema, plugin ABI, slash command,
+- [x] **Step 17: Public-interface note.** No SPP wire type, tool schema, plugin ABI, slash command,
   env var, or on-disk format touched — Non-Negotiable Rule 6 is not engaged. No `CHANGELOG.md`
   interface note owed by this task.
 
-- [ ] **Step 18: Host-swap / streaming invariants — vacuously satisfied.** No `crates/otto/src/app.rs`
+- [x] **Step 18: Host-swap / streaming invariants — vacuously satisfied.** No `crates/otto/src/app.rs`
   or `tui.rs` touched, so the host-swap `RwLock` rule is not engaged. No streaming provider path
   touched, so the `ProgressDispatcher` forwarder-abort pattern is not engaged.
 
-- [ ] **Step 19: Format and commit.** No Rust changed, so `cargo fmt --all` is a no-op here but run
+- [x] **Step 19: Format and commit.** No Rust changed, so `cargo fmt --all` is a no-op here but run
   it anyway for consistency with house style:
   ```bash
   cargo fmt --all
@@ -313,7 +313,7 @@ checks.
 
 **Files:** none in this PR.
 
-- [ ] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
+- [x] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
   `CHANGELOG.md` section — that happens in the dedicated release PR after this merges, per
   Non-Negotiable Rule 8 / Phase 4 step 12. Re-read `workspace.package.version` at cut time (it may
   have moved past `0.30.0` if another PR merges first) and cut the next PATCH from whatever it then
