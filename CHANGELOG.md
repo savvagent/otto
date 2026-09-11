@@ -8,6 +8,8 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.29.0 - 2026-09-10
+
 ### Added
 
 - The `/` command palette prompt now shows the remainder of the highlighted command as dim,
@@ -22,6 +24,18 @@ boundary changes and PATCH captures fixes).
   screen authors who want the same overlay on their own screens — not yet exposed through the WASM
   plugin ABI's WIT interface, so third-party WASM plugins inherit the default (no ghost text) for
   now. (#118)
+
+### Fixed
+
+- DeepSeek's `/connect` no longer swallows a rejected (or later, corrected) API key when no host
+  is running yet. `apply_pending_pool_add` — the drain that runs after the provider picker's
+  silent-connect path — used to bail out with only a `tracing::warn!` whenever `current_host` was
+  `None`, before it ever re-validated the stored credential, so the rejection vanished with no
+  note, no host, and no way to retry. This is reachable for any keyed provider, but hit DeepSeek in
+  practice since it's commonly the first provider connected in a session with no host already up.
+  `apply_pending_pool_add` now re-validates the credential regardless of whether a host exists,
+  always surfaces the outcome as a note, and builds a fresh host on demand on success — sharing
+  that bootstrap path with `perform_connect`'s existing first-connect branch. (#81)
 
 ## 0.28.1 - 2026-09-10
 
