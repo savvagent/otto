@@ -8,6 +8,21 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.30.6 - 2026-09-11
+
+### Added
+
+- `CLAUDE.md` now records a position on the native-vs-WASM plugin ABI: parity is the goal for the
+  plugin ABI's guest-callable behavioral surface and for constructor ergonomics the guest side can
+  express without a WIT change, and enumerates the current gap — `Screen::ghost_completion` (#165),
+  the `StyledSpan`/`StyledLine` constructor ergonomics (#166), the entirely-unbridged
+  `ContentRenderer`/canvas surface (#167), and `Plugin::summarize_tool_call`/`summarize_tool_result`
+  plus `Contributions::tool_summaries` (#170) — each tracked by its own issue instead of a bare "for
+  now." A future changelog entry citing a WASM gap should reference an issue number the same way.
+  `otto-plugin`/`otto-plugin-wit`/`otto-plugin-wasm` are also added to `CLAUDE.md`'s Workspace map
+  table, previously absent. Documentation-only; no Rust, `.wit`, or runtime behavior changed.
+  (#140)
+
 ## 0.30.5 - 2026-09-11
 
 ### Fixed
