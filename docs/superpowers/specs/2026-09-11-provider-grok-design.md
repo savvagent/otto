@@ -1,6 +1,6 @@
 # provider-grok Design
 
-> **Status:** approved
+> **Status:** IMPLEMENTED
 
 **Ref:** savvagent/otto#103 — "Add Grok as a provider" (issue body empty; scope established by this
 spec per the otto-factory job brief for job-29)
