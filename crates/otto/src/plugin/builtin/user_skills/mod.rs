@@ -32,7 +32,7 @@ pub mod skill_tool;
 pub mod trust;
 
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock as StdRwLock};
+use std::sync::RwLock as StdRwLock;
 
 use async_trait::async_trait;
 use otto_plugin::{
@@ -69,8 +69,10 @@ pub struct UserSkillsPlugin {
     /// Rendered level-1 catalog, kept in sync with `index` by every
     /// caller that mutates it (`HostStarting`, `/reload-skills`).
     /// `std::sync::RwLock`, not `tokio::sync::RwLock`: `Plugin::manifest`
-    /// is synchronous and reads this without an `.await`.
-    catalog_cache: Arc<StdRwLock<Option<String>>>,
+    /// is synchronous and reads this without an `.await`. No `Arc` here —
+    /// `UserSkillsPlugin` is owned exclusively behind a `Box<dyn Plugin>`
+    /// and never shared, so a bare lock is sufficient.
+    catalog_cache: StdRwLock<Option<String>>,
     /// Count of malformed `SKILL.md` files from the most recent
     /// discovery pass, surfaced by `/skills`' warning note. Cached
     /// rather than recomputed because `/skills` (no arg) reads `index`
@@ -98,7 +100,7 @@ impl UserSkillsPlugin {
             project_root,
             user_home,
             index: SkillIndex::empty(),
-            catalog_cache: Arc::new(StdRwLock::new(None)),
+            catalog_cache: StdRwLock::new(None),
             last_warning_count: 0,
         }
     }
