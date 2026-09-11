@@ -158,8 +158,12 @@ resolved, not silently dropped.
 
 **Out:**
 
-- Any other CI workflow file (`release.yml` has no `pull_request`/rapid-push concurrency concern —
-  release tags are pushed once).
+- Any other CI workflow file. `release.yml` does trigger on `pull_request` (a lightweight
+  `plan`/`dist plan` job runs on every PR push, gated so the heavy build/upload jobs stay tag-only),
+  but it has no `concurrency:` block at all — so it cannot exhibit this PR's specific "wrong run
+  cancelled" bug (the failure mode there, if any, is wasted CI minutes from redundant `plan` runs
+  piling up on rapid pushes, not a spuriously-failed merge-blocking check). Adding a concurrency
+  block to `release.yml` would be a reasonable, separate follow-up, not part of this bug fix.
 - Any change to which events trigger CI (`on:` block untouched).
 - Any change to job contents beyond adding `timeout-minutes` (no new jobs, no matrix changes, no
   dependency changes).
