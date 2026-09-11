@@ -8,6 +8,8 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.29.0 - 2026-09-10
+
 ### Added
 
 - The `/` command palette prompt now shows the remainder of the highlighted command as dim,
@@ -22,6 +24,31 @@ boundary changes and PATCH captures fixes).
   screen authors who want the same overlay on their own screens — not yet exposed through the WASM
   plugin ABI's WIT interface, so third-party WASM plugins inherit the default (no ghost text) for
   now. (#118)
+
+- This repo's own `otto-development` and `creating-github-issues` workflow skills are now
+  discoverable by Claude Code, as adapted ports under `.claude/skills/` alongside the existing
+  `rust-engineer` and `tui-engineer`. Claude Code reads project skills from `.claude/skills/` only,
+  so both were previously invisible to it while living solely in `.github/skills/` in the Copilot
+  CLI's format. They are ports rather than symlinks or verbatim copies because the canonical bodies
+  name Copilot-specific dispatch mechanics at every step; the adaptation touches only those
+  host-mechanism references, leaving every Non-Negotiable Rule, phase gate, fix-loop cap and repo
+  convention byte-identical — about 8% of the canonical text, recorded exactly as a committed
+  `diff -u` per ported file. A new `.github/scripts/check-claude-skill-ports.sh`, run by CI's `lint`
+  job, recomputes each diff and fails the build if the two copies drift, if a port or record is
+  missing or orphaned, or if a port's `name`/`description` frontmatter diverges from its canonical.
+  Contributor-facing only — no runtime behaviour change. (#128)
+
+### Fixed
+
+- DeepSeek's `/connect` no longer swallows a rejected (or later, corrected) API key when no host
+  is running yet. `apply_pending_pool_add` — the drain that runs after the provider picker's
+  silent-connect path — used to bail out with only a `tracing::warn!` whenever `current_host` was
+  `None`, before it ever re-validated the stored credential, so the rejection vanished with no
+  note, no host, and no way to retry. This is reachable for any keyed provider, but hit DeepSeek in
+  practice since it's commonly the first provider connected in a session with no host already up.
+  `apply_pending_pool_add` now re-validates the credential regardless of whether a host exists,
+  always surfaces the outcome as a note, and builds a fresh host on demand on success — sharing
+  that bootstrap path with `perform_connect`'s existing first-connect branch. (#81)
 
 ## 0.28.1 - 2026-09-10
 
