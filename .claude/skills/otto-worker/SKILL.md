@@ -32,9 +32,9 @@ before claiming anything new.
 ## Context discipline: the real work happens in one subagent
 
 The orchestrating session (you, reading this skill) must stay small: it reads
-job *metadata* (id, title, ticket ref, branch name) and one-line results,
-never full job descriptions rendered as prose, full diffs, or PR review
-transcripts. The entire spec → plan → implement → PR → review → merge →
+job *metadata* (id, title, ticket ref) and the subagent's one-line final
+result, never full job descriptions rendered as prose, full diffs, or PR
+review transcripts. The entire spec → plan → implement → PR → review → merge →
 release lifecycle happens inside a single `Agent` tool call to a subagent that
 was handed everything it needs up front — the orchestrator does not watch it
 work, does not re-read its intermediate output, and does not do any of that
@@ -67,21 +67,20 @@ Keep the resolved repo slug — every following otto-factory call needs it.
 If claiming fails (another agent took it first), go back to `ready` and try
 the next candidate rather than giving up immediately.
 
-## Step 3 — Lease the branch once the subagent names it
+## Step 3 — The subagent owns its own branch lease
 
-The subagent's first action (Step 4 below) is to establish which branch it
-will work on (a fresh feature branch off `origin/main`, per
-`otto-development`'s worktree convention, or an existing branch if the job is
-"address review comments on an already-open PR"). Once the subagent reports
-that branch name back:
-
-1. `acquire_lease` on `branch:<name>` for this repo.
-2. Renew it periodically while the subagent is still running (`renew_lease`)
-   — a job worth running usually outlives a single lease TTL.
-3. `release_lease` once the job is resolved in Step 5, success or failure.
-
-Leases are advisory (see the otto-factory server instructions) — this step
-makes a collision with another agent visible, it doesn't prevent one.
+The orchestrator dispatches the subagent in Step 4 with a single `Agent`
+call, which blocks until the subagent's entire run is finished and returns
+only once, at the end — there is no channel for the orchestrator to learn the
+branch name mid-run or to interleave `renew_lease` calls while that one call
+is still outstanding. So leasing is not something the orchestrator does at
+all: the subagent itself acquires `branch:<name>` (`acquire_lease`, for this
+repo) as its own first action once it knows the branch name, renews it
+periodically over the course of its own long-running work, and releases it
+right before it reports back to the orchestrator — a self-contained step,
+same as everything else in its prompt (Step 4 spells this out). Leases are
+advisory (see the otto-factory server instructions) — this makes a collision
+with another agent visible, it doesn't prevent one.
 
 ## Step 4 — Dispatch one subagent to do the actual work
 
@@ -109,17 +108,22 @@ Requirements:
   PR, the mandatory review loop, fixing findings, merge, and — per this
   repo's normal cadence — cutting a release, unless otto-development's own
   rules say a release isn't warranted for this change.
+- As soon as your branch name is decided (otto-development's Phase 0), call
+  the otto-factory MCP tool `acquire_lease` on `branch:<name>` for the
+  savvagent/otto repo (resolve the repo slug yourself via `whoami`/
+  `resolve_repo` first, same as the orchestrator did). Renew it
+  (`renew_lease`) periodically over the course of your work, and
+  `release_lease` as your very last action before you report back — you are
+  the only one who can interleave lease calls with your own long-running
+  work, so this whole lifecycle is yours, not the orchestrator's.
 - Use `git-expert` for multi-step git/GitHub mechanics (branch, commit, push,
   PR, merge) per this repo's CLAUDE.md.
 - Do not add any attribution to commits or the PR description — no
   Co-Authored-By trailer, no "Generated with" footer, no bot marker. Omit it
   silently.
-- As your very first action, report back (in your normal turn output) the
-  exact branch name you're about to work on, before you do anything else,
-  so the orchestrator can lease it.
-- When you finish, report: outcome (shipped and merged / blocked / failed
-  and why), the PR URL, whether a release was cut and its version, and the
-  branch name (again, for lease release).
+- When you finish (lease already released), report: outcome (shipped and
+  merged / blocked / failed and why), the PR URL, whether a release was cut
+  and its version, and the branch name.
 ```
 
 Wait for this subagent to finish. Do not poll it, do not re-derive its
@@ -140,18 +144,27 @@ Based on the subagent's final report:
   done, or a duplicate) → `request_cancel` with the reason instead of forcing
   a `fail_job`.
 
-Then `release_lease` on the branch from Step 3, regardless of outcome.
+The subagent already released its own lease (Step 3/4) before reporting back,
+so there is nothing left to release here.
 
 ## Step 6 — Report
 
-Output one concise summary:
+If a job was claimed and worked, output:
 
 ```
 Otto Worker — savvagent/otto
 
 Job <job-id> — <title>
-Outcome: shipped (PR #<n>, released as v<x.y.z>) | failed (<reason>) | cancelled (<reason>) | nothing ready to claim
+Outcome: shipped (PR #<n>, released as v<x.y.z>) | failed (<reason>) | cancelled (<reason>)
 Branch: <name>
+```
+
+If Step 2 found nothing ready to claim, skip the job/branch lines entirely:
+
+```
+Otto Worker — savvagent/otto
+
+Nothing ready to claim.
 ```
 
 Then STOP. Do not claim another job in the same run — that's a separate
@@ -165,7 +178,7 @@ invocation of this skill.
 | "I'll just read the job description myself to see if it's worth doing" | The description goes straight into the subagent's prompt. Reading it to decide isn't the orchestrator's job — claiming already committed you to it. |
 | "The subagent's taking a while, let me check `gh pr view` on its branch" | That's re-deriving progress in the orchestrator. Wait for its final report. |
 | "It failed, but I can see the fix, let me just patch it here" | The orchestrator does not touch code. Either dispatch a follow-up subagent or `fail_job` it for a human. |
-| "I'll skip releasing the lease since the job's done anyway" | Release it in Step 5 regardless of outcome — a stuck lease blocks the next agent from working that branch. |
+| "I'll acquire the lease myself once the subagent tells me the branch name" | The `Agent` call blocks until the subagent's entire run finishes — there's no point where the orchestrator can act on a mid-run report. The subagent leases its own branch. |
 | "No `ticketRef` on this job, I'll invent one so otto-development has an issue to close" | Don't fabricate a tracker reference. Pass the job's title/description as a plain task brief — otto-development accepts that too. |
 
 ## Red Flags — STOP
@@ -175,7 +188,8 @@ invocation of this skill.
   instead of inside the dispatched subagent
 - About to leave a claimed job without calling `complete_job`, `fail_job`, or
   `request_cancel`
-- About to skip `release_lease` after the job is resolved
+- About to try acquiring or renewing a lease from the orchestrator instead of
+  telling the subagent to own its own lease lifecycle
 - About to dispatch more than one subagent for a single job
 
 Each = stop, do the step correctly, continue.

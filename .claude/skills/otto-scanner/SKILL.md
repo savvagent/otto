@@ -158,7 +158,7 @@ Job list possibly truncated at Step 1 — dedup may be incomplete for older jobs
 ```
 
 Then STOP. Do not start implementing any queued issue — claiming and working
-a job is `otto-development`'s job, done by whichever agent picks it up next.
+a job is `otto-worker`'s job, done by whichever agent picks it up next.
 
 ## Common Rationalizations (all are violations)
 
@@ -189,6 +189,9 @@ Each = stop, do the step correctly, continue.
 - `creating-github-issues` — the compliance authority this skill checks
   existing issues against; also owns the type-label mapping and body-shape
   rules referenced in Step 2.
-- `otto-development` — claims and implements a queued job end-to-end (spec →
-  plan → implement → PR → review → merge → release). This skill only gets an
-  issue onto the queue; it never claims or works one.
+- `otto-development` — the spec → plan → implement → PR → review → merge →
+  release mechanics that actually implement a queued job, run by a subagent
+  `otto-worker` dispatches. This skill only gets an issue onto the queue; it
+  never claims or works one.
+- `otto-worker` — claims a job this skill queued and dispatches a subagent to
+  work it via `otto-development`. This skill never claims a job itself.
