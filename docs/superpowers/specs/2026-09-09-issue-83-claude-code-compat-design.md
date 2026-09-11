@@ -1,7 +1,7 @@
 # Claude Code compatibility (sub-project E) — commands, skills, plugins, hooks — design
 
 Date: 2026-09-09
-Status: E1 reviewed and approved for implementation (corrections from spec critique folded in: tool registration mechanism, five-tier discovery, level-1 catalog sync/async bridge, trust-prompt reachability, dropped picker Screen in favor of an enriched listing); E2-E4 drafted, awaiting review before their own implementation passes
+Status: E1 FULLY IMPLEMENTED (five-tier discovery, `SKILL.md` frontmatter parsing, the built-in `skill` tool, `/skills` listing + direct injection, `/reload-skills`, and the live level-1 catalog segment all shipped; corrections from spec critique folded in along the way: tool registration mechanism, five-tier discovery, level-1 catalog sync/async bridge, trust-prompt reachability, dropped picker Screen in favor of an enriched listing); E2-E4 drafted, awaiting review before their own implementation passes
 Issue: `savvagent/otto#83`
 Supersedes: nothing
 Related:

@@ -10,22 +10,21 @@ boundary changes and PATCH captures fixes).
 
 ### Added
 
-- The model now has a built-in `skill` tool for loading the full instructions of a discovered
-  skill by name. Discovery (from `.otto/skills/`, `.claude/skills/`, and `.github/skills/` in
-  project and user scope) already ran for `/skills`; this wires the same index into an
-  in-process tool whose `name` argument is a live enum of currently-known skills, so a stale or
-  mistyped name fails schema validation before it reaches the handler. A project-scope skill
-  that bundles scripts still requires the same per-project trust consent as project slash
-  commands before its body is returned. (#83)
-- `/skills <name>` now injects a discovered skill's full instructions directly into the
-  conversation, without waiting for the model to call the `skill` tool. A gated project-scope
-  skill (bundled scripts, project not yet trusted) opens the same trust-confirmation modal
-  project slash commands use, and resumes `/skills <name>` automatically once the user decides.
-  `/skills` with no argument now lists from the already-discovered index instead of rescanning
-  disk on every invocation. A new `/reload-skills` command rescans `.otto/skills/`,
-  `.claude/skills/`, and `.github/skills/`, re-registers the `skill` tool against the refreshed
-  set, and pushes the updated level-1 catalog into a running session's system prompt — previously
-  the catalog segment was only ever set once, at startup. (#83)
+- otto now discovers Claude-Code-compatible skills — `SKILL.md` files under `.otto/skills/`,
+  `.claude/skills/`, and `.github/skills/` in both project and user scope — and exposes them
+  through progressive disclosure: a name+description catalog is folded into the system prompt
+  (omitted entirely when no skills are found), and the model can load a skill's full
+  instructions on demand by calling the new built-in `skill` tool. A project-scope skill that
+  bundles scripts still requires the same per-project trust consent as project slash commands
+  before its body is returned. (#83)
+- `/skills` lists every discovered skill (name, source, scope, description) from the
+  already-discovered index rather than rescanning disk on every invocation, and `/skills <name>`
+  injects that skill's full instructions directly into the conversation without waiting for the
+  model to call the `skill` tool — opening the same trust-confirmation modal project slash
+  commands use for a gated, not-yet-trusted skill, and resuming `/skills <name>` automatically
+  once the user decides. A new `/reload-skills` command rescans all five tiers, re-registers the
+  `skill` tool against the refreshed set, and pushes the updated catalog into a running session's
+  system prompt — previously that catalog was only ever set once, at startup. (#83)
 
 ## 0.30.0 - 2026-09-11
 
