@@ -94,17 +94,25 @@ either:
   unrenewed claim expiring mid-run would let a second invocation of this
   skill claim and dispatch a duplicate subagent for the same job. So the
   subagent calls `renew_claim` on `<job-id>` periodically throughout its own
-  work, not the orchestrator.
+  work, not the orchestrator — comfortably inside the 900s TTL, e.g. after
+  each `otto-development` phase transition (Phase 0 done, spec committed,
+  plan committed, each task implemented, PR opened, each review round) —
+  those are natural checkpoints that recur far more often than every 15
+  minutes on any job worth running.
 - **The branch lease.** Once the subagent knows its branch name
   (`otto-development`'s Phase 0), it acquires `branch:<name>`
-  (`acquire_lease`, for this repo), renews it (`renew_lease`) periodically
-  alongside the claim renewal, and releases it (`release_lease`) right before
-  it reports back to the orchestrator. Leases are advisory (see the
-  otto-factory server instructions) — this makes a collision with another
-  agent visible, it doesn't prevent one.
+  (`acquire_lease`, for this repo), renews it (`renew_lease`) on the same
+  phase-transition cadence as the claim renewal, and releases it
+  (`release_lease`) right before it reports back to the orchestrator. Leases
+  are advisory (see the otto-factory server instructions) — this makes a
+  collision with another agent visible, it doesn't prevent one.
 
 Both are self-contained steps in the subagent's own prompt (Step 4 spells
-them out) — the orchestrator does neither.
+them out) — the orchestrator does neither. Both also assume the subagent can
+act as the same otto-factory identity that claimed the job: it shares this
+session's `otto-factory` MCP server connection, the same assumption
+`otto-scanner`'s own per-issue subagents already make when they call
+`add_job`/`link_ticket` directly.
 
 ## Step 4 — Dispatch one subagent to do the actual work
 
@@ -136,12 +144,15 @@ Requirements:
   every merge to main gets one, no size or scope carve-out, so do not skip it.
 - You are responsible for two otto-factory keep-alive calls throughout your
   run, since only you can interleave them with your own long-running work:
-  call `renew_claim` on job `<job-id>` periodically so the claim doesn't
-  expire out from under you (resolve the repo slug yourself via `whoami`/
-  `resolve_repo` first); and, as soon as your branch name is decided
-  (otto-development's Phase 0), `acquire_lease` on `branch:<name>`, renew it
-  (`renew_lease`) on the same cadence, and `release_lease` as your very last
-  action before you report back.
+  call `renew_claim` on job `<job-id>` after every otto-development phase
+  transition (Phase 0 done, spec committed, plan committed, each task
+  implemented, PR opened, each review round) — comfortably inside the 900s
+  default claim TTL — so the claim doesn't expire out from under you
+  (resolve the repo slug yourself via `whoami`/`resolve_repo` first); and, as
+  soon as your branch name is decided (otto-development's Phase 0),
+  `acquire_lease` on `branch:<name>`, renew it (`renew_lease`) on the same
+  checkpoints, and `release_lease` as your very last action before you
+  report back.
 - Follow otto-development's own git/GitHub mechanics directly (worktree add,
   commit, push, `gh pr create`/`gh pr merge`) — it already specifies these in
   full; do not route them through any other tool.
