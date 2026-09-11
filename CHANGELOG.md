@@ -8,6 +8,17 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.29.1 - 2026-09-11
+
+### Fixed
+
+- The `otto-development` skill no longer instructs a release run to verify `.deb`/`.rpm` packages
+  or a `package-linux.yml` workflow run, both of which were deliberately removed from the release
+  pipeline in an earlier change. The skill's Phase 5 release verification now checks against the
+  actual 14-asset `cargo-dist` release set instead, matching what `RELEASING.md` has always said.
+  Previously, an agent following the skill as written would escalate on every otherwise-successful
+  release. (#141)
+
 ## 0.29.0 - 2026-09-10
 
 ### Added
