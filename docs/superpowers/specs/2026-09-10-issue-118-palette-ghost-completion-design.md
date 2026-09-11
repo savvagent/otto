@@ -1,7 +1,7 @@
 # Ghost-completion in the palette prompt — design
 
 Date: 2026-09-10
-Status: DRAFT
+Status: IMPLEMENTED
 Related: `savvagent/otto#118`. Follow-up to `savvagent/otto#96` (shipped in PR #114). Also
 references `savvagent/otto#80` and `savvagent/otto#92`.
 
