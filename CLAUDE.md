@@ -60,6 +60,37 @@ Bundled tools are stdio child processes owned by `ToolRegistry` and reaped on sh
 
 `subscriber.next()` from `rmcp`'s `ProgressDispatcher` does **not** auto-close when the RPC completes. Forwarder tasks that pump progress notifications must `JoinHandle::abort()` after the request future resolves, or the caller's mpsc waiter will deadlock. This pattern is used in `provider-anthropic`/`provider-gemini` streaming paths.
 
+### Plugin ABI (native vs. WASM parity)
+
+`otto-plugin` (native Rust trait surface), `otto-plugin-wit` (the WIT contract WASM guests bind
+against), and `otto-plugin-wasm` (the host-side wasmtime adapter) are one interface — the plugin
+ABI — per Non-Negotiable Rule 6 in the `otto-development` skill. Because `otto-plugin` is a plain
+Rust crate, it can grow constructors and defaulted trait methods freely; `otto-plugin-wit` is a
+WIT interface, where records can't carry associated functions and every new guest-callable
+capability needs an explicit interface addition plus a regenerated guest binding. Left
+unaddressed, the native surface drifts ahead of the WASM surface by default.
+
+**Parity is the goal** for the plugin ABI's guest-callable behavioral surface (trait methods a
+plugin implements to receive host callbacks — `Screen`, `Plugin`, hooks) and for constructor
+ergonomics on WIT-backed value types wherever the guest side can express them in ordinary Rust
+without a WIT change. Every `otto-plugin` addition to a surface already mirrored in
+`otto-plugin-wit` should land its WIT/guest-ergonomics counterpart in the same change, or record
+an issue number and the reason it doesn't (yet) — never a bare "for now" in `CHANGELOG.md`. A
+capability family with no WIT interface at all gets named and tracked explicitly rather than left
+to keep growing on the native side alone.
+
+Current gap (surveyed 2026-09-11, tracked in `savvagent/otto`):
+
+| Native surface | otto-plugin-wit counterpart | Tracked |
+|---|---|---|
+| `Screen::ghost_completion` (`otto-plugin/src/screen.rs`) | none — `screen-instance`'s WIT resource has `on-key`/`on-event`/`render`/`tips` only | #165 |
+| `StyledSpan`/`StyledLine` constructors (`otto-plugin/src/styled.rs`) | the WIT records exist; associated functions don't cross WIT at all | #166 |
+| `ContentRenderer` (`otto-plugin/src/content.rs`) / `Plugin::create_renderer` (`otto-plugin/src/plugin.rs`) — canvas content blocks | none — no `plugin-canvas.wit` world exists | #167 |
+| `Plugin::summarize_tool_call`/`summarize_tool_result` + `Contributions::tool_summaries` (`otto-plugin/src/plugin.rs`, `otto-plugin/src/manifest.rs`) | none — WIT `contributions` record has no `tool-summaries` field, no WIT function mirrors either method | #170 |
+
+A future `CHANGELOG.md` entry that ships a native-only `otto-plugin` addition cites the tracking
+issue for the WASM gap it opens, rather than "for now."
+
 ## Workspace map (for navigation)
 
 | Crate | Owns |
@@ -70,6 +101,9 @@ Bundled tools are stdio child processes owned by `ToolRegistry` and reaped on sh
 | `crates/otto-mcp` | `ProviderClient` / `ProviderHandler` traits and the `InProcessProviderClient` bridge. |
 | `crates/provider-anthropic`, `crates/provider-gemini` | Provider impls (libraries) + thin `otto-<vendor>` MCP-server binaries. |
 | `crates/tool-fs` | `read_file` / `write_file` / `list_dir` / `glob` as a stdio MCP server. |
+| `crates/otto-plugin` | The `Plugin`/`Screen`/`ContentRenderer` traits, `Effect`, `StyledSpan`/`StyledLine`, and every other WIT-portable type a native plugin author builds against. |
+| `crates/otto-plugin-wit` | The `.wit` contract (`plugin-static`/`plugin-interactive`/`plugin-provider` worlds, `shared.wit`) that WASM guests bind against. Dependency-light by design — see `crates/otto-plugin-wit/src/lib.rs`. |
+| `crates/otto-plugin-wasm` | Host-side `wasmtime::component::bindgen!` adapters (`adapter/{static_,interactive,provider}.rs`) that load a `.wasm` component and present it as a `Box<dyn Plugin>`/`Box<dyn Screen>` to the rest of the host. |
 
 ## Extending
 
