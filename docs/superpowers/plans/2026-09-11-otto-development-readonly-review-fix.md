@@ -120,9 +120,9 @@ checks.
   ```bash
   grep -n "READ-ONLY, HARD CONSTRAINT" .claude/skills/otto-development/agent-prompts.md
   ```
-  Expect 4 matches (2 prose + 2 in-prompt, for Code Quality Review and Final Code Review — the
-  existing Independent Security Review section's own "READ-ONLY, HARD CONSTRAINT" text is a 5th
-  pre-existing match, so 5 total is also correct if that line matches the same grep).
+  Expect 5 matches: 4 new (2 prose + 2 in-prompt, for Code Quality Review and Final Code Review)
+  plus the 1 pre-existing match in the Independent Security Review section's own "READ-ONLY, HARD
+  CONSTRAINT" `prompt: |` body (confirmed present in the file before this task starts).
   ```bash
   grep -n "write \`gh pr diff\|naming that path" .claude/skills/otto-development/agent-prompts.md
   ```
@@ -154,9 +154,19 @@ checks.
   ```
   Must return nothing.
   ```bash
-  grep -n "no \`/clear\`-and-reinvoke primitive" .claude/skills/otto-development/SKILL.md
+  grep -n "This orchestrating CLI has no" .claude/skills/otto-development/SKILL.md
   ```
-  Must return nothing (the sentence has been reworded).
+  Must return nothing. (Note: a grep for the old phrase's back half,
+  "`/clear`-and-reinvoke primitive", is NOT a valid check here — that phrase wraps across two source
+  lines in the current file, so a single-line grep for it already returns nothing before the edit,
+  making it a vacuous check either way. Grepping for the old sentence's opening, which lives on one
+  line, is the check that actually distinguishes before/after.) Additionally confirm the new wording
+  is present:
+  ```bash
+  grep -n "cannot invoke it on itself mid-run\|cannot invoke \`/clear\` on itself" .claude/skills/otto-development/SKILL.md
+  ```
+  Expect a match (adjust the pattern if Step 7's exact replacement wording differs, but some
+  positive assertion of the new text must be checked, not just the old text's absence).
 
 - [ ] **Step 9: Confirm no canonical file was touched.**
   ```bash
@@ -204,6 +214,14 @@ checks.
      entry fails unless it is named in the script's `NATIVE_SKILLS` allowlist (a deliberate,
      reviewable declaration), matching how `CLAUDE.md`'s "Claude Code skills" section already
      documents this behavior.
+  3. The same file has a second, forward cross-reference to this same now-stale claim: the bullet "A
+     port `*.md` with no canonical counterpart *inside a ported skill*" ends with the parenthetical
+     "(This is distinct from a whole `.claude/skills/` entry with no canonical directory, below,
+     which is ignored by design.)" Update this parenthetical too, so it points at the corrected
+     behavior from edit 2 above instead of repeating the stale "ignored by design" claim — e.g.
+     "...which fails unless declared in `NATIVE_SKILLS`, see below." Both occurrences of "ignored by
+     design" in this file describe the same claim and must be corrected together, or the check in
+     Step 14 below will find one fixed and one still stale.
 
   Do not touch this spec's `> **Status:**` header (stays `IMPLEMENTED`) or any other section — this
   is a targeted accuracy correction to an already-shipped spec, not a scope change.
