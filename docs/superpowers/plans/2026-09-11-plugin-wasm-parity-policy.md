@@ -101,7 +101,7 @@ run anyway per house style).
   |---|---|---|
   | `Screen::ghost_completion` (`otto-plugin/src/screen.rs`) | none — `screen-instance`'s WIT resource has `on-key`/`on-event`/`render`/`tips` only | #165 |
   | `StyledSpan`/`StyledLine` constructors (`otto-plugin/src/styled.rs`) | the WIT records exist; associated functions don't cross WIT at all | #166 |
-  | `ContentRenderer` / `Plugin::create_renderer` (canvas content blocks, `otto-plugin/src/content.rs`) | none — no `plugin-canvas.wit` world exists | #167 |
+  | `ContentRenderer` (`otto-plugin/src/content.rs`) / `Plugin::create_renderer` (`otto-plugin/src/plugin.rs`) — canvas content blocks | none — no `plugin-canvas.wit` world exists | #167 |
 
   A future `CHANGELOG.md` entry that ships a native-only `otto-plugin` addition cites the tracking
   issue for the WASM gap it opens, rather than "for now."

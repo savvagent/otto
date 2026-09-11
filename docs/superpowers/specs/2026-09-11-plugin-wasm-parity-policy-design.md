@@ -54,7 +54,7 @@ the design (see "Why the follow-ups are issues, not code" below).
 
 Surveyed every public trait/type in `crates/otto-plugin/src/*.rs` against the four `.wit` files in
 `crates/otto-plugin-wit/wit/` (`shared.wit`, `plugin-static.wit`, `plugin-interactive.wit`,
-`plugin-provider.wit`) and `crates/otto-plugin-wasm/src/adapter/*.rs`'s actual trait impls. Three
+`plugin-provider.wit`) and `crates/otto-plugin-wasm/src/adapter/*.rs`'s actual trait impls. Four
 concrete gaps, in order of size:
 
 | Native surface | otto-plugin-wit counterpart | Gap | Tracked |
@@ -62,6 +62,7 @@ concrete gaps, in order of size:
 | `Screen::ghost_completion` (`screen.rs:69`) | none | `screen-instance` resource (`plugin-interactive.wit`) has `on-key`/`on-event`/`render`/`tips` only. `impl Screen for WasmScreen` doesn't override it, so every WASM screen gets the native default (`None`). | #165 |
 | `StyledSpan::plain/colored/muted`, `StyledLine::plain/colored/muted` (`styled.rs:134-201`) | `styled-span`/`styled-line` records exist (`shared.wit`), no constructors | WIT records cannot carry associated functions, so this was never closeable by a WIT edit. Every WASM plugin builds the struct literal by hand (`examples/plugin-hello-interactive/src/lib.rs`'s local `styled_line` helper is the same 10 lines every example/fixture re-implements). | #166 |
 | `ContentRenderer` (`content.rs` — `id`/`render`/`dispatch`/`freeze`/`thaw`/`focusable_elements`/`focused_index`/`set_focus`/`snapshot_state`/`restore_state`) and `Plugin::create_renderer` (`plugin.rs:115-123`) | **none at all** | There is no `plugin-canvas.wit` (or equivalent) alongside `plugin-static.wit`/`plugin-interactive.wit`/`plugin-provider.wit`. A WASM plugin cannot register an inline content-block renderer today — not a partial gap like the other two, a whole missing capability family. | #167 |
+| `Plugin::summarize_tool_call`/`summarize_tool_result` (`plugin.rs:80-106`) and `Contributions::tool_summaries: Vec<ToolSummarySpec>` (`manifest.rs:65,180`) | none | `shared.wit`'s `contributions` record has no `tool-summaries` field, and no `.wit` file exports anything shaped like `summarize-tool-call`/`summarize-tool-result`. A WASM plugin can never register for or render a tool-call/tool-result summary. | #170 |
 
 Checked and found **not** a gap (host-side validation helpers a WASM guest never needs to call
 across the ABI, because the guest never constructs these native types itself): `PluginId::new`
@@ -102,10 +103,11 @@ the follow-ups are issues, not code" below — filed against `savvagent/otto`:
 ### 4. Establish the "reference an issue number" convention going forward
 
 CLAUDE.md's new subsection states the rule directly: a future changelog entry citing a WASM gap
-must cite the tracking issue number, never bare "for now." This PR's own `CHANGELOG.md` entry
-(added at release-cut time per Non-Negotiable Rule 8, not in this feature PR — see the plan's Task
-2) demonstrates the convention by citing #165/#166/#167 rather than repeating "for now" a third
-time.
+must cite the tracking issue number, never bare "for now." This PR's own diff does not touch
+`CHANGELOG.md` — that entry is deferred to release-cut time (per Non-Negotiable Rule 8, in the
+dedicated release PR — see the plan's Task 2), not added in this feature PR. When it lands there,
+it will demonstrate the convention by citing #165/#166/#167/#170 rather than repeating "for now" a
+third time.
 
 ### Why the follow-ups are issues, not code
 
@@ -147,7 +149,7 @@ traversal across the sandbox boundary) — its own sub-project, not a task here.
 - Three GitHub issues filed against `savvagent/otto` (#165, #166, #167 — already created; this spec
   documents them, it doesn't create them again).
 - `CHANGELOG.md` — a `Changed`/`Added` entry recording the policy decision, added at release-cut
-  time (Task 2 of the plan), citing #165/#166/#167 instead of "for now."
+  time (Task 2 of the plan), citing #165/#166/#167/#170 instead of "for now."
 - This design spec and its matching plan under `docs/superpowers/`.
 
 **Out:**
@@ -207,16 +209,18 @@ flag when it lands.)
 
 A future contributor adding a new `otto-plugin` capability, or a reviewer checking a PR against
 Non-Negotiable Rule 6, can read CLAUDE.md and know: (a) parity is the stated goal, (b) exactly which
-three surfaces currently diverge and why, and (c) that citing a WASM gap in a changelog entry from
+four surfaces currently diverge and why, and (c) that citing a WASM gap in a changelog entry from
 here forward means citing an issue number.
 
 - CLAUDE.md states the parity-is-the-goal position in prose, not implied by omission.
-- CLAUDE.md enumerates the three current gaps (`ghost_completion`, `StyledSpan`/`StyledLine`
-  ergonomics, `ContentRenderer`) with a one-line reason each and the tracking issue number.
+- CLAUDE.md enumerates the four current gaps (`ghost_completion`, `StyledSpan`/`StyledLine`
+  ergonomics, `ContentRenderer`, tool-summary rendering) with a one-line reason each and the
+  tracking issue number.
 - `#165`, `#166`, `#167` exist on `savvagent/otto`, each with enough technical detail (as filed
   above) that whoever picks them up next doesn't have to re-derive the caching-model conflict or
-  the orphan-rule ergonomics insight from scratch.
-- `CHANGELOG.md` gains an entry (at release-cut time) recording the decision and citing all three
+  the orphan-rule ergonomics insight from scratch; `#170` (the tool-summary gap surfaced by review)
+  exists alongside them.
+- `CHANGELOG.md` gains an entry (at release-cut time) recording the decision and citing all four
   issue numbers.
 - `cargo build && cargo test --workspace` and `bacon clippy-all` remain clean (vacuously — no Rust
   is touched by this PR).
