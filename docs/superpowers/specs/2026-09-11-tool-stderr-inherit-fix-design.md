@@ -142,9 +142,8 @@ leak actually happens: the transport-construction call. Introduce one small inte
 fn spawn_tool_transport(
     cmd: tokio::process::Command,
     stderr: std::process::Stdio,
-) -> std::io::Result<TokioChildProcess> {
-    let (transport, _stderr_handle) = TokioChildProcess::builder(cmd).stderr(stderr).spawn()?;
-    Ok(transport)
+) -> std::io::Result<(TokioChildProcess, Option<tokio::process::ChildStderr>)> {
+    TokioChildProcess::builder(cmd).stderr(stderr).spawn()
 }
 ```
 
