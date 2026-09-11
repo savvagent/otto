@@ -8,6 +8,8 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.30.2 - 2026-09-11
+
 ### Added
 
 - otto now discovers Claude-Code-compatible skills — `SKILL.md` files under `.otto/skills/` and
