@@ -1,7 +1,7 @@
 # Drop stale `.deb`/`.rpm` verification from `otto-development` — design
 
 Date: 2026-09-11
-Status: pending review
+Status: approved
 Source: savvagent/otto#141
 Related: `01bb3f1` ("release: drop the .deb/.rpm Linux packages (#109)"), `RELEASING.md:78-80`
 
@@ -80,8 +80,10 @@ worktree/PR discipline, or any Rust code.
 - Regenerating `.github/skills/otto-development/claude-port/SKILL.md.diff` via
   `bash .github/scripts/check-claude-skill-ports.sh --update`.
 - Cross-checking `RELEASING.md` and `CLAUDE.md` for any remaining `.deb`/`.rpm` claim (expected to be
-  a no-op per the issue — `RELEASING.md:79` is already correct and a grep of `CLAUDE.md` for
-  `deb|rpm|package-linux` returns nothing).
+  a no-op per the issue — `RELEASING.md:79` is already correct, and `CLAUDE.md` carries no genuine
+  `.deb`/`.rpm`/`package-linux` claim; a raw `grep -niE 'deb|rpm|package-linux' CLAUDE.md` does return
+  two hits, but both are substring matches on the word "debugging" — not real references, so the
+  check must read the hits rather than assert the grep is silent).
 
 **Out:**
 - `agent-prompts.md` — no `.deb`/`.rpm`/`package-linux.yml` reference exists there (verified by
