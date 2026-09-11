@@ -83,6 +83,13 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         api_key_required: true,
     },
     ProviderSpec {
+        id: "grok",
+        display_name: "xAI Grok",
+        api_key_env: "XAI_API_KEY",
+        default_model: "grok-4",
+        api_key_required: true,
+    },
+    ProviderSpec {
         id: "local",
         display_name: "Ollama (local)",
         api_key_env: "OLLAMA_HOST",

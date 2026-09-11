@@ -2417,7 +2417,7 @@ mod tests {
             .iter()
             .map(|(id, _)| id.as_str().to_string())
             .collect();
-        for expected in ["anthropic", "gemini", "openai", "deepseek", "local"] {
+        for expected in ["anthropic", "gemini", "openai", "deepseek", "grok", "local"] {
             assert!(
                 ids.contains(expected),
                 "expected provider {expected} in picker candidates; got {ids:?}"
