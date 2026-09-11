@@ -39,14 +39,15 @@ mandatory on every PR; an auditor that can also write is not an independent gate
 The issue also folds in five smaller defects in the same two port files, found in the same review
 pass:
 
-1. `.claude/skills/otto-development/SKILL.md:603` ("No Critical/Important → mark the task's todo
+1. `.claude/skills/otto-development/SKILL.md:640` ("No Critical/Important → mark the task's todo
    `done`") uses a status value (`done`) that does not exist in the port's own vocabulary. The port's
    own Phase 0 (`SKILL.md:356`) redefines the status set as `pending` → `in_progress` → `completed`
    specifically because Claude Code's `TodoWrite` tool has no `done` state — the canonical's own
    todo tool *does* use `done`/`blocked` (canonical `SKILL.md:352`), so this line is a straight
    verbatim-copy artifact that was never adapted to the port's own redefinition two sections earlier
-   in the same file.
-2. `.claude/skills/otto-development/SKILL.md:307-308` states "This orchestrating CLI has no
+   in the same file. (The canonical's own equivalent line is at `SKILL.md:603` — the port is offset
+   ~37 lines later throughout by its earlier, already-shipped security read-only paragraph.)
+2. `.claude/skills/otto-development/SKILL.md:312-313` states "This orchestrating CLI has no
    `/clear`-and-reinvoke primitive of its own within a session." This sentence is verbatim-identical
    to the canonical, where it is accurate (the Copilot CLI referenced there has no user-facing
    `/clear`). Claude Code does ship a user-facing `/clear` slash command, so the same sentence reads
