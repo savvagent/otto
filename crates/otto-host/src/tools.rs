@@ -2660,10 +2660,17 @@ mod tests {
         // (in this doc comment, in the dynamic regression test above, and in
         // this assertion's own message), which would otherwise self-flag as
         // a false positive.
+        // Split on `mod tests {` alone (a single line, with no embedded
+        // newline) rather than `#[cfg(test)]\nmod tests {` — a two-line
+        // pattern breaks on a CRLF checkout (Windows git checkouts of this
+        // repo use `\r\n`), which made this test itself fail on Windows CI:
+        // the pattern never matched, `production_source` fell back to the
+        // *entire* file, and the scan then flagged this very test's own
+        // source text as an offending "production" call site.
         let production_source = source
-            .split("#[cfg(test)]\nmod tests {")
+            .split("mod tests {")
             .next()
-            .expect("tools.rs must contain its own #[cfg(test)] mod tests block");
+            .expect("tools.rs must contain its own mod tests block");
         let offending: Vec<&str> = production_source
             .lines()
             .filter(|line| {
