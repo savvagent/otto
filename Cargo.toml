@@ -11,6 +11,7 @@ members = [
     "crates/provider-anthropic",
     "crates/provider-deepseek",
     "crates/provider-gemini",
+    "crates/provider-grok",
     "crates/provider-local",
     "crates/provider-openai",
     "crates/tool-bash",
@@ -43,6 +44,7 @@ otto-host = { path = "crates/otto-host", version = "0.29.1" }
 provider-anthropic = { path = "crates/provider-anthropic", version = "0.29.1" }
 provider-deepseek = { path = "crates/provider-deepseek", version = "0.29.1" }
 provider-gemini = { path = "crates/provider-gemini", version = "0.29.1" }
+provider-grok = { path = "crates/provider-grok", version = "0.29.1" }
 provider-local = { path = "crates/provider-local", version = "0.29.1" }
 provider-openai = { path = "crates/provider-openai", version = "0.29.1" }
 tool-bash = { path = "crates/tool-bash", version = "0.29.1" }
