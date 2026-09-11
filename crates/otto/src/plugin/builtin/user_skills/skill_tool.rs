@@ -23,6 +23,7 @@ use serde_json::Value;
 
 use crate::plugin::builtin::user_skills::index::SkillIndex;
 use crate::plugin::builtin::user_skills::trust::{self, SkillTrust};
+use crate::plugin::builtin::user_slash_commands::TrustMap;
 
 /// JSON shape expected from the model when it calls the `skill` tool.
 #[derive(Debug, Deserialize)]
@@ -35,17 +36,22 @@ struct SkillInput {
 pub struct SkillToolHandler {
     index: SkillIndex,
     project_root: PathBuf,
-    home: PathBuf,
+    /// Shared with `UserSkillsPlugin`'s own `trust_levels` (and, in turn,
+    /// `App::trust_levels`), so a trust decision made via `/skills <name>`
+    /// is also honored by the model calling this tool directly, and vice
+    /// versa — they share one source of truth rather than each deriving
+    /// its own view of trust state.
+    trust_levels: TrustMap,
 }
 
 impl SkillToolHandler {
     /// Build a handler over an existing [`SkillIndex`]. The index is
     /// cheap to clone (it wraps an `Arc<RwLock<_>>`).
-    pub fn new(index: SkillIndex, project_root: PathBuf, home: PathBuf) -> Self {
+    pub fn new(index: SkillIndex, project_root: PathBuf, trust_levels: TrustMap) -> Self {
         Self {
             index,
             project_root,
-            home,
+            trust_levels,
         }
     }
 }
@@ -66,7 +72,7 @@ impl InProcessToolHandler for SkillToolHandler {
             return Err(unknown_skill_message(&input.name, &known));
         };
 
-        match trust::evaluate(&spec, &self.project_root, &self.home) {
+        match trust::evaluate(&spec, &self.project_root, &self.trust_levels).await {
             SkillTrust::Allowed => {}
             SkillTrust::NeedsConsent { project } => {
                 return Err(trust::refusal_message(&spec.name, &project));
@@ -84,7 +90,11 @@ impl InProcessToolHandler for SkillToolHandler {
 /// The level-2 payload. The root is stated explicitly because the body
 /// was authored against its own directory — without it, a relative
 /// `scripts/build.sh` in the instructions is unresolvable.
-fn render_skill(name: &str, root: &str, body: &str) -> String {
+///
+/// `pub(crate)` so `mod.rs`'s `/skills <name>` handler can reuse the
+/// exact same rendering the `skill` tool returns to the model, rather
+/// than duplicating the format string.
+pub(crate) fn render_skill(name: &str, root: &str, body: &str) -> String {
     format!(
         "# Skill: {name}\n\n\
          Skill directory: {root}\n\
@@ -98,7 +108,11 @@ fn render_skill(name: &str, root: &str, body: &str) -> String {
 /// bare "not found" — the model picked from an enum, so a miss usually
 /// means the index changed under it (a `/reload-skills`, or a skill
 /// shadowed by a higher tier).
-fn unknown_skill_message(requested: &str, known: &[String]) -> String {
+///
+/// `pub(crate)` so `mod.rs`'s `/skills <unknown>` path shares the same
+/// near-match wording as the `skill` tool's own error rather than
+/// duplicating `nearest`/`shared_prefix` in a second location.
+pub(crate) fn unknown_skill_message(requested: &str, known: &[String]) -> String {
     let near = nearest(requested, known);
     if near.is_empty() {
         format!("unknown skill `{requested}`; no skills are currently loaded")
@@ -158,17 +172,19 @@ pub async fn build_tool_def(index: &SkillIndex) -> ToolDef {
 pub fn handler_arc(
     index: SkillIndex,
     project_root: PathBuf,
-    home: PathBuf,
+    trust_levels: TrustMap,
 ) -> InProcessToolHandlerArc {
-    InProcessToolHandlerArc::new(SkillToolHandler::new(index, project_root, home))
+    InProcessToolHandlerArc::new(SkillToolHandler::new(index, project_root, trust_levels))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plugin::builtin::user_skills::spec::{SkillScope, SkillSpec, ToolScope};
+    use crate::plugin::builtin::user_slash_commands::trust::TrustLevel;
     use std::collections::BTreeMap;
-    use tempfile::tempdir;
+    use std::path::Path;
+    use tokio::sync::RwLock;
 
     fn spec(name: &str, scope: SkillScope, bundled: bool) -> SkillSpec {
         SkillSpec {
@@ -187,6 +203,22 @@ mod tests {
     /// it, so any `Any` value will do.
     fn ctx() -> Arc<dyn std::any::Any + Send + Sync> {
         Arc::new(())
+    }
+
+    /// An empty shared trust map — no project has been decided yet.
+    /// Mirrors `user_slash_commands::mod.rs` tests' own `empty_trust()`.
+    fn empty_trust() -> TrustMap {
+        Arc::new(RwLock::new(BTreeMap::new()))
+    }
+
+    /// A shared trust map pre-populated with one decision, the way a
+    /// real session's map looks right after `Effect::SetTrustLevel`'s
+    /// handler runs — not via a disk write.
+    fn trust_map_with(project: &Path, level: TrustLevel) -> TrustMap {
+        Arc::new(RwLock::new(BTreeMap::from([(
+            project.to_path_buf(),
+            level,
+        )])))
     }
 
     #[tokio::test]
@@ -213,12 +245,11 @@ mod tests {
 
     #[tokio::test]
     async fn known_skill_returns_body_and_root() {
-        let home = tempdir().unwrap();
         let index = SkillIndex::empty();
         index
             .replace(vec![spec("alpha", SkillScope::UserOtto, false)])
             .await;
-        let h = SkillToolHandler::new(index, PathBuf::from("/project"), home.path().to_path_buf());
+        let h = SkillToolHandler::new(index, PathBuf::from("/project"), empty_trust());
 
         let out = h
             .call(serde_json::json!({ "name": "alpha" }), ctx())
@@ -238,7 +269,6 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_skill_names_near_matches() {
-        let home = tempdir().unwrap();
         let index = SkillIndex::empty();
         index
             .replace(vec![
@@ -246,7 +276,7 @@ mod tests {
                 spec("tui-engineer", SkillScope::UserOtto, false),
             ])
             .await;
-        let h = SkillToolHandler::new(index, PathBuf::from("/p"), home.path().to_path_buf());
+        let h = SkillToolHandler::new(index, PathBuf::from("/p"), empty_trust());
 
         let err = h
             .call(serde_json::json!({ "name": "rust-enginer" }), ctx())
@@ -258,12 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_skill_with_empty_index_says_so() {
-        let home = tempdir().unwrap();
-        let h = SkillToolHandler::new(
-            SkillIndex::empty(),
-            PathBuf::from("/p"),
-            home.path().to_path_buf(),
-        );
+        let h = SkillToolHandler::new(SkillIndex::empty(), PathBuf::from("/p"), empty_trust());
         let err = h
             .call(serde_json::json!({ "name": "whatever" }), ctx())
             .await
@@ -273,24 +298,18 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_input_is_rejected() {
-        let home = tempdir().unwrap();
-        let h = SkillToolHandler::new(
-            SkillIndex::empty(),
-            PathBuf::from("/p"),
-            home.path().to_path_buf(),
-        );
+        let h = SkillToolHandler::new(SkillIndex::empty(), PathBuf::from("/p"), empty_trust());
         let err = h.call(serde_json::json!({}), ctx()).await.unwrap_err();
         assert!(err.contains("invalid input"), "got: {err}");
     }
 
     #[tokio::test]
     async fn untrusted_project_skill_with_scripts_is_refused() {
-        let home = tempdir().unwrap();
         let index = SkillIndex::empty();
         index
             .replace(vec![spec("deployer", SkillScope::ProjectOtto, true)])
             .await;
-        let h = SkillToolHandler::new(index, PathBuf::from("/repo"), home.path().to_path_buf());
+        let h = SkillToolHandler::new(index, PathBuf::from("/repo"), empty_trust());
 
         let err = h
             .call(serde_json::json!({ "name": "deployer" }), ctx())
@@ -305,21 +324,38 @@ mod tests {
 
     #[tokio::test]
     async fn trusted_project_skill_with_scripts_loads() {
-        let home = tempdir().unwrap();
         let project = PathBuf::from("/repo");
-        let mut levels = BTreeMap::new();
-        levels.insert(
-            project.clone(),
-            crate::plugin::builtin::user_slash_commands::trust::TrustLevel::Always,
-        );
-        crate::plugin::builtin::user_slash_commands::trust::save(home.path(), &levels)
-            .expect("save trust");
+        let trust = trust_map_with(&project, TrustLevel::Always);
 
         let index = SkillIndex::empty();
         index
             .replace(vec![spec("deployer", SkillScope::ProjectOtto, true)])
             .await;
-        let h = SkillToolHandler::new(index, project, home.path().to_path_buf());
+        let h = SkillToolHandler::new(index, project, trust);
+
+        let out = h
+            .call(serde_json::json!({ "name": "deployer" }), ctx())
+            .await
+            .expect("call");
+        assert!(out.as_str().unwrap().contains("instructions for deployer"));
+    }
+
+    /// Regression test: a `TrustLevel::SessionTextOnly` decision — made in
+    /// the shared map exactly as `Effect::SetTrustLevel`'s handler would,
+    /// never written to disk — must be honored by the `skill` tool
+    /// immediately, the same as `TrustLevel::Always`. This is the shared
+    /// `TrustMap` doing its job: a decision made via `/skills <name>`
+    /// (which shares this same map) is honored here too.
+    #[tokio::test]
+    async fn session_text_only_project_skill_with_scripts_loads() {
+        let project = PathBuf::from("/repo");
+        let trust = trust_map_with(&project, TrustLevel::SessionTextOnly);
+
+        let index = SkillIndex::empty();
+        index
+            .replace(vec![spec("deployer", SkillScope::ProjectOtto, true)])
+            .await;
+        let h = SkillToolHandler::new(index, project, trust);
 
         let out = h
             .call(serde_json::json!({ "name": "deployer" }), ctx())

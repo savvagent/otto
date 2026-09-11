@@ -678,6 +678,15 @@ pub struct App {
     /// `main.rs::apply_pending_routing_show`.
     pub pending_routing_show: Option<PendingRoutingAction>,
 
+    /// Queued by `Effect::ReloadPromptSegments`; drained by
+    /// `main.rs::apply_pending_prompt_segments_reload`. A bare
+    /// `Option<()>` rather than a new named marker type: the flag
+    /// carries no data (unlike `PendingRoutingAction`, which exists only
+    /// because `ReloadRoutingRules`/`ShowRoutingRules` share it), and
+    /// `PendingRoutingAction` is routing-specific by name, so reusing it
+    /// here would be a false shared abstraction.
+    pub pending_prompt_segments_reload: Option<()>,
+
     /// Prompt text accumulated by `UserPromptSubmit` hooks before
     /// dispatch. Each `Effect::PrependToPendingPrompt` adds to the
     /// front; when the worker spawn fires, the full text becomes
@@ -1013,6 +1022,7 @@ impl App {
             pending_in_process_tools: Vec::new(),
             pending_routing_reload: None,
             pending_routing_show: None,
+            pending_prompt_segments_reload: None,
             pending_prompt_prefix: None,
             pending_turn_cancellation: None,
             prompt_history: PromptHistory::default(),

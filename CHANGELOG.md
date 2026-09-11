@@ -8,6 +8,25 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+### Added
+
+- otto now discovers Claude-Code-compatible skills — `SKILL.md` files under `.otto/skills/` and
+  `.claude/skills/` in both project and user scope, plus `.github/skills/` at project scope only
+  (Copilot CLI's location; it has no user-scope counterpart) — and exposes them through
+  progressive disclosure: a name+description catalog is folded into the system prompt
+  (omitted entirely when no skills are found), and the model can load a skill's full
+  instructions on demand by calling the new built-in `skill` tool. A project-scope skill that
+  bundles scripts still requires the same per-project trust consent as project slash commands
+  before its body is returned. (#83)
+- `/skills` lists every discovered skill (name, source, scope, description) from the
+  already-discovered index rather than rescanning disk on every invocation, and `/skills <name>`
+  injects that skill's full instructions directly into the conversation without waiting for the
+  model to call the `skill` tool — opening the same trust-confirmation modal project slash
+  commands use for a gated, not-yet-trusted skill, and resuming `/skills <name>` automatically
+  once the user decides. A new `/reload-skills` command rescans all five tiers, re-registers the
+  `skill` tool against the refreshed set, and pushes the updated catalog into a running session's
+  system prompt — previously that catalog was only ever set once, at startup. (#83)
+
 ## 0.30.0 - 2026-09-11
 
 ### Added

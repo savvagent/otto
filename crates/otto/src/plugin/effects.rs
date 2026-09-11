@@ -87,6 +87,9 @@ async fn apply_one(app: &mut App, eff: Effect, depth: u8) -> Result<(), String> 
         Effect::ShowRoutingRules => {
             app.pending_routing_show = Some(PendingRoutingAction);
         }
+        Effect::ReloadPromptSegments => {
+            app.pending_prompt_segments_reload = Some(());
+        }
         Effect::RegisterProvider { id, display_name } => {
             // Map ProviderId → owning PluginId by convention. Every built-in
             // provider plugin uses the id pattern `internal:provider-<provider>`.
@@ -2722,6 +2725,29 @@ mod tests {
             app.pending_slash_after_trust,
             Some(("review".into(), vec!["foo".into()])),
             "StashPendingSlash must populate pending_slash_after_trust"
+        );
+    }
+
+    /// `Effect::ReloadPromptSegments` must write to
+    /// `App::pending_prompt_segments_reload` so `main.rs::run_app` can
+    /// drain it with host access, mirroring `Effect::ReloadRoutingRules`.
+    #[tokio::test]
+    async fn reload_prompt_segments_sets_pending_flag() {
+        let mut app = {
+            let _lock = HOME_LOCK.lock().unwrap();
+            let _home = HomeGuard::new();
+            fresh_app()
+        };
+        assert!(app.pending_prompt_segments_reload.is_none(), "precondition");
+
+        apply_effects(&mut app, vec![Effect::ReloadPromptSegments])
+            .await
+            .expect("apply_effects must succeed");
+
+        assert_eq!(
+            app.pending_prompt_segments_reload,
+            Some(()),
+            "ReloadPromptSegments must populate pending_prompt_segments_reload"
         );
     }
 

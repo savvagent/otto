@@ -1,7 +1,7 @@
 # Claude Code compatibility (sub-project E) — commands, skills, plugins, hooks — design
 
 Date: 2026-09-09
-Status: drafted, awaiting user review before implementation
+Status: E1 FULLY IMPLEMENTED (five-tier discovery, `SKILL.md` frontmatter parsing, the built-in `skill` tool, `/skills` listing + direct injection, `/reload-skills`, and the live level-1 catalog segment all shipped; corrections from spec critique folded in along the way: tool registration mechanism, five-tier discovery, level-1 catalog sync/async bridge, trust-prompt reachability, dropped picker Screen in favor of an enriched listing); E2-E4 drafted, awaiting review before their own implementation passes
 Issue: `savvagent/otto#83`
 Supersedes: nothing
 Related:
@@ -153,20 +153,30 @@ skill and an agent are the same shape of artifact: a discovered markdown
 file with YAML frontmatter, indexed by slug, surfaced to the model through
 a built-in MCP tool.
 
-**Discovery.** Four paths, existing precedence (project beats user; within
-a scope `.otto/` beats `.claude/`), first-wins dedup by directory slug:
+**Discovery.** Five paths as actually shipped in Task 1 (`SkillScope`),
+existing precedence (project beats user; within project, `.otto/` beats
+`.claude/` beats `.github/`), first-wins dedup by directory slug:
 
 ```
 <project>/.otto/skills/<name>/SKILL.md
 <project>/.claude/skills/<name>/SKILL.md
+<project>/.github/skills/<name>/SKILL.md
 ~/.otto/skills/<name>/SKILL.md
 ~/.claude/skills/<name>/SKILL.md
 ```
 
+`<project>/.github/skills/` is Copilot CLI's location rather than a Claude
+Code one; otto reads it (as `SkillScope::ProjectGithub`) so repos that
+already keep skills there — this one included — work without moving them.
+It has no user-scope counterpart, since Copilot CLI only defines it inside
+a repository, and it ranks below `.claude/` project scope. For the level-3
+trust gate (below) it counts as project scope like the other two: those
+skills arrive with the checkout.
+
 Plus, once E2 lands, every enabled Claude Code plugin's `skills/<name>/SKILL.md`,
-registered under the namespaced slug `<plugin>:<name>`. Plugin skills rank
-below all four filesystem tiers, so a user can shadow a plugin skill by
-slug.
+registered under the namespaced slug `<plugin>:<name>` (`SkillScope::Plugin`).
+Plugin skills rank below all five filesystem tiers, so a user can shadow a
+plugin skill by slug.
 
 **Format.** Claude Code's, unchanged:
 
@@ -197,6 +207,33 @@ ships `license` and `metadata` in the wild and neither should be fatal.
    seam. Bounded: descriptions truncate at 1024 chars, the catalog caps at
    200 skills, and the segment is omitted entirely when no skills exist so
    a user without skills pays zero tokens.
+
+   `Plugin::manifest()` — which is where `prompt_segments` are read — is
+   synchronous, while `SkillIndex::catalog()` awaits a `tokio::sync::RwLock`
+   read. `UserSkillsPlugin` therefore caches the last-rendered catalog string
+   in a plain, synchronously-readable `Arc<std::sync::RwLock<Option<String>>>`
+   (no new dependency — this is a single cached string, not a case for
+   `arc_swap`), written by `on_event(HostStarting)` and
+   `handle_slash("reload-skills")` right after `SkillIndex::replace(...)`,
+   and read without an `.await` inside `manifest()`. `None` in the cache
+   means no segment, matching `catalog()`'s own contract.
+
+   Separately: today `Host::set_prompt_segments` is called exactly once, at
+   TUI startup (`main.rs`, fed by `PluginRegistry::active_prompt_segments()`)
+   — no existing `Effect` re-pushes segments into a *running* session, and
+   `Effect::ReindexPlugin` (what `/reload-commands` etc. use) only
+   recomputes slash/screen/keybinding indexes, never prompt segments. For
+   `/reload-skills` to actually refresh what a live session's system prompt
+   contains (not just the tool's enum and the index), this stream adds a
+   small drain mirroring the existing `apply_pending_routing_reload`
+   pattern (`main.rs`): a `pending_prompt_segments_reload` flag set from the
+   effect handler, drained at the same points `apply_pending_routing_reload`
+   is (outside any `RwLock` guard), which re-reads
+   `registry.active_prompt_segments()` and calls
+   `host.set_prompt_segments(...)` on the current host. This is new,
+   general plumbing (not skill-specific) that happens to be needed here
+   first, since no other built-in plugin has shipped a dynamically-changing
+   prompt segment yet.
 2. **Level 2 — on invocation.** The `skill` tool returns the full `SKILL.md`
    body as the tool result. Bodies never enter the system prompt.
 3. **Level 3 — on demand.** Bundled `scripts/`, `references/`, `assets/`
@@ -206,15 +243,31 @@ ships `license` and `metadata` in the wild and neither should be fatal.
 
 **Invocation.** Two entry points onto one code path:
 
-- A built-in `skill` MCP tool — same shape as C's `task` tool, registered
-  through `HostConfig::with_tool`, taking `{ name: string }` and returning
-  the body + skill root. The model calls it when a description matches the
-  work at hand.
-- `/skills` — opens a picker screen listing every discovered skill with
-  name, description, source path, and scope badge. `/skills <name>` skips
-  the picker and injects directly. This is what #83 asked for.
+- A built-in `skill` MCP tool — same shape as C's `task` tool. Registered
+  the way `task` actually is: `UserSkillsPlugin` builds a `ToolDef` +
+  `InProcessToolHandlerArc` and emits `Effect::RegisterInProcessTool`
+  (mirroring `user_agents::register_task_tool_effects`), gated on the index
+  being non-empty. **Not** `HostConfig::with_tool` — that path is for
+  out-of-process stdio tool servers (`otto-tool-fs` and siblings) wired
+  once in `main.rs`; an in-process tool goes through `ToolRegistry` via the
+  `Effect`, exactly as Load-Bearing Invariant 5 requires. Takes
+  `{ name: string }`, returns the body + skill root. The model calls it
+  when a description matches the work at hand.
+- `/skills` (no argument) — an enriched listing built from
+  `SkillIndex::sorted_snapshot()`: name, truncated description, source
+  path, and scope badge, sorted scope-then-name. `/skills <name>` looks the
+  name up in the index and injects the full body + root directly (same
+  payload shape as the tool), with near-match suggestions on an unknown
+  name. This is what #83 asked for. A full interactive picker `Screen` is
+  explicitly **not** built for this stream: the mirror target,
+  `user_agents`, has no picker either, and neither AC1 nor AC2 requires
+  interactivity — an enriched listing plus direct-injection-by-name
+  satisfies both. Revisit as a deliberate scope addition later if wanted.
 - `/reload-skills` — rescans all tiers without restart, mirroring
-  `/reload-commands` / `/reload-hooks` / `/reload-agents`.
+  `/reload-commands` / `/reload-hooks` / `/reload-agents`, and re-emits
+  both the `skill` tool's `Effect::RegisterInProcessTool` (so its name enum
+  stays live) and the level-1 catalog cache (so the system prompt segment
+  stays live, per the plumbing described above).
 
 **Tool scoping.** `allowed-tools` in a skill's frontmatter is advisory in
 E1 and enforced in E4 by the same `ScopedToolRegistry` that already backs
@@ -230,19 +283,34 @@ skill whose directory contains any executable file or `scripts/` subdir
 prompts for project trust. User-scope skills (`~/.claude`, `~/.otto`) are
 trusted implicitly, exactly as user-scope commands are.
 
+The two invocation surfaces are not equivalent here. The `skill` MCP tool
+handler is a plain `InProcessToolHandler::call` returning
+`Result<Value, String>` straight to the model — it has no `Effect` channel,
+so on `NeedsConsent` it can only refuse and name the remedy (point the user
+at `/skills <name>`), never show an interactive prompt. The actual
+interactive consent flow (`Effect::OpenScreen{id: "trust.modal"}` +
+`Effect::StashPendingSlash` + `Effect::SetTrustLevel`) only exists on the
+slash-command dispatch path (`handle_slash`), so it is reachable **only**
+from `/skills <name>`, reusing `user_slash_commands`'s existing trust modal
+plumbing. A user who only ever calls the tool never sees a prompt for a
+gated project-local skill — a refusal directing them to `/skills <name>` is
+the correct behavior, not a bug.
+
 **Module layout.** New built-in plugin `internal:user-skills` at
 `crates/otto/src/plugin/builtin/user_skills/`:
 
 | File | Role | Mirrors |
 |---|---|---|
-| `discovery.rs` | four-tier walk, precedence, dedup | `user_agents/discovery.rs` |
+| `discovery.rs` | five-tier walk, precedence, dedup | `user_agents/discovery.rs` |
 | `frontmatter.rs` | YAML parse, required/optional keys, warnings | `user_agents/frontmatter.rs` |
-| `body.rs` | body extraction after frontmatter | `user_agents/body.rs` |
-| `spec.rs` | `SkillSpec { name, description, allowed_tools, root, source, scope }` | `user_agents/spec.rs` |
+| `spec.rs` | `SkillSpec { name, description, allowed_tools, root, source, scope, body, has_bundled_executables }` | `user_agents/spec.rs` |
 | `index.rs` | slug → spec map, catalog rendering, reload | `user_agents/index.rs` |
 | `skill_tool.rs` | the built-in `skill` MCP tool | `user_agents/task_tool.rs` |
-| `screen.rs` | `/skills` picker | `command_palette/screen.rs` |
-| `mod.rs` | `Plugin` impl, slash specs, prompt segment, hooks | `user_agents/mod.rs` |
+| `trust.rs` | level-3 trust gate, reusing `user_slash_commands::trust` | — |
+| `mod.rs` | `Plugin` impl, slash specs, catalog cache, `/skills` listing + direct-injection, `/reload-skills`, hooks | `user_agents/mod.rs` |
+
+(No `body.rs` — body extraction landed inside `frontmatter.rs` as shipped.
+No `screen.rs` — see Invocation above.)
 
 ### E2 — Claude Code plugins
 
@@ -387,7 +455,7 @@ them makes the security review (Non-Negotiable Rule 5) unreviewable.
 
 ## Acceptance criteria
 
-1. `/skills` lists every skill found under all four tiers plus enabled
+1. `/skills` lists every skill found under all five tiers plus enabled
    plugins, with name, description, source, and scope.
 2. `/skills <name>` and the model-invoked `skill` tool both inject the full
    `SKILL.md` body and expose the skill root for level-3 reads.

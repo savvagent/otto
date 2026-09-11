@@ -8,7 +8,11 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-09-issue-83-claude-code-compat-design.md` — read it first. This plan implements it exactly.
 
-**Release line:** E1 → v0.27.0 · E2 → v0.28.0 · E3 → v0.28.1 · E4 → v0.28.2
+**Release line:** as originally drafted, E1 → v0.27.0 · E2 → v0.28.0 · E3 → v0.28.1 · E4 → v0.28.2 —
+**stale as of this revision**: `main` has since advanced to `0.29.1` for unrelated work, so each
+stream's actual release version must be computed fresh at its own cut time (Task 4 / the equivalent
+close-out task for E2-E4), not assumed from this line. Treat this line as "each stream gets its own
+MINOR release, in this dependency order" rather than as literal version numbers.
 
 **Branches:** `otto/issue-83-e1-skills` · `otto/issue-83-e2-claude-code-plugins` · `otto/issue-83-e3-hook-parity` · `otto/issue-83-e4-command-parity`
 
@@ -18,11 +22,11 @@
 - `crates/otto/src/plugin/builtin/user_skills/mod.rs` — `internal:user-skills` plugin: `Plugin` impl, `/skills` + `/reload-skills` slash specs, level-1 prompt segment.
 - `crates/otto/src/plugin/builtin/user_skills/discovery.rs` — four-tier walk, precedence, first-wins dedup by slug.
 - `crates/otto/src/plugin/builtin/user_skills/frontmatter.rs` — YAML parse; `name`/`description` required-ish, `allowed-tools` optional, unknown keys warn.
-- `crates/otto/src/plugin/builtin/user_skills/body.rs` — body extraction after the frontmatter fence.
+- (body extraction landed inside `frontmatter.rs` as shipped — no separate `body.rs`)
 - `crates/otto/src/plugin/builtin/user_skills/spec.rs` — `SkillSpec { name, description, allowed_tools, root, source, scope }`.
 - `crates/otto/src/plugin/builtin/user_skills/index.rs` — slug → spec map, level-1 catalog rendering with caps, reload.
 - `crates/otto/src/plugin/builtin/user_skills/skill_tool.rs` — the built-in `skill` MCP tool.
-- `crates/otto/src/plugin/builtin/user_skills/screen.rs` — the `/skills` picker screen.
+- (no `screen.rs` — `/skills` stays a listing + direct-injection-by-name, per the corrected spec; see Stream E1 Task 3)
 - `crates/otto/src/plugin/builtin/user_skills/trust.rs` — level-3 project-trust gate for skills bundling executables.
 - `crates/otto/src/plugin/claude_code/mod.rs` — Claude Code plugin loader entry point.
 - `crates/otto/src/plugin/claude_code/installed.rs` — `~/.claude/plugins/installed_plugins.json` v2 parsing, newest-install selection.
@@ -55,58 +59,88 @@
 
 ## Stream E1 — Skills (v0.27.0, branch `otto/issue-83-e1-skills`)
 
-### Task 1: Skill discovery, frontmatter, and index
+### Task 1: Skill discovery, frontmatter, and index — DONE (merged in `e590d08`, PR #105)
 
 **Files:**
-- Create: `crates/otto/src/plugin/builtin/user_skills/discovery.rs`, `frontmatter.rs`, `body.rs`, `spec.rs`, `index.rs`
+- Create: `crates/otto/src/plugin/builtin/user_skills/discovery.rs`, `frontmatter.rs`, `spec.rs`, `index.rs` (body extraction landed inside `frontmatter.rs` as shipped, no separate `body.rs`; `skill_tool.rs` and `trust.rs` were also written ahead of schedule in this same commit, fully implemented and tested, but not yet wired — see Task 2)
 
-- [ ] Read `crates/otto/src/plugin/builtin/user_agents/{discovery,frontmatter,body,spec,index}.rs` end to end and confirm the four-tier precedence helper, the warning-collection pattern, and the first-wins dedup are reusable shapes rather than shared code worth extracting on this pass.
-- [ ] Add failing tests for discovery: all four tiers found; project `.otto/` beats project `.claude/` beats user `.otto/` beats user `.claude/`; a directory without `SKILL.md` is skipped silently; a slug appearing in two tiers resolves to the higher tier and emits one collision warning. Run `cargo test -p otto user_skills::discovery -- --nocapture` and expect failures.
-- [ ] Add failing tests for frontmatter: `name` + `description` parse; missing `description` is a hard error naming the file; missing `name` defaults to the directory slug with a warning; `name` mismatching the slug warns but keeps the slug as the index key; `allowed-tools` parses as a comma-separated list; unknown keys (`license`, `metadata`) warn and are ignored, never fatal. Run `cargo test -p otto user_skills::frontmatter -- --nocapture` and expect failures.
-- [ ] Implement `SkillSpec`, the frontmatter parser, the body extractor, and the four-tier discovery walk. Malformed skills warn and are skipped — one bad skill never aborts the walk (sub-project D's rule).
-- [ ] Add failing tests for the level-1 catalog in `index.rs`: descriptions truncate at 1024 chars; the catalog caps at 200 skills and warns when it truncates; an empty index renders `None` rather than an empty segment. Implement `SkillIndex` and the catalog renderer. Run `cargo test -p otto user_skills::index -- --nocapture` and expect them to pass.
-- [ ] Record the public-interface check in code review notes: this task adds no SPP wire-format, tool-schema, plugin-ABI, slash-command, env-var, or on-disk-format change — discovery and parsing only.
-- [ ] Run `cargo fmt --all`, `cargo test -p otto user_skills -- --nocapture`, and commit with `git commit -m "otto: discover and index user skills"`.
+- [x] Read `crates/otto/src/plugin/builtin/user_agents/{discovery,frontmatter,body,spec,index}.rs` end to end and confirm the four-tier precedence helper, the warning-collection pattern, and the first-wins dedup are reusable shapes rather than shared code worth extracting on this pass.
+- [x] Add failing tests for discovery: all five tiers found (four from the original scope plus `.github/skills/` project-only, matching `SkillScope`); project `.otto/` beats project `.claude/` beats project `.github/` beats user `.otto/` beats user `.claude/`; a directory without `SKILL.md` is skipped silently; a slug appearing in two tiers resolves to the higher tier and emits one collision warning.
+- [x] Add failing tests for frontmatter: `name` + `description` parse; missing `description` is a hard error naming the file; missing `name` defaults to the directory slug with a warning; `name` mismatching the slug warns but keeps the slug as the index key; `allowed-tools` parses as a comma-separated list; unknown keys (`license`, `metadata`) warn and are ignored, never fatal.
+- [x] Implement `SkillSpec`, the frontmatter parser, the body extractor, and the five-tier discovery walk. Malformed skills warn and are skipped — one bad skill never aborts the walk (sub-project D's rule).
+- [x] Add failing tests for the level-1 catalog in `index.rs`: descriptions truncate at 1024 chars; the catalog caps at 200 skills and warns when it truncates; an empty index renders `None` rather than an empty segment. Implement `SkillIndex` and the catalog renderer.
+- [x] Record the public-interface check in code review notes: this task adds no SPP wire-format, tool-schema, plugin-ABI, slash-command, env-var, or on-disk-format change — discovery and parsing only.
+- [x] Run `cargo fmt --all`, `cargo test -p otto user_skills -- --nocapture`, and commit.
 
-### Task 2: The built-in `skill` tool and progressive disclosure
+### Task 2: Wire the built-in `skill` tool and its trust gate
 
-**Files:**
-- Create: `crates/otto/src/plugin/builtin/user_skills/skill_tool.rs`, `trust.rs`
-- Modify: `crates/otto/src/main.rs`
-
-- [ ] Read `crates/otto/src/plugin/builtin/user_agents/task_tool.rs` and `crates/otto-host/src/config.rs`'s `with_tool` path, and confirm an in-process tool handler is the right registration shape for `skill` (it is what `task` uses).
-- [ ] Add failing tests: `skill` reports an input schema of `{ name: string }`; invoking a known slug returns the full `SKILL.md` body plus the absolute skill root; invoking an unknown slug returns a tool error naming the closest matching slugs rather than a bare "not found"; the body is returned as a tool result and never appended to the system prompt. Run `cargo test -p otto user_skills::skill_tool -- --nocapture` and expect failures.
-- [ ] Implement the `skill` tool and register it in `crates/otto/src/main.rs` via `HostConfig::with_tool`.
-- [ ] Add failing tests for the level-3 trust gate in `trust.rs`: a project-local skill whose directory contains an executable file or a `scripts/` subdir prompts for project trust on first invocation; a user-scope skill never prompts; a stored "trust always" decision in `~/.otto/trusted-projects.json` suppresses the prompt. Implement it by reusing sub-project A's `user_slash_commands::trust` helpers rather than a second trust file.
-- [ ] Verify explicitly that the tool handler holds no host-swap `RwLock` guard across an `.await`, and note it in review — the handler reads the index and touches the filesystem, so it must clone what it needs and drop any guard first.
-- [ ] Record the public-interface check: this task ADDS a built-in tool name (`skill`) to the surface the model sees. Additive, no gate needed under Non-Negotiable Rule 6, but it must appear in `README.md` and `CHANGELOG.md`.
-- [ ] Run `cargo fmt --all`, `cargo build`, `cargo test -p otto user_skills -- --nocapture`, and commit with `git commit -m "otto: add built-in skill tool with progressive disclosure"`.
-
-### Task 3: `/skills`, `/reload-skills`, and the picker screen
+**Context (corrected by spec/plan critique before this task started):** `skill_tool.rs` and
+`trust.rs` are ALREADY fully implemented and fully tested in the merged Task 1 commit — they just
+carry `#[allow(dead_code)]` because nothing constructs them yet. There is no `HostConfig::with_tool`
+step here: that path is for out-of-process stdio tool servers (`otto-tool-fs` and siblings), wired
+once in `crates/otto/src/main.rs`. `skill`, like `user_agents`' `task` tool, is an **in-process**
+tool: the plugin builds a `ToolDef` + `InProcessToolHandlerArc` and emits
+`Effect::RegisterInProcessTool`, which `crates/otto/src/plugin/effects.rs` and `main.rs`'s
+`apply_pending_in_process_tools` drain onto the live host's `ToolRegistry` outside any lock guard.
+No `crates/otto/src/main.rs` edit is needed for this task.
 
 **Files:**
-- Create: `crates/otto/src/plugin/builtin/user_skills/screen.rs`, `mod.rs`
-- Modify: `crates/otto/src/plugin/builtin/mod.rs`, `crates/otto/src/plugin/manifests.rs`
+- Modify: `crates/otto/src/plugin/builtin/user_skills/mod.rs`
 
-- [ ] Read `crates/otto/src/plugin/builtin/command_palette/screen.rs` and `crates/otto/src/plugin/builtin/user_agents/mod.rs` to confirm the `Screen` + `SlashSpec` shapes and how a builtin contributes a `SystemPromptSegment`.
-- [ ] Add failing tests: `/skills` with no argument opens the picker; the picker lists name, truncated description, source path, and scope badge, sorted by scope then name; `/skills <name>` bypasses the picker and injects directly; `/skills <unknown>` surfaces a `PushNote` naming near-matches; `/reload-skills` rescans and reports the new count. Run `cargo test -p otto user_skills::screen -- --nocapture` and expect failures.
-- [ ] Add a failing test asserting the plugin emits a `SystemPromptSegment` with id `internal:user-skills:catalog` when skills exist and emits **no** segment when the index is empty, so a user with zero skills pays zero tokens (spec acceptance criterion 3).
-- [ ] Implement `screen.rs` and `mod.rs`, register `internal:user-skills` in `builtin/mod.rs`, and index its slash specs in `manifests.rs`.
-- [ ] Run `cargo build` (required — the TUI spawns `otto-tool-fs` at runtime) and launch `cargo run -p otto` against a scratch `HOME` containing a synthetic `~/.claude/skills/` tree; confirm `/skills` lists them, one injects, and `/reload-skills` picks up a file added mid-session.
-- [ ] Record the public-interface check: ADDS `/skills` and `/reload-skills` to the documented slash-command surface. Additive; document in `README.md`.
-- [ ] Run `cargo fmt --all`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`, and commit with `git commit -m "otto: add /skills picker and reload"`.
+- [x] Read `crates/otto/src/plugin/builtin/user_agents/mod.rs::register_task_tool_effects` and `on_event(HostStarting)` end to end — this is the exact shape to mirror for `skill`.
+- [x] Confirm (tests already exist and pass) that `skill_tool.rs`'s tool-def, dispatch, unknown-slug-suggestion, and `trust.rs`'s consent-gating behavior are all correct as shipped; no new tests are needed for those two files in this task.
+- [x] Add a `SkillIndex` field to `UserSkillsPlugin` (mirroring `UserAgentsPlugin`'s `index: AgentIndex` field), replacing the current use of a bare `discover()` call per slash invocation.
+- [x] Add a `register_skill_tool_effects(&self) -> Vec<Effect>` method on `UserSkillsPlugin` mirroring `register_task_tool_effects`: returns `[]` when `self.index.is_empty()`, otherwise builds `skill_tool::build_tool_def(&self.index)` + `skill_tool::handler_arc(self.index.clone(), self.project_root.clone(), self.user_home.clone())` and wraps them in `Effect::RegisterInProcessTool`.
+- [x] Add a failing test asserting `register_skill_tool_effects` returns empty effects when the index is empty and a `RegisterInProcessTool` effect when it is not (mirrors `user_agents`'s `task_tool_not_registered_when_index_empty` test). Run `cargo test -p otto user_skills:: -- --nocapture` and expect the new test to fail, then implement to pass.
+- [x] Add `contributions.hooks = vec![HookKind::HostStarting]` to the manifest, and implement `on_event(HostStarting)`: discover, `self.index.replace(...)`, return `register_skill_tool_effects()`. (`handle_slash("reload-skills")` wiring is Task 3 — for this task it's fine if only startup discovery populates the index.)
+- [x] Remove the `#[allow(dead_code)]` markers on `index`, `skill_tool`, and `trust` in `mod.rs` now that they are constructed. `cargo build` must be clean without them — if it isn't, something is still unwired.
+- [x] Verify explicitly (state this in the implementer's report) that the tool handler holds no host-swap `RwLock` guard across an `.await` — `skill_tool.rs`'s own doc comment already asserts this; confirm it still holds after this task's changes, since `on_event`/`register_skill_tool_effects` touch no host lock either (they only read `SkillIndex`'s own lock and drop the guard, per the existing pattern).
+- [x] Record the public-interface check: this task ADDS a built-in tool name (`skill`) to the surface the model sees. Additive, no gate needed under Non-Negotiable Rule 6, but it must appear in `README.md` (Task 4) and get a `CHANGELOG.md` entry now (this repo authors `CHANGELOG.md` entries alongside the feature commit; only the version/date heading moves at release-cut time).
+- [x] Run `cargo fmt --all`, `cargo build`, `cargo test -p otto user_skills -- --nocapture`, and commit with `git commit -m "otto: wire the built-in skill tool"`.
+
+### Task 3: `/skills` listing, direct injection, `/reload-skills`, and the live catalog segment
+
+**Context (corrected by spec/plan critique):** No `screen.rs` / interactive `Screen` is built in this
+stream — the mirror target, `user_agents`, has none either, and the spec's acceptance criteria only
+require a listing plus direct-injection-by-name, not interactivity. `internal:user-skills` is
+**already registered** in `crates/otto/src/plugin/mod.rs` (constructed alongside `UserAgentsPlugin`)
+— no `builtin/mod.rs` or `manifests.rs` edit is needed; manifests are derived automatically from each
+plugin's `manifest()` return value via `Indexes::build`, never hand-listed.
+
+This task also closes a real infrastructure gap: `Plugin::manifest()` is synchronous but
+`SkillIndex::catalog()` is `async`, and today `Host::set_prompt_segments` is only ever called once,
+at TUI startup — there is no existing way for a running session's system prompt to pick up a changed
+segment. Both are addressed below.
+
+**Files:**
+- Modify: `crates/otto/src/plugin/builtin/user_skills/mod.rs`
+- Modify: `crates/otto/src/plugin/effects.rs`, `crates/otto/src/main.rs` (new general-purpose "reload prompt segments" drain — not skill-specific, reusable by any future plugin with a dynamic segment)
+
+- [x] Read `crates/otto/src/main.rs`'s `apply_pending_routing_reload` (the pattern to mirror: a `pending_*` flag on `App`, set from an effect handler, drained at the same points routing/model-change/in-process-tool pending state already is — outside any `RwLock` guard) and `crates/otto/src/plugin/registry.rs::active_prompt_segments`.
+- [x] Add a new `Effect::ReloadPromptSegments` variant (or reuse `Effect::ReindexPlugin`'s handler to *also* set the pending flag — pick whichever is the smaller diff once the actual `Effect` enum and `effects.rs` match arm are in front of you) and a `pending_prompt_segments_reload: Option<PendingRoutingAction>`-shaped field on `App`. Add `apply_pending_prompt_segments_reload(app, host_slot)` in `main.rs`: no-ops if nothing queued; otherwise reads `registry.active_prompt_segments()` under a brief read lock (dropped before the `.await`) and calls `host.set_prompt_segments(...)` on the current host, matching the host-swap rule. Call it from the same drain points `apply_pending_routing_reload` is called from.
+- [x] Add a failing test at the `effects.rs`/`app.rs` level asserting the new effect sets the pending flag (unit-testable without a live host, mirroring how `pending_routing_reload` itself is tested). Run it, watch it fail, implement, watch it pass.
+- [x] Add a `catalog_cache: Arc<std::sync::RwLock<Option<String>>>` field to `UserSkillsPlugin` (plain `std::sync::RwLock`, not `tokio::sync::RwLock` — `manifest()` must read it without `.await`). After every `self.index.replace(...)` (both `on_event(HostStarting)` from Task 2 and the new `/reload-skills` handler below), also write `*self.catalog_cache.write().unwrap() = self.index.catalog().await;` before returning effects.
+- [x] Add a failing test: `manifest()` includes a `SystemPromptSegment{ id: "internal:user-skills:catalog", .. }` in `contributions.prompt_segments` when the cache is `Some(_)`, and includes **no** such segment when the cache is `None` (covers spec acceptance criterion 3 — a user with zero skills pays zero tokens). Run `cargo test -p otto user_skills:: -- --nocapture`, expect failure, then make `manifest()` read the cache synchronously (`self.catalog_cache.read().unwrap()`) and conditionally push the segment.
+- [x] Add the `/skills` slash command's argument handling: no argument → render a listing from `SkillIndex::sorted_snapshot()` as `PushNote` lines (name, description truncated for display, source path, scope badge — reuse `SkillScope`'s existing `label()` used by the current plain listing) as one or more `Effect::PushNote`s; `<name>` argument → look up in the index, and (a) if trust denies it, emit the existing refusal-style note pointing at the trust modal flow (reuse `crate::plugin::builtin::user_slash_commands::trust`'s `Effect::OpenScreen{id:"trust.modal",..}` + `Effect::StashPendingSlash` pattern for a project-local skill with bundled executables that hasn't been trusted yet — this is the ONE path, per the corrected spec, where the interactive consent prompt is reachable, since the `skill` tool itself can only refuse) or (b) if allowed, push the full body + skill root as one or more `PushNote`s (same content the tool renders); unknown name → `PushNote` naming near-matches (reuse the `nearest`/`shared_prefix` helpers already in `skill_tool.rs`, or extract them to a shared location if `mod.rs` needs them too — implementer's call, document which).
+- [x] Add failing tests: `/skills` (no arg) lists every discovered skill's name, description, source, and scope, sorted scope-then-name; `/skills <name>` on an allowed skill pushes the body + root; `/skills <name>` on a gated, untrusted project skill triggers the trust-modal effects instead of leaking the body; `/skills <unknown>` names near-matches. Run `cargo test -p otto user_skills:: -- --nocapture`, expect failures, then implement.
+- [x] Add the `/reload-skills` slash command: rediscover, `self.index.replace(...)`, refresh `catalog_cache`, re-emit `register_skill_tool_effects()` (so the tool's name enum stays live), emit `Effect::ReloadPromptSegments` (so a running session's system prompt picks up the change), and push a `PushNote` reporting the new count — mirroring `/reload-agents`'s existing shape.
+- [x] Add a failing test asserting `/reload-skills`'s effects include a `RegisterInProcessTool`, the new reload-prompt-segments effect, and a count-reporting `PushNote`. Run, fail, implement, pass.
+- [x] Run `cargo build` (required — the TUI spawns `otto-tool-fs` at runtime) and launch `cargo run -p otto` against a scratch `HOME` containing a synthetic `~/.claude/skills/` tree; confirm `/skills` lists it, `/skills <name>` injects the body, and `/reload-skills` picks up a file added mid-session (including the live system-prompt segment, not just the tool and the listing).
+- [x] Record the public-interface check: ADDS the `<name>` argument form to `/skills`, ADDS `/reload-skills`, and ADDS a new (currently plugin-internal, non-breaking) `Effect` variant. All additive; document `/skills`/`/reload-skills` in `README.md` (Task 4).
+- [x] Run `cargo fmt --all`, `cargo clippy --workspace --all-targets`, `cargo test --workspace`, and commit with `git commit -m "otto: add /skills injection, /reload-skills, and the live catalog segment"`.
 
 ### Task 4: Documentation and E1 close-out
 
 **Files:**
-- Modify: `README.md`, `PRD.md`
+- Modify: `README.md`, `PRD.md`, `CHANGELOG.md`, `docs/superpowers/specs/2026-09-09-issue-83-claude-code-compat-design.md`, `docs/superpowers/plans/2026-09-09-issue-83-claude-code-compat.md`
 
-- [ ] Add a "User-defined skills" section to `README.md` mirroring the existing commands/hooks/agents sections: the four discovery paths, the `SKILL.md` format with a worked example, the three disclosure levels, `/skills` / `/reload-skills`, the level-3 trust prompt, and the new `~/.otto/skills/` + `.otto/skills/` rows in the on-disk paths table.
-- [ ] Add the tool-name divergence caveat to `README.md` — Claude Code assets name Claude Code tools; prose is left alone, frontmatter tool names that match nothing are dropped with a load-time warning, and a `[compat] tool_aliases` map is a deferred follow-up.
-- [ ] Add sub-project E to `PRD.md`'s roadmap with E1 marked shipped and E2–E4 pending.
-- [ ] Flip the spec's `Status:` line for the E1 portion and tick this stream's checkboxes in place — no archive directory, per house style.
+- [x] Rewrite README's existing "Skills are a separate surface..." paragraph (around the user-defined-agents section) in place — do not add a redundant second section — to cover: the five discovery tiers (including `.github/skills/`, already documented), the `SKILL.md` format with a worked example, the three disclosure levels, the `skill` tool, `/skills` (listing) and `/skills <name>` (direct injection), `/reload-skills`, the level-3 trust prompt and which surface can actually show it, and the new on-disk paths (`.otto/skills/`, `~/.otto/skills/`) in the on-disk paths table if one exists.
+- [x] Add the tool-name divergence caveat to `README.md` — Claude Code assets name Claude Code tools; prose is left alone, and the tool-name divergence caveat in `README.md` correctly describes E1's advisory-only `allowed-tools` handling: unmatched names are neither dropped nor filtered, just carried through unchanged. Enforcement, including dropping unmatched names, is E4's job. A `[compat] tool_aliases` map is a deferred follow-up.
+- [x] Add sub-project E to `PRD.md`'s roadmap with E1 marked shipped and E2–E4 pending.
+- [x] Confirm `CHANGELOG.md` has an `[Unreleased]` entry for the `skill` tool, `/skills <name>` injection, and `/reload-skills` (added incrementally in Tasks 2-3, not deferred to the release-cut PR).
+- [x] Flip the spec's `Status:` line to mark E1 fully implemented (E2-E4 remain pending) and tick this stream's checkboxes (Tasks 1-4) in place — no archive directory, per house style.
 - [ ] Open the PR against `main` with a body referencing `savvagent/otto#83`, and run the three required review passes (Rust-expert, architecture, and an independent diff-only `security-review` that receives **only** the PR diff — no spec, no plan, no summary).
-- [ ] After merge, cut the dedicated v0.27.0 release PR per `RELEASING.md` (version bump across `workspace.package.version` and every internal `workspace.dependencies` entry, `CHANGELOG.md`, tag, GitHub Release).
+- [ ] After merge, cut a dedicated release PR per `RELEASING.md`. **Note:** the version line below (`v0.27.0`) was written when this plan was drafted and is now stale — `main` has since advanced past it for unrelated work (already at `0.29.1` as of this task). Compute the actual next version at cut time from whatever `main` is on then (this stream adds a tool + two slash-command surfaces + a new `Effect` variant — all additive — so it is a MINOR bump per this repo's pre-1.0 SemVer convention, e.g. `0.30.0` if nothing else has shipped in between; confirm against `main`'s actual current version rather than assuming).
 
 ---
 

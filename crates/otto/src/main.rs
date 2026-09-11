@@ -1241,6 +1241,7 @@ pub(crate) async fn dispatch_slash_command(
                 apply_pending_in_process_tools(app, host_slot).await;
                 apply_pending_routing_reload(app, host_slot).await;
                 apply_pending_routing_show(app, host_slot).await;
+                apply_pending_prompt_segments_reload(app, host_slot).await;
                 return;
             }
             Err(crate::plugin::slash::SlashError::Unknown(_)) => {
@@ -2154,6 +2155,39 @@ fn render_routing_show(app: &mut App, rules: &otto_host::RoutingRules) {
         ),
         None => app.push_note(rust_i18n::t!("routing.show-no-last").to_string()),
     }
+}
+
+/// Drain `app.pending_prompt_segments_reload` (set by
+/// `Effect::ReloadPromptSegments`) and re-push every enabled plugin's
+/// current `SystemPromptSegment`s onto the active host, replacing what
+/// it has. No-op when nothing is queued or when no host exists yet
+/// (the plugin can re-emit the effect after `/connect` if needed).
+/// Mirrors `apply_pending_routing_reload`'s guard-drop discipline: the
+/// host-swap `Arc<RwLock<Option<Arc<Host>>>>`'s read guard is dropped by
+/// `current_host` before we ever touch it, and the plugin registry's
+/// `RwLock` guard is dropped (it's a temporary that ends with the
+/// `active_prompt_segments()` call, a synchronous method) before the
+/// synchronous `host.set_prompt_segments` call — no guard is held across
+/// an `.await`.
+pub(crate) async fn apply_pending_prompt_segments_reload(app: &mut App, host_slot: &HostSlot) {
+    if app.pending_prompt_segments_reload.take().is_none() {
+        return;
+    }
+    let Some(host) = current_host(host_slot).await else {
+        tracing::warn!(
+            "apply_pending_prompt_segments_reload: no host yet; reload dropped — \
+             re-emit ReloadPromptSegments after /connect if needed"
+        );
+        return;
+    };
+    let Some(registry) = &app.plugin_registry else {
+        tracing::warn!(
+            "apply_pending_prompt_segments_reload: plugin runtime not installed; reload dropped"
+        );
+        return;
+    };
+    let segments = registry.read().await.active_prompt_segments();
+    host.set_prompt_segments(segments);
 }
 
 /// Drain `app.pending_gate` (set by `Effect::RegisterPreToolGate`) and
@@ -3437,6 +3471,13 @@ async fn run_app(
     apply_pending_pool_add(app, &host_slot, &project_root, &tool_bins, true).await;
     apply_pending_gate(app, &host_slot).await;
     apply_pending_in_process_tools(app, &host_slot).await;
+    // `HostStarting` subscribers (e.g. `internal:user-skills`) can populate
+    // state that changes their own prompt segment only once this event
+    // fires — after the one-shot startup snapshot above main() already
+    // pushed to the host. Re-push now so a segment that only exists once
+    // discovery has run (the skills catalog) is present for the first
+    // turn rather than only after a manual `/reload-*` command.
+    apply_pending_prompt_segments_reload(app, &host_slot).await;
 
     // Populate `App::cached_models` from the bootstrap host's pool so the
     // `/model` picker has rows the moment the user opens it. Previously
@@ -3834,6 +3875,7 @@ async fn run_app(
             apply_pending_in_process_tools(app, &host_slot).await;
             apply_pending_routing_reload(app, &host_slot).await;
             apply_pending_routing_show(app, &host_slot).await;
+            apply_pending_prompt_segments_reload(app, &host_slot).await;
             continue;
         }
 
@@ -4152,6 +4194,7 @@ async fn run_app(
                                     apply_pending_in_process_tools(app, &host_slot).await;
                                     apply_pending_routing_reload(app, &host_slot).await;
                                     apply_pending_routing_show(app, &host_slot).await;
+                                    apply_pending_prompt_segments_reload(app, &host_slot).await;
                                     handled = true;
                                 }
                             }

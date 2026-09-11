@@ -260,8 +260,17 @@ Cleared the four largest items off the v0.4 backlog in one release: a second com
 
 **Out of scope (kept for v0.6+).** Default-on sandboxing (v0.5 ships opt-in); Windows AppContainer; macOS profile fuzzing; `tool-grep`; structured `tool-edit`; richer `glob`; crates.io publication; SPP `list_models` for `/model` validation; LSP / ACP IDE integration.
 
+### M11 · Claude Code compatibility, stream E1 — skills (✅ done)
+
+Closed issue #83's original complaint ("`/skills` command doesn't exist") and the first of four planned streams widening otto's `.claude/`-compat courtesy into an actual contract — see `docs/superpowers/specs/2026-09-09-issue-83-claude-code-compat-design.md`.
+
+- Five-tier `SKILL.md` discovery (`<project>/.otto/skills/`, `<project>/.claude/skills/`, `<project>/.github/skills/`, `~/.otto/skills/`, `~/.claude/skills/`), reusing sub-project C's precedence rule (project beats user, `.otto/` beats `.claude/`).
+- Progressive disclosure across three levels: a level-1 name+description catalog folded into the system prompt (omitted entirely with zero skills discovered), a level-2 body returned by the built-in `skill` tool or `/skills <name>`, and level-3 bundled `scripts/`/`references/`/`assets/` read on demand via `tool-fs`/`tool-bash`.
+- `/skills` (listing) and `/skills <name>` (direct injection, with the same project-trust gate user-defined commands use for a skill that bundles executables), plus `/reload-skills` to rescan and refresh the live catalog segment without restarting the session.
+
 ### Backlog beyond v0.5.0
 
+- **Claude Code compatibility, streams E2–E4.** Continues the sub-project split M11 started: **E2** (Claude Code plugin bundles — `installed_plugins.json`, project-local `.claude-plugin/plugin.json` trees, namespaced commands/agents/skills/hooks/MCP servers), **E3** (hook parity — `SessionEnd`, `Notification`, `PreCompact`, the `PostToolUse` matcher lift, plugin-supplied hooks), and **E4** (command parity — enforcing `allowed-tools`, plugin command namespacing, `disable-model-invocation`). All three are drafted in the same design spec as M11 but not yet implemented.
 - **Sandbox: default-on + scope-tightening.** v0.5 ships opt-in. Promote to default-on once Layer-2 permission defaults are proven non-annoying in real-world use. Document explicitly that the bwrap / sandbox-exec layer constrains *writes and network*, not *reads* — a compromised tool can still read `~/.ssh/`, `~/.aws/credentials`, browser profiles, etc. Combined with `tool-bash`'s default `allow_net = true`, that's an exfil path worth either narrowing or surfacing in the README before promotion. Windows AppContainer + Job Objects support remains the eventual target.
 - **Tools.** `tool-grep`, structured `tool-edit`, richer `glob` than the fs server's.
 - **Crates.io publication** of `otto-protocol`, `otto-mcp`, `otto-host` once an external consumer wants them as libraries.

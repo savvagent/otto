@@ -132,7 +132,7 @@ provider has a key on file.
 | `/save-canvas [path] [--block N] [--open]` | Write the most recent HTML canvas to a file. Default path is `otto-canvas-<id>.html` in the current directory. `--block N` targets a specific canvas by id; `--open` opens the file in the system browser after writing. |
 | `/resume` | Re-open a previously-saved transcript and continue from where it ended. With no args opens a picker; takes an absolute path or a bare basename relative to `~/.otto/transcripts/`. |
 | `/clear` | Reset the conversation history (and the visible log). |
-| `/skills` | List skills discovered from `.otto/skills/*/SKILL.md` and `.claude/skills/*/SKILL.md` at both project and user scope, plus the project's `.github/skills/*/SKILL.md`, including each skill's name, source tier, and file-supplied description (clearly marked as untrusted text). |
+| `/skills` | List every discovered skill (name, source tier, scope, and file-supplied description, marked as untrusted text), or `/skills <name>` to inject that skill's full instructions directly into the conversation. See "User-defined agents" below for the five discovery tiers and the level-3 trust gate. |
 | `/tools` | List the tools registered with the current host, with their permission verdict. |
 | `/bash <cmd>` | Run a shell command through `tool-bash`. `--net` / `--no-net` toggle network access for that single call. |
 | `/sandbox` | Show or change OS-level sandbox settings; `/sandbox on` / `/sandbox off` persist to `~/.otto/sandbox.toml`. |
@@ -263,22 +263,6 @@ Drop markdown files into any of these directories and Otto exposes them as subag
 
 Same precedence as user-defined slash commands and hooks (project beats user; `.otto/` beats `.claude/`). First-wins dedup by filename slug. `/reload-agents` rescans without restarting the session.
 
-Skills are a separate surface from these user-defined agents. Run `/skills` to list the skills discovered across five tiers, highest precedence first:
-
-```
-<project>/.otto/skills/<name>/SKILL.md
-<project>/.claude/skills/<name>/SKILL.md
-<project>/.github/skills/<name>/SKILL.md
-~/.otto/skills/<name>/SKILL.md
-~/.claude/skills/<name>/SKILL.md
-```
-
-Project beats user and `.otto/` beats `.claude/`; the first tier to claim a slug wins, and a shadowed copy is reported so an author editing the losing file finds out why nothing changed. That output reports each skill's name, source tier, and file-supplied description, with the description labeled as untrusted text; skills that fail to parse are skipped and reported as a count.
-
-`<project>/.github/skills/` is Copilot CLI's location rather than a Claude Code one, and otto reads it so repos that already keep skills there — this one included — work without moving them. It has no user-scope counterpart because Copilot CLI only defines it inside a repository, and it ranks below `.claude/` so a skill written in the format otto's own docs describe wins a slug collision. For the trust gate it counts as project scope like the other two: those skills arrive with the checkout.
-
-`/reload-agents` only rescans the subagent directories above and does not change the skills list.
-
 ### Format
 
 ```markdown
@@ -309,6 +293,156 @@ Subagent depth is capped by `OTTO_AGENT_MAX_DEPTH` (default 3); a subagent can s
 ### Reload
 
 Run `/reload-agents` to rescan all four `agents/` directories without restarting the session.
+
+### Skills
+
+Skills are a separate surface from these user-defined agents: instead of a
+subagent the model spawns, a skill is a packaged set of instructions the
+model *loads on demand*, following the Claude Code `SKILL.md` convention.
+Run `/skills` to list the skills discovered across five tiers, highest
+precedence first:
+
+```
+<project>/.otto/skills/<name>/SKILL.md
+<project>/.claude/skills/<name>/SKILL.md
+<project>/.github/skills/<name>/SKILL.md
+~/.otto/skills/<name>/SKILL.md
+~/.claude/skills/<name>/SKILL.md
+```
+
+Project beats user and `.otto/` beats `.claude/`; the first tier to claim a
+slug wins, and a shadowed copy is reported so an author editing the losing
+file finds out why nothing changed. That output reports each skill's name,
+source tier, and file-supplied description, with the description labeled as
+untrusted text; skills that fail to parse are skipped and reported as a
+count.
+
+`<project>/.github/skills/` is Copilot CLI's location rather than a Claude
+Code one, and otto reads it so repos that already keep skills there — this
+one included — work without moving them. It has no user-scope counterpart
+because Copilot CLI only defines it inside a repository, and it ranks below
+`.claude/` so a skill written in the format otto's own docs describe wins a
+slug collision. For the trust gate it counts as project scope like the
+other two: those skills arrive with the checkout.
+
+`/reload-agents` only rescans the subagent directories above and does not
+change the skills list — use `/reload-skills` below instead.
+
+#### Skill format
+
+A skill is a *directory* (not a single file, since it may bundle other
+resources), holding a `SKILL.md`:
+
+```markdown
+---
+name: rust-engineer
+description: Use when building Rust systems where memory safety, ownership, and performance matter.
+allowed-tools: tool-fs:read_file, tool-grep:search
+---
+
+# Rust engineer
+
+You are an expert in idiomatic, safe Rust. When invoked, ...
+```
+
+| Key | Required | Purpose |
+|---|---|---|
+| `description` | yes | The only field shown to the model before it decides to load the skill; missing or blank is a hard parse error |
+| `name` | no | Defaults to the directory slug; a frontmatter value that disagrees warns and the slug still wins |
+| `allowed-tools` | no | Comma-separated string or YAML list. Parsed, but advisory only for now — see "Tool-name divergence" below |
+
+Everything else in the directory — a `scripts/` subdirectory, `references/`,
+`assets/`, or any other file — is a level-3 resource read on demand rather
+than parsed frontmatter (see below).
+
+#### Progressive disclosure
+
+Skills load in three levels, so a skill's full size only costs tokens once
+it's actually relevant:
+
+1. **Level 1 — catalog.** Every discovered skill's `name` and `description`
+   render into one system-prompt segment, so the model always knows what's
+   available. Zero skills discovered means the segment is omitted entirely
+   — there is no empty catalog costing tokens for nothing.
+2. **Level 2 — body.** The rest of `SKILL.md` is returned only when the
+   skill is actually loaded, via the `skill` tool or `/skills <name>` —
+   never placed in the system prompt.
+3. **Level 3 — bundled files.** A skill's `scripts/`, `references/`,
+   `assets/`, or other sibling files are read on demand with
+   `tool-fs`/`tool-bash`. The level-2 response always states the skill's
+   root directory so relative paths in the instructions resolve.
+
+#### The `skill` tool
+
+Once at least one skill is discovered, otto registers a built-in `skill`
+tool the model can call with `{ "name": "<skill>" }`; the `name` argument
+is a live enum of currently-known skills, so a stale or mistyped name fails
+schema validation before it reaches the handler. The tool returns the
+skill's full body plus its root directory (level 2).
+
+#### `/skills` and `/reload-skills`
+
+- `/skills` with no argument lists every discovered skill: name, source
+  tier, scope, and description (marked as untrusted text since it comes
+  from a file otto did not author).
+- `/skills <name>` injects that skill's full body directly into the
+  conversation — the same payload the `skill` tool returns to the model,
+  minus needing the model to ask for it first. An unknown name gets
+  near-match suggestions rather than a bare "not found".
+- `/reload-skills` rescans all five tiers, re-registers the `skill` tool
+  against the refreshed set (so its name enum stays live), refreshes the
+  level-1 catalog for the running session (a turn already in flight, or one
+  that starts right after, would otherwise never see the change), and
+  reports how many skills are now indexed.
+
+#### Trust prompt
+
+A `SKILL.md` file is inert markdown — level 1 and level 2 execute nothing.
+Level 3 is different: a project-local skill whose directory bundles an
+executable or a `scripts/` subdirectory is asking the model to run code
+that arrived with the checkout, so the first time `/skills <name>` loads
+such a skill, otto asks whether to trust the project — the same modal and
+the same `~/.otto/trusted-projects.json` store user-defined commands use.
+User-scope skills (`~/.otto/skills/`, `~/.claude/skills/`) never prompt;
+they live in the user's own home directory rather than arriving with a
+repo.
+
+This prompt is reachable **only** through `/skills <name>`. The `skill`
+tool has no interactive channel back to the user — when the model calls it
+for a gated, not-yet-trusted skill, the tool can only refuse and tell the
+model to point the user at `/skills <name>` instead; it can never pop the
+modal itself.
+
+Unlike user-defined commands, where "trust this session only" still blocks
+`!shell` execution inside the expanded body, a skill has no equivalent
+partial-trust mode: its body is either withheld entirely or released in
+full, since there is no template-expansion step to intercept a bundled
+script reference the way command expansion can. Choosing "session only" for
+a skill therefore releases its complete body for the rest of the session —
+functionally the same as "always trust", except the decision is not written
+to `~/.otto/trusted-projects.json` and so does not carry over to the next
+session.
+
+#### Tool-name divergence
+
+Claude Code's own commands, agents, and skills name Claude Code's tools
+(`Read`, `Bash`, `Grep`, `Edit`); otto's model sees otto's own tool names
+instead (`tool-fs:read_file`, `tool-bash:run`, `tool-grep:search`, …).
+Three consequences:
+
+- Prose inside a skill's body ("use the Read tool to check…") is left
+  exactly as written — translating it automatically would risk corrupting
+  instructions a capable model can already reinterpret against otto's
+  actual tools.
+- A frontmatter `allowed-tools` entry is parsed, but — like the
+  `allowed-tools` caveat on user-defined commands above — is not yet
+  enforced against the running tool registry; a name that doesn't match
+  anything otto registers is neither an error nor filtered out today.
+  Enforcing it, including dropping non-matching names with a load-time
+  warning, is planned as part of command-parity follow-up work.
+- A `[compat] tool_aliases` table mapping Claude Code tool names to otto's
+  own is the obvious follow-up for translating `allowed-tools`
+  automatically; it does not exist yet.
 
 ### Scrolling the conversation log
 

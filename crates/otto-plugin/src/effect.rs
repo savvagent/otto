@@ -239,6 +239,16 @@ pub enum Effect {
         /// `Effect`'s derives.
         handler: crate::InProcessToolHandlerArc,
     },
+    /// Re-read every enabled plugin's current `SystemPromptSegment`s and
+    /// push them onto the active host, replacing what it has. Emitted
+    /// by a plugin whose prompt segment can change at runtime (e.g.
+    /// `/reload-skills`) after a manifest-affecting state change, since
+    /// `Host::set_prompt_segments` is otherwise only ever called once,
+    /// at TUI startup. Sets `App::pending_prompt_segments_reload` so
+    /// `main.rs::run_app` can drain it with host access (see
+    /// `Effect::ReloadRoutingRules` for the canonical pattern this
+    /// mirrors).
+    ReloadPromptSegments,
 }
 
 impl std::fmt::Debug for Effect {
@@ -347,6 +357,7 @@ impl std::fmt::Debug for Effect {
                 .field("spec", spec)
                 .field("handler", &"<dyn InProcessToolHandler>")
                 .finish(),
+            Effect::ReloadPromptSegments => f.write_str("ReloadPromptSegments"),
         }
     }
 }
@@ -522,6 +533,7 @@ mod added_effects_smoke {
             name: "review".into(),
             args: vec!["HEAD".into()],
         };
+        let _ = Effect::ReloadPromptSegments;
     }
 }
 
