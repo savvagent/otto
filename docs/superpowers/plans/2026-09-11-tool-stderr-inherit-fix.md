@@ -133,9 +133,11 @@ moves while this branch is open). Internal bug fix, no public-interface change �
   }
   ```
 
-  Check the exact import path/name for `ChildStderr` already in scope in this file
-  (`grep -n "^use " crates/otto-host/src/tools.rs | grep -i rmcp`) and match it rather than
-  introducing a second import path for the same type.
+  No `ChildStderr` import currently exists in this file — the helper above sidesteps that by using
+  the fully-qualified `tokio::process::ChildStderr` inline rather than adding a `use`. Confirm with
+  `grep -n "^use " crates/otto-host/src/tools.rs | grep -i rmcp` that this is still true before
+  adding the helper (another agent may be working concurrently in this repo); if a `ChildStderr`
+  import has since been added, reuse it instead of the fully-qualified form.
 
 - [ ] **Step 4: Run the test again — it should now compile and pass.**
   ```bash
@@ -170,7 +172,12 @@ moves while this branch is open). Internal bug fix, no public-interface change �
   Update its doc comment (currently says "Redirect a tool subprocess's stderr to..." describing an
   in-place mutation) to describe returning the `Stdio` instead, and keep the existing "never inherit
   the TUI's terminal, not must log everything" invariant sentence — it is still true and still the
-  point of this function.
+  point of this function. Drop the doc comment's second paragraph ("Must be called *after*
+  `apply_sandbox` ... would otherwise drop our stderr configuration") — it described an ordering
+  requirement on `cmd` mutation that no longer applies now that this function doesn't touch `cmd` at
+  all. The real ordering constraint (stderr is wired in via `spawn_tool_transport` only after
+  `apply_sandbox` has already finished mutating `cmd` at each call site) still holds structurally;
+  it just isn't this function's concern to document anymore.
 
 - [ ] **Step 6: Update the three call sites.**
 
