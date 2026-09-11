@@ -137,6 +137,7 @@ pub(crate) fn register_builtins(
         Box::new(builtin::user_skills::UserSkillsPlugin::with_roots(
             project_root.clone(),
             dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(".")),
+            trust_levels.clone(),
         )),
         Box::new(builtin::user_slash_commands::UserSlashCommandsPlugin::new(
             trust_levels,

@@ -78,6 +78,13 @@ pub struct UserSkillsPlugin {
     /// rather than recomputed because `/skills` (no arg) reads `index`
     /// only — it does not re-run `discover()`.
     last_warning_count: usize,
+    /// Shared with `App::trust_levels` (via `internal:user-slash-commands`'
+    /// own `TrustMap`), read under a read-lock by the level-3 trust gate.
+    /// This is the same live, in-memory map `user_slash_commands` reads —
+    /// not a fresh disk read per call — so a `SessionTextOnly` decision
+    /// made in the trust modal for one of them is honored by the other in
+    /// the same session, and neither re-reopens the modal on every call.
+    trust_levels: crate::plugin::builtin::user_slash_commands::TrustMap,
 }
 
 impl UserSkillsPlugin {
@@ -90,18 +97,33 @@ impl UserSkillsPlugin {
             tracing::warn!("user-skills: failed to resolve home directory");
             PathBuf::from(".")
         });
-        Self::with_roots(project_root, user_home)
+        // Not used by real app wiring (`register_builtins` always calls
+        // `with_roots` with the shared `App::trust_levels` map) — this is
+        // a convenience constructor, so a fresh, empty map is fine here.
+        Self::with_roots(
+            project_root,
+            user_home,
+            std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::BTreeMap::new())),
+        )
     }
 
     /// Both roots are explicit so tests can point the user tiers at a
     /// tempdir instead of the developer's real `~/.claude/skills/`.
-    pub fn with_roots(project_root: PathBuf, user_home: PathBuf) -> Self {
+    /// `trust_levels` is the same shared map `internal:user-slash-commands`
+    /// reads and writes, so the two plugins never disagree about whether a
+    /// project has been trusted this session.
+    pub fn with_roots(
+        project_root: PathBuf,
+        user_home: PathBuf,
+        trust_levels: crate::plugin::builtin::user_slash_commands::TrustMap,
+    ) -> Self {
         Self {
             project_root,
             user_home,
             index: SkillIndex::empty(),
             catalog_cache: StdRwLock::new(None),
             last_warning_count: 0,
+            trust_levels,
         }
     }
 
@@ -116,7 +138,7 @@ impl UserSkillsPlugin {
         let handler = skill_tool::handler_arc(
             self.index.clone(),
             self.project_root.clone(),
-            self.user_home.clone(),
+            self.trust_levels.clone(),
         );
         vec![Effect::RegisterInProcessTool { spec, handler }]
     }
@@ -168,7 +190,8 @@ impl UserSkillsPlugin {
         let all = self.index.sorted_snapshot().await;
         let warning_note = if self.last_warning_count > 0 {
             Some(note_line(format!(
-                "warning: skipped {} invalid skill definition(s); see logs for details",
+                "warning: skipped {} skill definition(s) due to parse errors or tier shadowing; \
+                 see logs for details",
                 self.last_warning_count
             )))
         } else {
@@ -202,12 +225,17 @@ impl UserSkillsPlugin {
     }
 
     /// `/skills <name>`: inject the skill's full body directly into the
-    /// conversation, subject to the level-3 trust gate. Unlike the
-    /// `skill` tool (which returns an *error string* on a trust
-    /// refusal, since the model must not be told to route around it),
-    /// this is a user-initiated command, so a gated skill instead opens
-    /// the trust modal — the one path the spec calls out where the
-    /// interactive trust prompt is reachable for a skill.
+    /// conversation, subject to the level-3 trust gate. This mirrors
+    /// `internal:user-slash-commands`' own `handle_slash`, which submits
+    /// an expanded command body via `Effect::PromptSend` — the payload
+    /// actually reaches `Host`'s conversation history and triggers a
+    /// turn, unlike `Effect::PushNote`, which only appends to the TUI's
+    /// own display log. Unlike the `skill` tool (which returns an
+    /// *error string* on a trust refusal, since the model must not be
+    /// told to route around it), this is a user-initiated command, so a
+    /// gated skill instead opens the trust modal — the one path the spec
+    /// calls out where the interactive trust prompt is reachable for a
+    /// skill.
     async fn show_skill(&mut self, name: &str) -> Result<Vec<Effect>, PluginError> {
         let Some(spec) = self.index.get(name).await else {
             let known = self.index.names_snapshot().await;
@@ -219,13 +247,17 @@ impl UserSkillsPlugin {
         match crate::plugin::builtin::user_skills::trust::evaluate(
             &spec,
             &self.project_root,
-            &self.user_home,
-        ) {
-            SkillTrust::Allowed => Ok(vec![note_line(skill_tool::render_skill(
-                &spec.name,
-                &spec.root.display().to_string(),
-                &spec.body,
-            ))]),
+            &self.trust_levels,
+        )
+        .await
+        {
+            SkillTrust::Allowed => Ok(vec![Effect::PromptSend {
+                text: skill_tool::render_skill(
+                    &spec.name,
+                    &spec.root.display().to_string(),
+                    &spec.body,
+                ),
+            }]),
             SkillTrust::NeedsConsent { .. } => Ok(vec![
                 // Stash so the trust modal can re-run `/skills <name>`
                 // once the user decides — same sequence
@@ -370,6 +402,12 @@ mod tests {
         fs::write(dir.join("SKILL.md"), body).expect("write skill");
     }
 
+    /// An empty shared trust map — no project has been decided yet.
+    /// Mirrors `user_slash_commands::mod.rs` tests' own `empty_trust()`.
+    fn empty_trust() -> crate::plugin::builtin::user_slash_commands::TrustMap {
+        Arc::new(RwLock::new(std::collections::BTreeMap::new()))
+    }
+
     fn note_text(effect: &Effect) -> String {
         match effect {
             Effect::PushNote { line } => line.spans.iter().map(|span| span.text.clone()).collect(),
@@ -409,8 +447,11 @@ mod tests {
     async fn manifest_omits_catalog_segment_when_no_skills() {
         let project = tempdir().expect("tempdir");
         let home = tempdir().expect("tempdir");
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -438,8 +479,11 @@ mod tests {
             "otto-development",
             "---\nname: otto-development\ndescription: Build Otto changes\n---\nBody",
         );
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -460,8 +504,11 @@ mod tests {
     async fn handle_slash_empty_state_reports_no_skills_discovered() {
         let project = tempdir().expect("tempdir");
         let home = tempdir().expect("tempdir");
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
 
         let effects = plugin.handle_slash("skills", vec![]).await.expect("slash");
 
@@ -481,8 +528,11 @@ mod tests {
             "broken",
             "---\nname: broken\n---\nBody",
         );
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         // `/skills` (no arg) reads the already-populated index rather than
         // re-running discovery, so the index must be populated first —
         // exactly as `HostStarting` does at real startup.
@@ -497,7 +547,7 @@ mod tests {
         assert_eq!(lines[0], "no skills discovered");
         assert_eq!(
             lines[1],
-            "warning: skipped 1 invalid skill definition(s); see logs for details"
+            "warning: skipped 1 skill definition(s) due to parse errors or tier shadowing; see logs for details"
         );
     }
 
@@ -518,8 +568,11 @@ mod tests {
             "---\nname: rust-engineer\ndescription: Build Rust systems\n---\nBody",
         );
 
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -575,8 +628,11 @@ mod tests {
             "---\nname: shared\ndescription: User copy\n---\nBody",
         );
 
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -591,7 +647,7 @@ mod tests {
         assert!(lines[1].contains("Project copy"));
         assert_eq!(
             lines[2],
-            "warning: skipped 1 invalid skill definition(s); see logs for details"
+            "warning: skipped 1 skill definition(s) due to parse errors or tier shadowing; see logs for details"
         );
     }
 
@@ -608,8 +664,11 @@ mod tests {
             "first",
             "---\nname: first\ndescription: First skill\n---\nBody",
         );
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -636,8 +695,21 @@ mod tests {
         );
     }
 
+    /// Extracts the text of a `PromptSend` effect, panicking on any other
+    /// effect shape. `/skills <name>` must submit the body to the
+    /// provider as if the user had typed it — `Effect::PromptSend` is
+    /// the only effect that reaches `Host`'s conversation history and
+    /// triggers a turn; `Effect::PushNote` only appends to the TUI's own
+    /// display log and is never seen by the model.
+    fn prompt_text(effect: &Effect) -> String {
+        match effect {
+            Effect::PromptSend { text } => text.clone(),
+            other => panic!("expected PromptSend, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
-    async fn skills_with_name_pushes_body_and_root_for_an_allowed_skill() {
+    async fn skills_with_name_sends_body_and_root_as_a_prompt_for_an_allowed_skill() {
         let project = tempdir().expect("tempdir");
         let home = tempdir().expect("tempdir");
         write_skill(
@@ -646,8 +718,11 @@ mod tests {
             "otto-development",
             "---\nname: otto-development\ndescription: Build Otto changes\n---\nFull instructions here",
         );
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -659,7 +734,13 @@ mod tests {
             .expect("slash");
 
         assert_eq!(effects.len(), 1);
-        let text = note_text(&effects[0]);
+        assert!(
+            matches!(&effects[0], Effect::PromptSend { .. }),
+            "the skill body must be sent as a prompt so the model sees it, not pushed as a \
+             display-only note: {:?}",
+            effects[0]
+        );
+        let text = prompt_text(&effects[0]);
         assert!(
             text.contains("Full instructions here"),
             "body must be injected, got: {text}"
@@ -685,8 +766,11 @@ mod tests {
         fs::create_dir_all(&scripts_dir).expect("mkdir scripts");
         fs::write(scripts_dir.join("deploy.sh"), "#!/bin/sh\necho hi").expect("write script");
 
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -719,6 +803,79 @@ mod tests {
         );
     }
 
+    /// Regression test for the trust-gate bug: once the user picks
+    /// "session-text-only" in the trust modal, `/skills <name>` for the
+    /// same gated skill must succeed on the very next call — not reopen
+    /// the modal again — and nothing needs to be written to disk for
+    /// that to work. Before the fix, `trust::evaluate` re-read
+    /// `~/.otto/trusted-projects.json` on every call, which never
+    /// reflects a `SessionTextOnly` decision (deliberately never
+    /// persisted), so the modal reopened every time.
+    #[tokio::test]
+    async fn skills_with_name_honors_session_text_only_decision_without_reopening_modal() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "deployer",
+            "---\nname: deployer\ndescription: Deploys things\n---\nrun scripts/deploy.sh",
+        );
+        let scripts_dir = project.path().join(".otto/skills/deployer/scripts");
+        fs::create_dir_all(&scripts_dir).expect("mkdir scripts");
+        fs::write(scripts_dir.join("deploy.sh"), "#!/bin/sh\necho hi").expect("write script");
+
+        let trust = empty_trust();
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            trust.clone(),
+        );
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        // First call: no decision yet, gated.
+        let first = plugin
+            .handle_slash("skills", vec!["deployer".into()])
+            .await
+            .expect("slash");
+        assert!(
+            first
+                .iter()
+                .any(|e| matches!(e, Effect::OpenScreen { id, .. } if id == "trust.modal")),
+            "expected the modal to open on the first call, got: {first:?}"
+        );
+
+        // Simulate the user choosing "session-text-only" in the trust
+        // modal, exactly as `Effect::SetTrustLevel`'s handler would:
+        // insert into the shared map directly, no disk write.
+        trust.write().await.insert(
+            project.path().to_path_buf(),
+            crate::plugin::builtin::user_slash_commands::trust::TrustLevel::SessionTextOnly,
+        );
+
+        // Second call, same session: must succeed as a PromptSend, not
+        // reopen the modal.
+        let second = plugin
+            .handle_slash("skills", vec!["deployer".into()])
+            .await
+            .expect("slash");
+        assert!(
+            !second
+                .iter()
+                .any(|e| matches!(e, Effect::OpenScreen { .. })),
+            "the modal must not reopen once session-text-only is granted, got: {second:?}"
+        );
+        assert_eq!(second.len(), 1);
+        let text = prompt_text(&second[0]);
+        assert!(
+            text.contains("run scripts/deploy.sh"),
+            "the body must now be sent, got: {text}"
+        );
+    }
+
     #[tokio::test]
     async fn skills_with_unknown_name_reports_near_matches() {
         let project = tempdir().expect("tempdir");
@@ -729,8 +886,11 @@ mod tests {
             "rust-engineer",
             "---\nname: rust-engineer\ndescription: Build Rust systems\n---\nBody",
         );
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
         plugin
             .on_event(HostEvent::HostStarting)
             .await
@@ -757,8 +917,11 @@ mod tests {
             "otto-development",
             "---\nname: otto-development\ndescription: Build Otto changes\n---\nBody",
         );
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
 
         let effects = plugin
             .handle_slash("reload-skills", vec![])
@@ -791,8 +954,11 @@ mod tests {
     async fn skill_tool_not_registered_when_index_empty() {
         let project = tempdir().expect("tempdir");
         let home = tempdir().expect("tempdir");
-        let plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
 
         let effects = plugin.register_skill_tool_effects().await;
 
@@ -812,8 +978,11 @@ mod tests {
             "otto-development",
             "---\nname: otto-development\ndescription: Build Otto changes\n---\nBody",
         );
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
 
         let effects = plugin
             .on_event(HostEvent::HostStarting)
@@ -848,8 +1017,11 @@ mod tests {
     async fn host_starting_always_emits_reload_prompt_segments() {
         let project = tempdir().expect("tempdir");
         let home = tempdir().expect("tempdir");
-        let mut plugin =
-            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        let mut plugin = UserSkillsPlugin::with_roots(
+            project.path().to_path_buf(),
+            home.path().to_path_buf(),
+            empty_trust(),
+        );
 
         let effects = plugin
             .on_event(HostEvent::HostStarting)
