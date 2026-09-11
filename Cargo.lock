@@ -4107,6 +4107,7 @@ dependencies = [
  "provider-anthropic",
  "provider-deepseek",
  "provider-gemini",
+ "provider-grok",
  "provider-local",
  "provider-openai",
  "ratatui 0.30.0",
