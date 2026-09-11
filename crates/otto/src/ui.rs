@@ -244,12 +244,8 @@ pub fn render(
     // constraint below so the box grows with multi-line / wrapped input
     // and shrinks back to its 3-row minimum when cleared.
     let mut textarea = app.input_textarea.clone();
-    textarea.set_block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(palette.border).bg(palette.bg))
-            .padding(Padding::horizontal(1)),
-    );
+    let prompt_block_value = prompt_block(palette);
+    textarea.set_block(prompt_block_value.clone());
     textarea.set_style(palette.base_style());
     // tui-textarea defaults the cursor-line style to UNDERLINED, which
     // ends up underlining the whole one-line prompt. Override to the
@@ -343,6 +339,27 @@ pub fn render(
     frame.render_widget(tips_para, chunks[3]);
 
     frame.render_widget(&textarea, chunks[4]);
+
+    // Ghost-completion overlay: the remainder of the highlighted palette
+    // row's name, painted dim immediately after the cursor. Advisory only
+    // — never written into `textarea`'s real, submittable buffer. See
+    // `paint_ghost_completion` for the safety conditions. The screen
+    // derives its answer from `prompt_line` (the textarea's own current
+    // content), not from its own internal state — see
+    // `Screen::ghost_completion`'s doc comment.
+    let prompt_line = textarea.lines().first().map(String::as_str).unwrap_or("");
+    if let Some((top_screen, _)) = app.screen_stack.top() {
+        if let Some(ghost) = top_screen.ghost_completion(prompt_line) {
+            paint_ghost_completion(
+                frame.buffer_mut(),
+                prompt_block_value.inner(chunks[4]),
+                textarea.cursor(),
+                textarea.lines(),
+                &ghost,
+                palette.base_style().fg(palette.muted),
+            );
+        }
+    }
 
     // Footer row — see `compose_footer_line` for the join semantics.
     let separator = otto_plugin::StyledSpan::muted(" · ");
@@ -1175,6 +1192,72 @@ fn line_block(prefix: &str, text: &str, color: Color, palette: Palette) -> Line<
         Span::styled(prefix.to_string(), style.add_modifier(Modifier::BOLD)),
         Span::styled(text.to_string(), style),
     ])
+}
+
+/// The prompt textarea's own block: bordered, background/border colours
+/// from the active theme, horizontal padding. Factored out of `render()` so
+/// the ghost-completion overlay (see [`paint_ghost_completion`]) can derive
+/// its interior rect from the exact same `Block` value the textarea itself
+/// renders with, rather than a second, independently-written literal that
+/// could silently drift out of sync with this one.
+fn prompt_block(palette: Palette) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(palette.border).bg(palette.bg))
+        .padding(Padding::horizontal(1))
+}
+
+/// Paints `ghost` as dim text immediately after the prompt's cursor, if
+/// doing so is safe. Pure function over a `Buffer` and primitives (no
+/// `Frame`/`App` dependency) so it is directly unit-testable — `render()`
+/// itself has no test precedent in this file and pulling this logic out
+/// avoids inventing one.
+///
+/// Safety conditions, all required:
+/// - `inner` is clamped to `buf`'s own area before anything else runs. A
+///   degenerate or off-buffer `inner` (e.g. a squeezed layout on a very
+///   short terminal, where `Block::inner` can clamp `y` to the frame's
+///   bottom edge) would otherwise reach `Buffer::set_stringn`, whose
+///   underlying cell write panics on an out-of-area index — not gated
+///   behind `debug_assertions`. Clamping turns that into a safe no-op.
+///   (Caught in PR review for issue #118: a reachable panic on short
+///   terminals, e.g. mid-resize while the palette is open.)
+/// - `cursor.0 == 0` and `lines.len() == 1`: the cursor is on the
+///   textarea's one and only logical line.
+/// - `line_fits`: that line's full character count is within the clamped
+///   `inner`'s width. This is the actual no-wrap proof — `WrapMode::WordOrGlyph`
+///   cannot have moved the cursor's visual column away from its logical
+///   column unless the line was wider than the available width, so
+///   checking `cursor.0 == 0 && lines.len() == 1` alone is NOT sufficient:
+///   both report *logical* line/row and are unchanged by soft-wrapping a
+///   long logical line across multiple *visual* rows. (Caught in design
+///   review for issue #118 — see that spec's Risks section.)
+fn paint_ghost_completion(
+    buf: &mut Buffer,
+    inner: Rect,
+    cursor: (usize, usize),
+    lines: &[String],
+    ghost: &str,
+    style: Style,
+) {
+    let inner = inner.intersection(buf.area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    let (cursor_row, cursor_col) = cursor;
+    let single_line = lines.len() == 1;
+    let line_fits = lines
+        .first()
+        .is_some_and(|l| l.chars().count() <= inner.width as usize);
+    if cursor_row != 0 || !single_line || !line_fits {
+        return;
+    }
+    let x = inner.x.saturating_add(cursor_col as u16);
+    if x >= inner.x + inner.width {
+        return;
+    }
+    let max_width = (inner.x + inner.width - x) as usize;
+    buf.set_stringn(x, inner.y, ghost, max_width, style);
 }
 
 /// Place a `BottomSheet` of `height` rows inside `area`, anchored so its
@@ -2467,5 +2550,168 @@ mod tests {
         let sheet = bottom_sheet_rect(area, 7, 12);
         assert_eq!(sheet.height, 0);
         assert_eq!(sheet.y, 7);
+    }
+
+    // --- paint_ghost_completion tests (issue #118) ---
+
+    fn ghost_style() -> Style {
+        Style::default().fg(Color::Gray)
+    }
+
+    fn cells_to_string(buf: &Buffer, y: u16, x_range: std::ops::Range<u16>) -> String {
+        x_range.map(|x| buf[(x, y)].symbol().to_string()).collect()
+    }
+
+    /// A fitting single line draws the ghost text at `inner.x + cursor.1`,
+    /// styled with the passed-in style.
+    #[test]
+    fn paint_ghost_completion_draws_at_the_cursor_when_the_line_fits() {
+        let inner = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(inner);
+        paint_ghost_completion(
+            &mut buf,
+            inner,
+            (0, 3),
+            &["/co".to_string()],
+            "nnect",
+            ghost_style(),
+        );
+        assert_eq!(cells_to_string(&buf, 0, 3..8), "nnect");
+        assert_eq!(buf[(3, 0)].fg, Color::Gray);
+    }
+
+    /// Regression for the wrap-guard gap a design critique found: a line
+    /// wider than the interior width must not be trusted to still be on
+    /// visual row 0, so no ghost text may be painted for it — even though
+    /// `cursor.0 == 0` and `lines.len() == 1` both hold. The cursor column
+    /// here (`2`) is deliberately kept *within* `inner`'s width — if it
+    /// were past the width (e.g. at the line's own end), the unrelated
+    /// `x >= inner.x + inner.width` bounds check downstream would also
+    /// reject the paint, masking whether `line_fits` is doing anything at
+    /// all. Removing the `line_fits` conjunct from `paint_ghost_completion`
+    /// makes this exact test fail (verified while writing it); keep it
+    /// that way.
+    #[test]
+    fn paint_ghost_completion_skips_a_line_that_does_not_fit() {
+        let inner = Rect::new(0, 0, 5, 1);
+        let mut buf = Buffer::empty(inner);
+        paint_ghost_completion(
+            &mut buf,
+            inner,
+            (0, 2),
+            &["/clearclearclear".to_string()],
+            "x",
+            ghost_style(),
+        );
+        for x in 0..5 {
+            assert_eq!(buf[(x, 0)].symbol(), " ", "buffer must be untouched");
+        }
+    }
+
+    /// Multi-line `lines` (a pasted newline, however that might happen)
+    /// must not be treated as a safe single visual row even when the
+    /// cursor happens to report row 0.
+    #[test]
+    fn paint_ghost_completion_skips_multiline_content() {
+        let inner = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(inner);
+        paint_ghost_completion(
+            &mut buf,
+            inner,
+            (0, 3),
+            &["/co".to_string(), "second line".to_string()],
+            "nnect",
+            ghost_style(),
+        );
+        for x in 0..inner.width {
+            assert_eq!(buf[(x, 0)].symbol(), " ");
+        }
+    }
+
+    /// A cursor reported on a later logical line is never safe to paint at
+    /// row 0.
+    #[test]
+    fn paint_ghost_completion_skips_when_cursor_row_is_not_zero() {
+        let inner = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(inner);
+        paint_ghost_completion(
+            &mut buf,
+            inner,
+            (1, 3),
+            &["/co".to_string()],
+            "nnect",
+            ghost_style(),
+        );
+        for x in 0..inner.width {
+            assert_eq!(buf[(x, 0)].symbol(), " ");
+        }
+    }
+
+    /// Ghost text longer than the remaining width clips via `max_width`
+    /// rather than panicking or writing past the interior rect.
+    #[test]
+    fn paint_ghost_completion_clips_to_the_remaining_width() {
+        let inner = Rect::new(0, 0, 10, 1);
+        let mut buf = Buffer::empty(inner);
+        paint_ghost_completion(
+            &mut buf,
+            inner,
+            (0, 8),
+            &["/connectno".to_string()],
+            "nnectnow",
+            ghost_style(),
+        );
+        assert_eq!(cells_to_string(&buf, 0, 8..10), "nn");
+    }
+
+    /// Regression for a reachable panic a security review caught: on a
+    /// squeezed layout (a very short terminal), `Block::inner` can clamp
+    /// the prompt's interior rect's `y` to the frame's own bottom edge —
+    /// one row past the buffer's actual area. Without clamping `inner` to
+    /// `buf.area` first, `Buffer::set_stringn` would panic (its cell write
+    /// indexes unconditionally, not gated behind `debug_assertions`). Here
+    /// `inner` is deliberately one row below `buf`'s 4-row area; this must
+    /// not panic, and must not touch the buffer at all.
+    #[test]
+    fn paint_ghost_completion_does_not_panic_when_inner_is_outside_the_buffer() {
+        let buf_area = Rect::new(0, 0, 20, 4);
+        let mut buf = Buffer::empty(buf_area);
+        let out_of_buffer_inner = Rect::new(0, 4, 20, 1);
+        paint_ghost_completion(
+            &mut buf,
+            out_of_buffer_inner,
+            (0, 3),
+            &["/co".to_string()],
+            "nnect",
+            ghost_style(),
+        );
+        for y in 0..buf_area.height {
+            for x in 0..buf_area.width {
+                assert_eq!(buf[(x, y)].symbol(), " ");
+            }
+        }
+    }
+
+    /// A degenerate zero-height `inner` (still within `buf`'s area, e.g. a
+    /// layout constraint that collapsed to nothing) must also be a safe
+    /// no-op rather than reaching the cursor/width arithmetic below.
+    #[test]
+    fn paint_ghost_completion_does_not_panic_on_zero_height_inner() {
+        let buf_area = Rect::new(0, 0, 20, 4);
+        let mut buf = Buffer::empty(buf_area);
+        let zero_height_inner = Rect::new(0, 1, 20, 0);
+        paint_ghost_completion(
+            &mut buf,
+            zero_height_inner,
+            (0, 3),
+            &["/co".to_string()],
+            "nnect",
+            ghost_style(),
+        );
+        for y in 0..buf_area.height {
+            for x in 0..buf_area.width {
+                assert_eq!(buf[(x, y)].symbol(), " ");
+            }
+        }
     }
 }

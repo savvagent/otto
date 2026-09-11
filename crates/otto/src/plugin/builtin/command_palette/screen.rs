@@ -358,6 +358,44 @@ impl Screen for PaletteScreen {
             )],
         }
     }
+
+    /// The remainder of the highlighted row's name, if — and only if — it
+    /// is a literal prefix completion of the typed filter. Two narrowings
+    /// relative to "the highlighted row's completion" read literally, both
+    /// explained in the design spec's "Approach > 2"
+    /// (`docs/superpowers/specs/2026-09-10-issue-118-palette-ghost-completion-design.md`):
+    ///
+    /// - **Prefix-only.** `filtered()` above is a substring match, so the
+    ///   highlighted row is not always a valid completion of what was typed
+    ///   (`/cl` highlighting `/acl-export` — the exact case `tips()` exists
+    ///   for). Ghost text that doesn't literally continue the typed
+    ///   characters would misrepresent itself as a completion instead of a
+    ///   prediction, so a non-prefix highlight returns `None` here and
+    ///   falls back to `tips()` alone, unchanged from today.
+    /// - **Empty suffix suppressed.** When the typed filter already equals
+    ///   the highlighted name in full, the suffix is empty; rendering it
+    ///   would be a visual no-op worth skipping explicitly rather than
+    ///   leaving to coincidence.
+    ///
+    /// Per the trait's contract, the suffix length is derived from `prompt`
+    /// (the runtime's own authoritative on-screen text) rather than from
+    /// `self.filter` — even though the two are expected to always agree
+    /// while this screen owns the prompt (`prompt_preview` sets the prompt
+    /// to exactly `/` + `self.filter`), deriving from `prompt` means a
+    /// divergence between them degrades to a wrong-but-plausible ghost
+    /// string at worst, never a ghost painted over characters `prompt`
+    /// doesn't actually contain.
+    fn ghost_completion(&self, prompt: &str) -> Option<String> {
+        let filtered = self.filtered();
+        let (_, cmd) = filtered.get(self.cursor)?;
+        let typed = prompt.strip_prefix('/').unwrap_or(prompt);
+        let typed_lower = typed.to_ascii_lowercase();
+        if !cmd.name.to_ascii_lowercase().starts_with(&typed_lower) {
+            return None;
+        }
+        let suffix: String = cmd.name.chars().skip(typed.chars().count()).collect();
+        (!suffix.is_empty()).then_some(suffix)
+    }
 }
 
 #[cfg(test)]
@@ -1124,5 +1162,87 @@ mod tests {
         assert_eq!(other_row.spans[0].fg, Some(ThemeColor::Fg));
         assert!(!other_row.spans[0].modifiers.bold);
         assert_eq!(other_row.spans[1].fg, Some(ThemeColor::Muted));
+    }
+
+    // --- ghost_completion tests (issue #118) ---
+
+    /// A prefix match shows the remainder of the highlighted name as ghost
+    /// text: typing `c` highlights `clear` (the only fixture row starting
+    /// with `c`), so the ghost is `lear`.
+    #[tokio::test]
+    async fn ghost_completion_shows_the_remainder_of_a_prefix_match() {
+        let mut p = fixture();
+        p.on_key(key(KeyCodePortable::Char('c'))).await.unwrap();
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("lear".to_string())
+        );
+    }
+
+    /// An empty filter is trivially a prefix match against every row (every
+    /// string starts with `""`), so the ghost is the full name of whichever
+    /// row the cursor defaults to.
+    #[tokio::test]
+    async fn ghost_completion_with_empty_filter_shows_full_highlighted_name() {
+        let p = fixture();
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("clear".to_string())
+        );
+    }
+
+    /// `filtered()` is a substring match, so the highlighted row is not
+    /// always a valid prefix completion of what was typed. `cl` highlights
+    /// `acl-export` (it sorts first and contains `cl`), which does not
+    /// start with `cl` — ghost text must not render a completion that
+    /// doesn't literally continue the typed characters.
+    #[tokio::test]
+    async fn ghost_completion_is_none_for_substring_only_match() {
+        let mut p =
+            PaletteScreen::with_commands(vec![cmd("acl-export", false), cmd("clear", false)]);
+        for ch in "cl".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert_eq!(p.ghost_completion(&p.prompt_preview()), None);
+    }
+
+    /// When the typed filter already equals the highlighted name in full,
+    /// the suffix is empty and must be suppressed rather than rendering an
+    /// empty (no-op but unexplained) ghost span.
+    #[tokio::test]
+    async fn ghost_completion_is_none_when_filter_exactly_matches_the_full_name() {
+        let mut p = fixture();
+        for ch in "clear".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert_eq!(p.ghost_completion(&p.prompt_preview()), None);
+    }
+
+    /// With nothing highlighted there is no row to complete against.
+    #[tokio::test]
+    async fn ghost_completion_is_none_when_nothing_is_highlighted() {
+        let mut p = fixture();
+        for ch in "xyz".chars() {
+            p.on_key(key(KeyCodePortable::Char(ch))).await.unwrap();
+        }
+        assert!(p.filtered().is_empty());
+        assert_eq!(p.ghost_completion(&p.prompt_preview()), None);
+    }
+
+    /// Navigation changes which row is highlighted, so the ghost text must
+    /// follow it. With an empty filter every row is a prefix match, so
+    /// moving the cursor produces a concrete `Some` -> `Some` transition.
+    #[tokio::test]
+    async fn ghost_completion_follows_navigation() {
+        let mut p = fixture();
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("clear".to_string())
+        );
+        p.on_key(key(KeyCodePortable::Down)).await.unwrap();
+        assert_eq!(
+            p.ghost_completion(&p.prompt_preview()),
+            Some("demo".to_string())
+        );
     }
 }
