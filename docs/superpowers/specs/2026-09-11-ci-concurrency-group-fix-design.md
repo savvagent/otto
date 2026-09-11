@@ -72,6 +72,16 @@ behavior:
    on GitHub's synthetic, recomputed-per-push merge ref in favor of the actual named branch, which is
    the formulation GitHub's own docs and the wider ecosystem recommend specifically because the merge
    ref is an internal implementation detail subject to recomputation.
+**This fix does not explain or prevent the second anomaly (the zero-job `push` run).** Both the old
+predicate (`github.event_name == 'pull_request'`) and the new one (`github.ref != 'refs/heads/main'
+&& github.ref != 'refs/heads/master'`) evaluate identically and deterministically `false` for every
+run in a `push`-to-`main` group — there was never a cross-run predicate-disagreement axis for that
+group under either formula, so items 1–3 below cannot be the fix for it. A `push` run cancelled with
+zero jobs (i.e., never entering the queue at all) is a different failure shape from "queued, then
+cancelled 33 seconds into `in_progress`," and is not addressed by any change in this spec. This is
+recorded explicitly here — see Risks & Open Questions — rather than implied to be covered by the
+group-key/predicate rewrite below.
+
 3. **Bound every job's wall-clock time with `timeout-minutes`.** Independent of the group-key/predicate
    fix, nothing in `ci.yml` today prevents a genuinely wedged run (stuck past any concurrency
    arbitration entirely — e.g., a hung step) from occupying its group's "in progress" slot for GitHub
@@ -174,6 +184,13 @@ transcript/keyring format is touched (Non-Negotiable Rule 6 is not engaged).
   across every push to that PR, so grouping behavior for PRs is unchanged in practice; the fix's value
   is removing the dependency on the merge ref's internal recomputation and switching to the
   ecosystem-standard formulation, not changing which runs are grouped together.
+- **Keying the group on `github.head_ref` (branch name) rather than PR number carries a theoretical
+  cross-contributor collision risk** — two different forks' PRs sharing the same head branch name
+  (e.g. both named `fix`) would land in the same concurrency group and could cancel each other's
+  runs. This repo (`savvagent/otto`) takes contributions from a single org with no external-fork PR
+  workflow in active use, so this is accepted as a non-issue for the current contribution model; if
+  that changes, the group key should move to `github.event.pull_request.number || github.ref` instead
+  (PR number is always unique, unlike branch name).
 - **Tying `cancel-in-progress` to `github.ref` rather than `github.event_name` is sufficient to
   eliminate the specific cross-run-disagreement risk the issue names**, because every run sharing a
   concurrency group by definition shares that group's ref (that is what the group key is derived
@@ -206,7 +223,11 @@ group's slot.
   before merge.
 - A push to `main` is confirmed structurally incapable of being cancelled by this group (the
   predicate evaluates to a literal `false` whenever `github.ref == 'refs/heads/main'`, independent of
-  any other run's state).
+  any other run's state). Note this specific guarantee already held under the *old*
+  `event_name`-based predicate too (also unconditionally `false` for every `push` event) — this
+  criterion confirms the guarantee survives the rewrite, not that the rewrite newly creates it; the
+  rewrite's actual value-add is eliminating the `event_name`-based cross-run-disagreement axis for PR
+  runs (see Root Cause).
 - The #132 retrospective-run question is explicitly decided (no backfill) and recorded in this spec,
   not silently dropped.
 
@@ -233,6 +254,17 @@ group's slot.
 
 ## Risks & Open Questions
 
+- **The second anomaly (run `34548437470`, a `push`-to-`main` run cancelled with zero jobs) is not
+  explained or prevented by this fix, and is an accepted, unresolved residual risk.** Both the old and
+  new `cancel-in-progress` formulas evaluate identically and deterministically `false` for every run
+  in a `push`-to-`main` concurrency group — there is no cross-run predicate disagreement possible for
+  that group under either formula, so this spec's fix (items 1–3 in Root Cause) has no mechanism that
+  would have prevented it, and cannot be expected to prevent a recurrence. A zero-job cancellation
+  (never entering the queue) is also a different failure shape than the PR-run inversion this spec
+  does address (queued, started, cancelled mid-run), and `timeout-minutes` does not apply to a run
+  that never started a job. If this recurs, it should be filed as its own issue with fresh evidence
+  (GitHub support ticket territory, likely, since no workflow-file change is implicated) rather than
+  treated as a sign this fix failed.
 - **GitHub's concurrency-arbitration internals are not observable from the workflow file.** If the
   originally observed inversion was actually caused by a true platform-level race condition
   independent of the expression's dependencies (rather than by `event_name`-based cross-run
