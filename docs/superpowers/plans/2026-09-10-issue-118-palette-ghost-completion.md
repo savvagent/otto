@@ -61,7 +61,7 @@ effect.
 - Modify: `crates/otto-plugin/src/screen.rs`
 - Modify: `crates/otto/src/plugin/builtin/command_palette/screen.rs`
 
-- [ ] In `crates/otto/src/plugin/builtin/command_palette/screen.rs`'s `#[cfg(test)] mod tests`,
+- [x] In `crates/otto/src/plugin/builtin/command_palette/screen.rs`'s `#[cfg(test)] mod tests`,
       add failing tests for a not-yet-existing `PaletteScreen::ghost_completion` (call it as an
       inherent method during this step — it becomes a trait method once the trait gains it below,
       but the test bodies don't need to change). The existing fixture
@@ -93,7 +93,7 @@ effect.
       Run `cargo test -p otto` and confirm these fail to compile (no such method yet) — that
       compile failure *is* the "red" of this step's TDD; there is no way to get a runtime red for a
       brand-new method.
-- [ ] Add to `crates/otto-plugin/src/screen.rs`'s `Screen` trait, directly after `tips()`:
+- [x] Add to `crates/otto-plugin/src/screen.rs`'s `Screen` trait, directly after `tips()`:
       ```rust
       /// Optional: the remainder of a predicted completion, rendered as dim
       /// "ghost" text immediately after the prompt's cursor. Returning `None`
@@ -104,7 +104,7 @@ effect.
           None
       }
       ```
-- [ ] In `crates/otto/src/plugin/builtin/command_palette/screen.rs`, inside the existing
+- [x] In `crates/otto/src/plugin/builtin/command_palette/screen.rs`, inside the existing
       `impl Screen for PaletteScreen` block (after `tips`), add:
       ```rust
       fn ghost_completion(&self) -> Option<String> {
@@ -122,27 +122,27 @@ effect.
       and pointing at the spec's "Approach > 2" for the full rationale — the same density of
       comment this file already uses elsewhere (see `prompt_preview`'s doc comment for the house
       style).
-- [ ] Run `cargo test -p otto`; the new tests should now compile and pass. If any fixture-derived
+- [x] Run `cargo test -p otto`; the new tests should now compile and pass. If any fixture-derived
       expected value in the tests above was wrong (double check `clear`'s suffix after typing `c`
       is `"lear"`, not `"clear"`), fix the test, not the implementation, unless the implementation
       is actually wrong.
-- [ ] Public-interface check: this step adds the trait method. Confirm in the commit body that it
+- [x] Public-interface check: this step adds the trait method. Confirm in the commit body that it
       is additive (default `None`, no existing `impl Screen for ...` block requires changes) — cite
       `rg -n "impl Screen for" crates/` to show every implementer compiles unchanged (they will,
       since none of them override `ghost_completion` yet).
-- [ ] `cargo fmt --all` and commit: `git commit -m "otto-plugin: add Screen::ghost_completion, palette implements it"`.
+- [x] `cargo fmt --all` and commit: `git commit -m "otto-plugin: add Screen::ghost_completion, palette implements it"`.
 
 ## Task 2: Render-time overlay in `ui.rs`
 
 **Files:**
 - Modify: `crates/otto/src/ui.rs`
 
-- [ ] Read `ui.rs::render` fully from the textarea construction (`:241-258`) through the
+- [x] Read `ui.rs::render` fully from the textarea construction (`:241-258`) through the
       screen-stack paint (`:385-402`) and confirm the insertion point: directly after
       `frame.render_widget(&textarea, chunks[4]);` (`:345`) and before the
       `if let Some((top_screen, layout)) = app.screen_stack.top()` block that calls `paint_screen`
       (`:385`).
-- [ ] Note before writing anything: `render()` (`ui.rs:220`) has no existing test coverage in this
+- [x] Note before writing anything: `render()` (`ui.rs:220`) has no existing test coverage in this
       file — its only call site in the whole codebase is production code (`main.rs:3374`) — and the
       `paint_screen_*`/`bottom_sheet_*` tests do **not** demonstrate a `render()`-level test harness
       (`paint_screen` tests call `paint_screen` directly with a bare `&dyn Screen`, no `App`
@@ -155,7 +155,7 @@ effect.
       function (next step) that takes a `Buffer` and primitives directly — no `App`/`Frame` needed —
       mirroring the existing `footer_spinner_spans` test pattern in this file, which already builds
       a bare `Buffer::empty(area)` and renders into it directly rather than going through a `Frame`.
-- [ ] Factor the existing inline `Block::default().borders(Borders::ALL).border_style(...)
+- [x] Factor the existing inline `Block::default().borders(Borders::ALL).border_style(...)
       .padding(Padding::horizontal(1))` builder at `ui.rs:247-252` into `fn prompt_block(palette:
       Palette) -> Block` (by value — `Palette` is `Copy`, and every other palette-consuming helper
       in this file, e.g. `render_log`, already takes it by value; do not take `&Palette`), placed
@@ -168,7 +168,7 @@ effect.
       overlay's interior-rect computation — two sources of truth with nothing forcing them to stay
       identical. Do not reintroduce that shape; derive the overlay's interior rect from the same
       `Block` value via `.inner(chunks[4])` instead.
-- [ ] Add `fn paint_ghost_completion(buf: &mut Buffer, inner: Rect, cursor: (usize, usize), lines:
+- [x] Add `fn paint_ghost_completion(buf: &mut Buffer, inner: Rect, cursor: (usize, usize), lines:
       &[String], ghost: &str, style: Style)` per the spec's revised "Approach > 3" (copy its doc
       comment and body exactly — the doc comment records *why* `line_fits` is checked in addition to
       `cursor.0 == 0 && lines.len() == 1`, which is load-bearing context for the next reader, not
@@ -192,7 +192,7 @@ effect.
         "nnectnow"` — assert only the first 2 characters (`nn`) are written and no panic occurs.
       Run `cargo test -p otto` and confirm these fail to compile (function doesn't exist yet) before
       writing `paint_ghost_completion`'s body.
-- [ ] Implement `paint_ghost_completion`'s body per the spec, then wire it into `render()` directly
+- [x] Implement `paint_ghost_completion`'s body per the spec, then wire it into `render()` directly
       after `frame.render_widget(&textarea, chunks[4]);`: `if let Some((top_screen, _)) =
       app.screen_stack.top() { if let Some(ghost) = top_screen.ghost_completion() {
       paint_ghost_completion(frame.buffer_mut(), block.inner(chunks[4]), textarea.cursor(),
@@ -200,32 +200,32 @@ effect.
       existing muted-text convention (see the `no-matches`/`no-commands` styling and the spec's
       Assumptions section for why no `Modifier::DIM`). This wiring itself has no unit test (see the
       note above); it is covered by the manual terminal check in Task 3.
-- [ ] Host-swap `RwLock` check (Non-Negotiable Rule 7 / Load-Bearing Invariant 3): confirm this
+- [x] Host-swap `RwLock` check (Non-Negotiable Rule 7 / Load-Bearing Invariant 3): confirm this
       function (`ui.rs::render`) does not hold `app`'s `Arc<RwLock<Option<Arc<Host>>>>` guard and
       does not `.await` anywhere in or near the new code — `render` is a synchronous ratatui draw
       callback, so this should be true by construction, but state it explicitly in the commit body
       per the plan format's requirement, since this file is one of the two named in the rule.
-- [ ] Run `cargo test -p otto`; expect `paint_ghost_completion`'s new tests green and no existing
+- [x] Run `cargo test -p otto`; expect `paint_ghost_completion`'s new tests green and no existing
       test disturbed.
-- [ ] `cargo fmt --all` and commit: `git commit -m "otto: render palette ghost-completion after the prompt cursor"`.
+- [x] `cargo fmt --all` and commit: `git commit -m "otto: render palette ghost-completion after the prompt cursor"`.
 
 ## Task 3: Changelog, full verification, manual terminal check
 
 **Files:**
 - Modify: `CHANGELOG.md`
 
-- [ ] Add an `### Added` entry under `## [Unreleased]` in `CHANGELOG.md` (currently empty —
+- [x] Add an `### Added` entry under `## [Unreleased]` in `CHANGELOG.md` (currently empty —
       confirm it is still empty before adding, in case another PR landed first) describing: the
       command palette now shows the remainder of the highlighted command as dim ghost text after
       the cursor when it's a valid completion of what's typed; references `#118`; notes it's an
       additive `Screen::ghost_completion` trait method for plugin authors who want the same
       behavior in their own screens.
-- [ ] Run `cargo build` (bare — required even for this TUI-only change, since `crates/otto` owns
+- [x] Run `cargo build` (bare — required even for this TUI-only change, since `crates/otto` owns
       the `otto-tool-fs` `[[bin]]` the TUI spawns at runtime).
-- [ ] Run `cargo test --workspace`; expect green.
-- [ ] Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` (CI uses
+- [x] Run `cargo test --workspace`; expect green.
+- [x] Run `cargo fmt --all --check` and `cargo clippy --workspace --all-targets` (CI uses
       `RUSTFLAGS=-D warnings`); expect clean.
-- [ ] Launch `cargo run -p otto` and confirm by eye, because green tests do not cover the actual
+- [x] Launch `cargo run -p otto` and confirm by eye, because green tests do not cover the actual
       terminal render (the otto-development skill's "green tests are not the same as work-done"
       rule, and this spec's own Risks section flags the lack of a visual-regression test):
       - Press `/` — the highlighted row's full name appears as dim ghost text after the cursor.
@@ -242,7 +242,7 @@ effect.
         session — otherwise note in the PR body that only the default theme was checked.
       - Confirm `Enter` still runs exactly the highlighted command and the ghost text never
         appears in the submitted/dispatched value.
-- [ ] `cargo fmt --all` and commit: `git commit -m "docs: changelog issue-118 palette ghost-completion"`.
+- [x] `cargo fmt --all` and commit: `git commit -m "docs: changelog issue-118 palette ghost-completion"`.
 
 ## Deferred
 
