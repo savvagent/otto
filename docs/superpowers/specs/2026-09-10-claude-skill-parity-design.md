@@ -1,7 +1,7 @@
 # Porting this repo's `.github/skills/` skills to Claude Code — design
 
 Date: 2026-09-10
-Status: pending review
+Status: IMPLEMENTED
 Source: savvagent/otto#128
 Related: savvagent/otto#23 (decided the *policy* for `.claude/skills/`; this closes the content gap it left), `CLAUDE.md:87-95` ("Claude Code skills")
 

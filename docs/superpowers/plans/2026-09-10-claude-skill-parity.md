@@ -176,8 +176,32 @@
 
 - [x] **Step 1: Release line.** Cut in a **dedicated release PR after this merges**, per `RELEASING.md` and the canonical Phase 4 step 12. This PR must **not** bump `workspace.package.version` and must **not** add the `CHANGELOG.md` section — that would collide with the release PR. The release PR bumps `workspace.package.version` and every internal `workspace.dependencies` version from `0.28.1` to `0.28.2`, adds the `## 0.28.2` section describing the ports and the parity check, tags `v0.28.2`, and pushes the tag so `release.yml` publishes the release. **Re-read `workspace.package.version` at cut time** — `origin/main` moves while this branch is open.
 
-- [ ] **Step 2: Out-of-band verification (Phase 5, post-merge).** One success criterion cannot run on this branch:
+- [x] **Step 2: Out-of-band verification (Phase 5, post-merge).** One success criterion cannot run on this branch:
   - `git clone` the merged trunk into a fresh directory — not this worktree, not the main checkout — so discovery is exercised as a new contributor would experience it.
   - Confirm all four skills are discovered: `otto-development`, `creating-github-issues`, `rust-engineer`, `tui-engineer`.
   - Confirm **execution**: trigger `otto-development` and check the run follows the ported workflow using Claude Code's own dispatch mechanics. The port is self-sufficient by design, so this is now a check that the adaptation is *correct*, not that a pointer gets followed.
   - This result is what justifies closing #128.
+
+  **Result (2026-09-10, against merged trunk `46a216c`).** A shallow clone of
+  `https://github.com/savvagent/otto.git` into a scratch directory carries all four skill
+  directories — `otto-development` (`SKILL.md` 86,468 bytes plus `agent-prompts.md` 23,801),
+  `creating-github-issues` (7,608), `rust-engineer` (7,651) and `tui-engineer` (9,833) — with
+  frontmatter intact, and `bash .github/scripts/check-claude-skill-ports.sh` exits 0 in the clone
+  with no local state to lean on.
+
+  Execution was exercised for real rather than simulated: the session that shipped #131's review
+  round *ran the ported `otto-development`*, loading it from `.claude/skills/` and following it from
+  the Phase 4 review loop through merge and this verification. It dispatched the mandatory trio as
+  three parallel `Agent` calls with the security pass blind to everything but the diff, collected
+  their reports as task notifications, ran a review-response subagent, and honoured the fix-loop
+  caps — i.e. every adapted host mechanism in the translation table was executed, not just read.
+  That run also proves the adaptation is *load-bearing*: it surfaced two false-green holes in the
+  check (a symlinked `claude-port/` and the unasserted "Ported for Claude Code" note), a spec row
+  that would have instructed the next re-porter to undo this design's own security fix, and four
+  documents asserting no canonical had been edited when one had.
+
+  One gap the run also exposed, logged rather than fixed here: the Code Quality Review and Final
+  Code Review templates (`agent-prompts.md`) lost the canonical `code-review` agent type's
+  read-only-by-construction property when mapped onto `general-purpose`, while three places in the
+  port still assert the template supplies it. The security template got the explicit constraint;
+  these two did not. See the follow-up issue.
