@@ -18,7 +18,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-10-claude-skill-parity-design.md` — read it first. This plan implements it exactly.
 
-**Release line:** `v0.28.2` (PATCH — contributor-facing tooling and docs, no runtime behaviour change; trunk is at `0.28.1` as of the rebase — re-read `workspace.package.version` at cut time, since trunk moves while this branch is open).
+**Release line:** planned as `v0.28.2` (PATCH — contributor-facing tooling and docs, no runtime behaviour change; trunk was at `0.28.1` as of the rebase). **Shipped in `v0.29.0`.** The plan's own instruction to re-read `workspace.package.version` at cut time is what caught this: by the time the release was cut, #118 had also merged, adding a defaulted method to the public `Screen` trait. A feature in the batch forces MINOR, so the line escalated PATCH → MINOR. `v0.28.2` will never exist.
 
 **Branch:** `docs/claude-skills-parity`
 
@@ -174,7 +174,9 @@
 
 **Files:** none in this PR.
 
-- [x] **Step 1: Release line.** Cut in a **dedicated release PR after this merges**, per `RELEASING.md` and the canonical Phase 4 step 12. This PR must **not** bump `workspace.package.version` and must **not** add the `CHANGELOG.md` section — that would collide with the release PR. The release PR bumps `workspace.package.version` and every internal `workspace.dependencies` version from `0.28.1` to `0.28.2`, adds the `## 0.28.2` section describing the ports and the parity check, tags `v0.28.2`, and pushes the tag so `release.yml` publishes the release. **Re-read `workspace.package.version` at cut time** — `origin/main` moves while this branch is open.
+- [x] **Step 1: Release line.** Cut in a **dedicated release PR after this merges**, per `RELEASING.md` and the canonical Phase 4 step 12. This PR must **not** bump `workspace.package.version` and must **not** add the `CHANGELOG.md` section — that would collide with the release PR. The release PR bumps `workspace.package.version` and every internal `workspace.dependencies` version, adds the section describing the ports and the parity check, tags it, and pushes the tag so `release.yml` publishes the release. **Re-read `workspace.package.version` at cut time** — `origin/main` moves while this branch is open.
+
+  **Shipped as `v0.29.0` (PR #135), not the planned `v0.28.2`.** Two things the plan could not know: `origin/main` gained #118 and #81 while this branch was open, and the jobs owning those two were abandoned mid-workflow with expired claims, leaving both merged and unreleased. Since `workspace.package.version` and `CHANGELOG.md` are global, the next cut necessarily batched all three — and #118's new defaulted method on the public `Screen` trait is a feature, which forces MINOR. The re-read instruction above is what caught it.
 
 - [x] **Step 2: Out-of-band verification (Phase 5, post-merge).** One success criterion cannot run on this branch:
   - `git clone` the merged trunk into a fresh directory — not this worktree, not the main checkout — so discovery is exercised as a new contributor would experience it.
