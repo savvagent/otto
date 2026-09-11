@@ -21,9 +21,12 @@ condition is permanently true: every otherwise-successful release triggers a fal
 
 `RELEASING.md:78-80` already states the correct, current behavior: "Confirm all expected platform
 archives and installers are attached. otto does not ship `.deb`/`.rpm` packages — Linux installs go
-through the shell installer or the platform tarball." Per this repo's own precedence rule
-(`CLAUDE.md`, "the code plus `RELEASING.md` win" over a stale skill document), the skill is the
-document that needs to change, not the other way round.
+through the shell installer or the platform tarball." Per `otto-development`'s own precedence rule
+("when [`CLAUDE.md`] disagrees with the current code ... the code wins" — `SKILL.md`'s "Why this
+shape" section, which extends the same reasoning to any of this repo's own docs lagging the code
+they describe), the skill is the document that needs to change here, not the other way round: the
+actual release pipeline (code) and `RELEASING.md` already agree that `.deb`/`.rpm` packages aren't
+shipped, and the skill document is the one that's stale.
 
 ## Approach
 
