@@ -32,23 +32,46 @@ pub mod skill_tool;
 pub mod trust;
 
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock as StdRwLock};
 
 use async_trait::async_trait;
 use otto_plugin::{
     Contributions, Effect, HookKind, HostEvent, Manifest, Plugin, PluginError, PluginId,
-    PluginKind, SlashSpec, StyledLine,
+    PluginKind, ScreenArgs, SlashSpec, StyledLine, SystemPromptSegment,
 };
 
 use crate::plugin::builtin::user_skills::discovery::discover;
+use crate::plugin::builtin::user_skills::trust::SkillTrust;
 
 pub use index::SkillIndex;
 #[allow(unused_imports)] // Consumed by the picker in Task 3.
 pub use spec::{SkillScope, SkillSpec, ToolScope};
 
+/// Stable id for the level-1 catalog's system-prompt segment. `None`
+/// while `catalog_cache` holds `None` — a user with zero skills gets no
+/// segment at all (spec acceptance criterion 3).
+const CATALOG_SEGMENT_ID: &str = "internal:user-skills:catalog";
+
+/// Ceiling on one description shown by `/skills`' listing, in chars.
+/// Distinct from [`index::MAX_DESCRIPTION_CHARS`] (the level-1 catalog's
+/// own, larger cap): a picker line is meant to be scanned at a glance,
+/// so it truncates harder than the system-prompt catalog does.
+const LISTING_DESCRIPTION_CHARS: usize = 200;
+
 pub struct UserSkillsPlugin {
     project_root: PathBuf,
     user_home: PathBuf,
     index: SkillIndex,
+    /// Rendered level-1 catalog, kept in sync with `index` by every
+    /// caller that mutates it (`HostStarting`, `/reload-skills`).
+    /// `std::sync::RwLock`, not `tokio::sync::RwLock`: `Plugin::manifest`
+    /// is synchronous and reads this without an `.await`.
+    catalog_cache: Arc<StdRwLock<Option<String>>>,
+    /// Count of malformed `SKILL.md` files from the most recent
+    /// discovery pass, surfaced by `/skills`' warning note. Cached
+    /// rather than recomputed because `/skills` (no arg) reads `index`
+    /// only — it does not re-run `discover()`.
+    last_warning_count: usize,
 }
 
 impl UserSkillsPlugin {
@@ -71,6 +94,8 @@ impl UserSkillsPlugin {
             project_root,
             user_home,
             index: SkillIndex::empty(),
+            catalog_cache: Arc::new(StdRwLock::new(None)),
+            last_warning_count: 0,
         }
     }
 
@@ -88,6 +113,130 @@ impl UserSkillsPlugin {
             self.user_home.clone(),
         );
         vec![Effect::RegisterInProcessTool { spec, handler }]
+    }
+
+    /// Re-run discovery, replace `index`, and refresh `catalog_cache` to
+    /// match. Shared by `HostStarting` and `/reload-skills` so the two
+    /// call sites can never drift on what "refresh" means. Returns the
+    /// number of skills now indexed, for the caller's count-reporting note.
+    async fn rediscover(&mut self) -> usize {
+        let discovered = discover(&self.project_root, &self.user_home);
+        self.last_warning_count = discovered.warnings.len();
+        if !discovered.warnings.is_empty() {
+            tracing::warn!(
+                "user-skills: skipped {} invalid skill definition(s) during discovery: {:?}",
+                discovered.warnings.len(),
+                discovered.warnings
+            );
+        }
+        self.index.replace(discovered.skills).await;
+        let catalog = self.index.catalog().await;
+        match self.catalog_cache.write() {
+            Ok(mut guard) => *guard = catalog,
+            Err(poisoned) => *poisoned.into_inner() = catalog,
+        }
+        self.index.len().await
+    }
+
+    /// Truncate on a char boundary for the `/skills` listing. Separate
+    /// from `index::truncate_chars` (private to that module, and tuned
+    /// to the larger system-prompt cap) rather than shared, since the two
+    /// callers truncate to different lengths for different audiences.
+    fn truncate_for_listing(s: &str) -> String {
+        if s.chars().count() <= LISTING_DESCRIPTION_CHARS {
+            return s.to_string();
+        }
+        let kept: String = s
+            .chars()
+            .take(LISTING_DESCRIPTION_CHARS.saturating_sub(1))
+            .collect();
+        format!("{}…", kept.trim_end())
+    }
+
+    /// `/skills` with no argument: list every skill in the already
+    /// populated `index` — no fresh `discover()` call. The index is
+    /// (re)built only by `HostStarting` (once, at startup) and
+    /// `/reload-skills`; this mirrors `internal:user-agents`, whose own
+    /// commands never rediscover on an unrelated invocation either.
+    async fn list_skills(&self) -> Vec<Effect> {
+        let all = self.index.sorted_snapshot().await;
+        let warning_note = if self.last_warning_count > 0 {
+            Some(note_line(format!(
+                "warning: skipped {} invalid skill definition(s); see logs for details",
+                self.last_warning_count
+            )))
+        } else {
+            None
+        };
+
+        if all.is_empty() {
+            let mut effects = vec![note_line("no skills discovered")];
+            effects.extend(warning_note);
+            return effects;
+        }
+
+        let mut effects = Vec::with_capacity(all.len() + 2);
+        effects.push(note_line(format!(
+            "skills: {} discovered (descriptions are untrusted repo text)",
+            all.len()
+        )));
+        // Descriptions come from files otto did not author, so they stay
+        // labelled as untrusted wherever they are rendered.
+        for skill in &all {
+            effects.push(note_line(format!(
+                "- {} [{}] — [untrusted repo skill description] {} (source: {})",
+                skill.name,
+                skill.scope.label(),
+                Self::truncate_for_listing(&skill.description),
+                skill.source.display(),
+            )));
+        }
+        effects.extend(warning_note);
+        effects
+    }
+
+    /// `/skills <name>`: inject the skill's full body directly into the
+    /// conversation, subject to the level-3 trust gate. Unlike the
+    /// `skill` tool (which returns an *error string* on a trust
+    /// refusal, since the model must not be told to route around it),
+    /// this is a user-initiated command, so a gated skill instead opens
+    /// the trust modal — the one path the spec calls out where the
+    /// interactive trust prompt is reachable for a skill.
+    async fn show_skill(&mut self, name: &str) -> Result<Vec<Effect>, PluginError> {
+        let Some(spec) = self.index.get(name).await else {
+            let known = self.index.names_snapshot().await;
+            return Ok(vec![note_line(skill_tool::unknown_skill_message(
+                name, &known,
+            ))]);
+        };
+
+        match crate::plugin::builtin::user_skills::trust::evaluate(
+            &spec,
+            &self.project_root,
+            &self.user_home,
+        ) {
+            SkillTrust::Allowed => Ok(vec![note_line(skill_tool::render_skill(
+                &spec.name,
+                &spec.root.display().to_string(),
+                &spec.body,
+            ))]),
+            SkillTrust::NeedsConsent { .. } => Ok(vec![
+                // Stash so the trust modal can re-run `/skills <name>`
+                // once the user decides — same sequence
+                // `internal:user-slash-commands` uses for a gated
+                // project command.
+                Effect::StashPendingSlash {
+                    name: "skills".into(),
+                    args: vec![name.to_string()],
+                },
+                Effect::OpenScreen {
+                    id: "trust.modal".into(),
+                    args: ScreenArgs::TrustModal {
+                        project_root: self.project_root.clone(),
+                    },
+                },
+            ]),
+        }
     }
 }
 
@@ -107,14 +256,37 @@ fn note_line(text: impl Into<String>) -> Effect {
 impl Plugin for UserSkillsPlugin {
     fn manifest(&self) -> Manifest {
         let mut contributions = Contributions::default();
-        contributions.slash_commands = vec![SlashSpec {
-            name: "skills".into(),
-            summary: "List discovered skills".into(),
-            args_hint: None,
-            requires_arg: false,
-            suppress_prompt_segments: vec![],
-        }];
+        contributions.slash_commands = vec![
+            SlashSpec {
+                name: "skills".into(),
+                summary: "List discovered skills, or load one by name".into(),
+                args_hint: Some("[name]".into()),
+                requires_arg: false,
+                suppress_prompt_segments: vec![],
+            },
+            SlashSpec {
+                name: "reload-skills".into(),
+                summary: "Rescan discovered skills".into(),
+                args_hint: None,
+                requires_arg: false,
+                suppress_prompt_segments: vec![],
+            },
+        ];
         contributions.hooks = vec![HookKind::HostStarting];
+        // Read synchronously: `manifest()` cannot `.await`, which is
+        // exactly why `catalog_cache` exists as a `std::sync::RwLock`
+        // alongside the async `SkillIndex`. `None` (zero skills) omits
+        // the segment entirely — spec acceptance criterion 3.
+        let catalog = match self.catalog_cache.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        if let Some(text) = catalog {
+            contributions.prompt_segments = vec![SystemPromptSegment {
+                id: CATALOG_SEGMENT_ID.into(),
+                text,
+            }];
+        }
         Manifest {
             id: PluginId::new("internal:user-skills").expect("valid built-in id"),
             name: "User skills".into(),
@@ -128,62 +300,34 @@ impl Plugin for UserSkillsPlugin {
     async fn handle_slash(
         &mut self,
         name: &str,
-        _args: Vec<String>,
+        args: Vec<String>,
     ) -> Result<Vec<Effect>, PluginError> {
-        if name != "skills" {
-            return Ok(vec![]);
-        }
-
-        let result = discover(&self.project_root, &self.user_home);
-        let warning_note = if result.warnings.is_empty() {
-            None
-        } else {
-            Some(note_line(format!(
-                "warning: skipped {} invalid skill definition(s); see logs for details",
-                result.warnings.len()
-            )))
-        };
-
-        if result.skills.is_empty() {
-            let mut effects = vec![note_line("no skills discovered")];
-            if let Some(warning) = warning_note {
-                effects.push(warning);
+        match name {
+            "skills" => match args.first() {
+                None => Ok(self.list_skills().await),
+                Some(skill_name) => self.show_skill(skill_name).await,
+            },
+            "reload-skills" => {
+                let count = self.rediscover().await;
+                let mut effects = self.register_skill_tool_effects().await;
+                // A running session's system prompt only reflects
+                // `Host::set_prompt_segments` calls it has already
+                // received; without re-emitting this, `/reload-skills`
+                // would update `catalog_cache` but a turn already in
+                // flight (or started right after) would never see it.
+                effects.push(Effect::ReloadPromptSegments);
+                effects.push(note_line(format!(
+                    "user-skills: reloaded ({count} skill(s))"
+                )));
+                Ok(effects)
             }
-            return Ok(effects);
+            _ => Ok(vec![]),
         }
-
-        let mut effects = Vec::with_capacity(result.skills.len() + 2);
-        effects.push(note_line(format!(
-            "skills: {} discovered (descriptions are untrusted repo text)",
-            result.skills.len()
-        )));
-        // Descriptions come from files otto did not author, so they stay
-        // labelled as untrusted wherever they are rendered.
-        for skill in result.skills {
-            effects.push(note_line(format!(
-                "- {} [{}] — [untrusted repo skill description] {}",
-                skill.name,
-                skill.scope.label(),
-                skill.description
-            )));
-        }
-        if let Some(warning) = warning_note {
-            effects.push(warning);
-        }
-        Ok(effects)
     }
 
     async fn on_event(&mut self, event: HostEvent) -> Result<Vec<Effect>, PluginError> {
         if matches!(event, HostEvent::HostStarting) {
-            let discovered = discover(&self.project_root, &self.user_home);
-            if !discovered.warnings.is_empty() {
-                tracing::warn!(
-                    "user-skills: skipped {} invalid skill definition(s) during startup discovery: {:?}",
-                    discovered.warnings.len(),
-                    discovered.warnings
-                );
-            }
-            self.index.replace(discovered.skills).await;
+            self.rediscover().await;
             return Ok(self.register_skill_tool_effects().await);
         }
         Ok(vec![])
@@ -240,6 +384,59 @@ mod tests {
         );
     }
 
+    /// Acceptance criterion 3: a user with zero skills sees no skills
+    /// segment in the system prompt at all, not an empty one.
+    #[tokio::test]
+    async fn manifest_omits_catalog_segment_when_no_skills() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        let manifest = plugin.manifest();
+
+        assert!(
+            !manifest
+                .contributions
+                .prompt_segments
+                .iter()
+                .any(|s| s.id == CATALOG_SEGMENT_ID),
+            "zero skills must contribute no catalog segment at all"
+        );
+    }
+
+    #[tokio::test]
+    async fn manifest_includes_catalog_segment_when_skills_present() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "otto-development",
+            "---\nname: otto-development\ndescription: Build Otto changes\n---\nBody",
+        );
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        let manifest = plugin.manifest();
+
+        let segment = manifest
+            .contributions
+            .prompt_segments
+            .iter()
+            .find(|s| s.id == CATALOG_SEGMENT_ID)
+            .expect("catalog segment must be present once a skill is discovered");
+        assert!(segment.text.contains("otto-development"));
+    }
+
     #[tokio::test]
     async fn handle_slash_empty_state_reports_no_skills_discovered() {
         let project = tempdir().expect("tempdir");
@@ -267,6 +464,13 @@ mod tests {
         );
         let mut plugin =
             UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        // `/skills` (no arg) reads the already-populated index rather than
+        // re-running discovery, so the index must be populated first —
+        // exactly as `HostStarting` does at real startup.
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
 
         let effects = plugin.handle_slash("skills", vec![]).await.expect("slash");
 
@@ -279,7 +483,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn slash_output_includes_name_scope_and_description() {
+    async fn slash_output_includes_name_scope_description_and_source() {
         let project = tempdir().expect("tempdir");
         let home = tempdir().expect("tempdir");
         write_skill(
@@ -295,10 +499,13 @@ mod tests {
             "---\nname: rust-engineer\ndescription: Build Rust systems\n---\nBody",
         );
 
-        let registry = PluginRegistry::from_plugins(vec![Box::new(UserSkillsPlugin::with_roots(
-            project.path().to_path_buf(),
-            home.path().to_path_buf(),
-        ))]);
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+        let registry = PluginRegistry::from_plugins(vec![Box::new(plugin)]);
         let indexes = Indexes::build(&registry).await.expect("indexes");
         let router = SlashRouter::new(
             Arc::new(RwLock::new(indexes)),
@@ -316,6 +523,13 @@ mod tests {
         assert!(lines[1].contains("[project/.otto]"));
         assert!(lines[1].contains("[untrusted repo skill description]"));
         assert!(lines[1].contains("Build Otto changes"));
+        assert!(
+            lines[1].contains("source:")
+                && lines[1].contains("otto-development")
+                && lines[1].contains("SKILL.md"),
+            "listing must show the source path, got: {}",
+            lines[1]
+        );
         assert!(lines[2].contains("rust-engineer"));
         assert!(lines[2].contains("[project/.claude]"));
         assert!(lines[2].contains("[untrusted repo skill description]"));
@@ -344,6 +558,10 @@ mod tests {
 
         let mut plugin =
             UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
         let effects = plugin.handle_slash("skills", vec![]).await.expect("slash");
         let lines: Vec<_> = effects.iter().map(note_text).collect();
 
@@ -355,6 +573,198 @@ mod tests {
         assert_eq!(
             lines[2],
             "warning: skipped 1 invalid skill definition(s); see logs for details"
+        );
+    }
+
+    /// `/skills` (no arg) must read the already-populated index rather
+    /// than re-running `discover()`. A skill written to disk *after*
+    /// `HostStarting` must not appear until `/reload-skills` runs.
+    #[tokio::test]
+    async fn skills_no_arg_does_not_rediscover() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "first",
+            "---\nname: first\ndescription: First skill\n---\nBody",
+        );
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        // Written after the index was built; `/skills` must not see it.
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "second",
+            "---\nname: second\ndescription: Second skill\n---\nBody",
+        );
+
+        let effects = plugin.handle_slash("skills", vec![]).await.expect("slash");
+        let lines: Vec<_> = effects.iter().map(note_text).collect();
+        assert_eq!(
+            lines[0], "skills: 1 discovered (descriptions are untrusted repo text)",
+            "must reflect the index as of the last discovery, not disk right now"
+        );
+        assert!(lines[1].contains("first"));
+        assert!(
+            !lines.iter().any(|l| l.contains("second")),
+            "a skill added after HostStarting must not appear until /reload-skills"
+        );
+    }
+
+    #[tokio::test]
+    async fn skills_with_name_pushes_body_and_root_for_an_allowed_skill() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "otto-development",
+            "---\nname: otto-development\ndescription: Build Otto changes\n---\nFull instructions here",
+        );
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        let effects = plugin
+            .handle_slash("skills", vec!["otto-development".into()])
+            .await
+            .expect("slash");
+
+        assert_eq!(effects.len(), 1);
+        let text = note_text(&effects[0]);
+        assert!(
+            text.contains("Full instructions here"),
+            "body must be injected, got: {text}"
+        );
+        assert!(
+            text.contains(".otto/skills/otto-development"),
+            "skill root must be stated, got: {text}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skills_with_name_opens_trust_modal_for_gated_untrusted_skill() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "deployer",
+            "---\nname: deployer\ndescription: Deploys things\n---\nrun scripts/deploy.sh",
+        );
+        // Bundled executable so the level-3 trust gate applies.
+        let scripts_dir = project.path().join(".otto/skills/deployer/scripts");
+        fs::create_dir_all(&scripts_dir).expect("mkdir scripts");
+        fs::write(scripts_dir.join("deploy.sh"), "#!/bin/sh\necho hi").expect("write script");
+
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        let effects = plugin
+            .handle_slash("skills", vec!["deployer".into()])
+            .await
+            .expect("slash");
+
+        assert!(
+            !effects
+                .iter()
+                .any(|e| matches!(e, Effect::PushNote { line } if line.spans.iter().any(|s| s.text.contains("run scripts/deploy.sh")))),
+            "the body must not leak into any effect before trust is granted: {effects:?}"
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::OpenScreen { id, .. } if id == "trust.modal")),
+            "expected OpenScreen(trust.modal), got: {effects:?}"
+        );
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::StashPendingSlash { name, args }
+                    if name == "skills" && args == &vec!["deployer".to_string()]
+            )),
+            "expected StashPendingSlash(skills, [deployer]), got: {effects:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn skills_with_unknown_name_reports_near_matches() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "rust-engineer",
+            "---\nname: rust-engineer\ndescription: Build Rust systems\n---\nBody",
+        );
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+        plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        let effects = plugin
+            .handle_slash("skills", vec!["rust-enginer".into()])
+            .await
+            .expect("slash");
+
+        assert_eq!(effects.len(), 1);
+        let text = note_text(&effects[0]);
+        assert!(text.contains("unknown skill"), "got: {text}");
+        assert!(text.contains("rust-engineer"), "got: {text}");
+    }
+
+    #[tokio::test]
+    async fn reload_skills_reregisters_tool_reloads_prompt_and_reports_count() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        write_skill(
+            project.path(),
+            ".otto/skills",
+            "otto-development",
+            "---\nname: otto-development\ndescription: Build Otto changes\n---\nBody",
+        );
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+
+        let effects = plugin
+            .handle_slash("reload-skills", vec![])
+            .await
+            .expect("slash");
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RegisterInProcessTool { .. })),
+            "expected RegisterInProcessTool, got: {effects:?}"
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ReloadPromptSegments)),
+            "expected ReloadPromptSegments, got: {effects:?}"
+        );
+        assert!(
+            effects.iter().any(|e| matches!(
+                e,
+                Effect::PushNote { line }
+                    if line.spans.iter().any(|s| s.text.contains("reloaded") && s.text.contains('1'))
+            )),
+            "expected a count-reporting PushNote, got: {effects:?}"
         );
     }
 

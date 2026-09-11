@@ -84,7 +84,11 @@ impl InProcessToolHandler for SkillToolHandler {
 /// The level-2 payload. The root is stated explicitly because the body
 /// was authored against its own directory — without it, a relative
 /// `scripts/build.sh` in the instructions is unresolvable.
-fn render_skill(name: &str, root: &str, body: &str) -> String {
+///
+/// `pub(crate)` so `mod.rs`'s `/skills <name>` handler can reuse the
+/// exact same rendering the `skill` tool returns to the model, rather
+/// than duplicating the format string.
+pub(crate) fn render_skill(name: &str, root: &str, body: &str) -> String {
     format!(
         "# Skill: {name}\n\n\
          Skill directory: {root}\n\
@@ -98,7 +102,11 @@ fn render_skill(name: &str, root: &str, body: &str) -> String {
 /// bare "not found" — the model picked from an enum, so a miss usually
 /// means the index changed under it (a `/reload-skills`, or a skill
 /// shadowed by a higher tier).
-fn unknown_skill_message(requested: &str, known: &[String]) -> String {
+///
+/// `pub(crate)` so `mod.rs`'s `/skills <unknown>` path shares the same
+/// near-match wording as the `skill` tool's own error rather than
+/// duplicating `nearest`/`shared_prefix` in a second location.
+pub(crate) fn unknown_skill_message(requested: &str, known: &[String]) -> String {
     let near = nearest(requested, known);
     if near.is_empty() {
         format!("unknown skill `{requested}`; no skills are currently loaded")

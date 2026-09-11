@@ -17,6 +17,15 @@ boundary changes and PATCH captures fixes).
   mistyped name fails schema validation before it reaches the handler. A project-scope skill
   that bundles scripts still requires the same per-project trust consent as project slash
   commands before its body is returned. (#83)
+- `/skills <name>` now injects a discovered skill's full instructions directly into the
+  conversation, without waiting for the model to call the `skill` tool. A gated project-scope
+  skill (bundled scripts, project not yet trusted) opens the same trust-confirmation modal
+  project slash commands use, and resumes `/skills <name>` automatically once the user decides.
+  `/skills` with no argument now lists from the already-discovered index instead of rescanning
+  disk on every invocation. A new `/reload-skills` command rescans `.otto/skills/`,
+  `.claude/skills/`, and `.github/skills/`, re-registers the `skill` tool against the refreshed
+  set, and pushes the updated level-1 catalog into a running session's system prompt — previously
+  the catalog segment was only ever set once, at startup. (#83)
 
 ## 0.30.0 - 2026-09-11
 
