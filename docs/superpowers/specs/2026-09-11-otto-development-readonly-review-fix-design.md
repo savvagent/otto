@@ -1,7 +1,7 @@
 # Restore the read-only guarantee on the ported code-review dispatches — design
 
 Date: 2026-09-11
-Status: pending review
+Status: IMPLEMENTED
 Source: savvagent/otto#137
 Related: `.github/skills/otto-development/agent-prompts.md`'s Independent security review section
 (the same substitution class, already fixed correctly there); follow-up to #128/#131. Distinct from
