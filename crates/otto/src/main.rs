@@ -3471,6 +3471,13 @@ async fn run_app(
     apply_pending_pool_add(app, &host_slot, &project_root, &tool_bins, true).await;
     apply_pending_gate(app, &host_slot).await;
     apply_pending_in_process_tools(app, &host_slot).await;
+    // `HostStarting` subscribers (e.g. `internal:user-skills`) can populate
+    // state that changes their own prompt segment only once this event
+    // fires — after the one-shot startup snapshot above main() already
+    // pushed to the host. Re-push now so a segment that only exists once
+    // discovery has run (the skills catalog) is present for the first
+    // turn rather than only after a manual `/reload-*` command.
+    apply_pending_prompt_segments_reload(app, &host_slot).await;
 
     // Populate `App::cached_models` from the bootstrap host's pool so the
     // `/model` picker has rows the moment the user opens it. Previously

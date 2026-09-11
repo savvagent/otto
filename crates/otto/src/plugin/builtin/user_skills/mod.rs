@@ -334,9 +334,22 @@ impl Plugin for UserSkillsPlugin {
     async fn on_event(&mut self, event: HostEvent) -> Result<Vec<Effect>, PluginError> {
         if matches!(event, HostEvent::HostStarting) {
             self.rediscover().await;
-            return Ok(self.register_skill_tool_effects().await);
+            let mut effects = self.register_skill_tool_effects().await;
+            // `main.rs` takes its one-shot startup snapshot of every
+            // plugin's prompt segments *before* dispatching `HostStarting`
+            // (so an eagerly-static segment like html-canvas's is present
+            // for the very first turn) — which means it runs before
+            // `rediscover()` above has populated `catalog_cache`. Without
+            // this effect, a project with skills would show no level-1
+            // catalog until the user manually ran `/reload-skills`. See
+            // `crates/otto/src/main.rs`'s startup sequence, which drains
+            // this alongside `apply_pending_in_process_tools` right after
+            // dispatching this same event.
+            effects.push(Effect::ReloadPromptSegments);
+            Ok(effects)
+        } else {
+            Ok(vec![])
         }
-        Ok(vec![])
     }
 }
 
@@ -807,11 +820,49 @@ mod tests {
             .await
             .expect("on_event");
 
-        assert_eq!(effects.len(), 1);
+        assert_eq!(effects.len(), 2);
         assert!(
-            matches!(effects[0], Effect::RegisterInProcessTool { .. }),
-            "expected RegisterInProcessTool, got {:?}",
-            effects[0]
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::RegisterInProcessTool { .. })),
+            "expected RegisterInProcessTool, got {effects:?}"
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ReloadPromptSegments)),
+            "expected ReloadPromptSegments so a live session's system prompt picks up the \
+             catalog discovery just did, got {effects:?}"
+        );
+    }
+
+    /// Regression test for a review finding on PR #153: `main.rs` takes its
+    /// one-shot startup snapshot of prompt segments *before* dispatching
+    /// `HostStarting`, so without this effect a project with skills would
+    /// show no level-1 catalog until the user manually ran `/reload-skills`.
+    /// This must hold even with zero skills discovered, so the *first*
+    /// `HostStarting` after a skill is later added still has a path to
+    /// getting its segment live (via a subsequent `/reload-skills`, which
+    /// reuses this same effect).
+    #[tokio::test]
+    async fn host_starting_always_emits_reload_prompt_segments() {
+        let project = tempdir().expect("tempdir");
+        let home = tempdir().expect("tempdir");
+        let mut plugin =
+            UserSkillsPlugin::with_roots(project.path().to_path_buf(), home.path().to_path_buf());
+
+        let effects = plugin
+            .on_event(HostEvent::HostStarting)
+            .await
+            .expect("on_event");
+
+        assert!(
+            effects
+                .iter()
+                .any(|e| matches!(e, Effect::ReloadPromptSegments)),
+            "even with zero skills, HostStarting must emit ReloadPromptSegments so the \
+             (empty) catalog state is reflected rather than left at whatever main.rs's \
+             pre-HostStarting snapshot happened to capture: {effects:?}"
         );
     }
 }

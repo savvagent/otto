@@ -10,9 +10,10 @@ boundary changes and PATCH captures fixes).
 
 ### Added
 
-- otto now discovers Claude-Code-compatible skills — `SKILL.md` files under `.otto/skills/`,
-  `.claude/skills/`, and `.github/skills/` in both project and user scope — and exposes them
-  through progressive disclosure: a name+description catalog is folded into the system prompt
+- otto now discovers Claude-Code-compatible skills — `SKILL.md` files under `.otto/skills/` and
+  `.claude/skills/` in both project and user scope, plus `.github/skills/` at project scope only
+  (Copilot CLI's location; it has no user-scope counterpart) — and exposes them through
+  progressive disclosure: a name+description catalog is folded into the system prompt
   (omitted entirely when no skills are found), and the model can load a skill's full
   instructions on demand by calling the new built-in `skill` tool. A project-scope skill that
   bundles scripts still requires the same per-project trust consent as project slash commands
