@@ -487,7 +487,7 @@ impl ToolRegistry {
                         // before any user command can run. The session's
                         // first real call lazily respawns with the runtime
                         // allow_net decision.
-                        let probe_cmd = build_bash_command(
+                        let (probe_cmd, probe_stderr) = build_bash_command(
                             command,
                             args,
                             project_root,
@@ -496,7 +496,8 @@ impl ToolRegistry {
                             /* allow_net = */ false,
                         );
                         let label = name.clone();
-                        let transport = match TokioChildProcess::new(probe_cmd)
+                        let transport = match spawn_tool_transport(probe_cmd, probe_stderr)
+                            .map(|(transport, _stderr_handle)| transport)
                             .with_context(|| format!("spawn tool-bash probe: {label}"))
                         {
                             Ok(transport) => transport,
@@ -653,9 +654,10 @@ impl ToolRegistry {
                         let wrapper = apply_sandbox(&mut cmd, command, project_root, sandbox);
                         let allow_net = sandbox.net_allowed_for(command);
                         log_sandbox_wrapper(&label, &wrapper, allow_net, sandbox.is_enabled());
-                        redirect_tool_stderr(&mut cmd, command);
+                        let stderr = redirect_tool_stderr(command);
 
-                        let transport = match TokioChildProcess::new(cmd)
+                        let transport = match spawn_tool_transport(cmd, stderr)
+                            .map(|(transport, _stderr_handle)| transport)
                             .with_context(|| format!("spawn tool server: {label}"))
                         {
                             Ok(transport) => transport,
@@ -1222,7 +1224,7 @@ impl LazyBash {
             // fails we keep the old one — the alternative (kill first,
             // then fail to spawn) would leave the slot empty and force
             // every subsequent call to attempt a fresh spawn from cold.
-            let cmd = build_bash_command(
+            let (cmd, stderr) = build_bash_command(
                 &self.config.command,
                 &self.config.args,
                 &self.config.project_root,
@@ -1231,8 +1233,8 @@ impl LazyBash {
                 allow_net,
             );
             let label = self.config.command.display().to_string();
-            let transport = match TokioChildProcess::new(cmd) {
-                Ok(t) => t,
+            let transport = match spawn_tool_transport(cmd, stderr) {
+                Ok((t, _stderr_handle)) => t,
                 Err(e) => {
                     return ToolCallOutcome::error(format!(
                         "spawn tool-bash ({label}, allow_net={allow_net}): {e}"
@@ -1277,9 +1279,10 @@ impl LazyBash {
 }
 
 /// Build a sandboxed `tokio::process::Command` for tool-bash with the
-/// given `allow_net`. The injected per-spawn `tool_overrides[tool-bash]
-/// .allow_net = Some(allow_net)` wins over the built-in default-deny
-/// fallback in `SandboxConfig::net_allowed_for`.
+/// given `allow_net`, plus the `Stdio` its stderr must be spawned with.
+/// The injected per-spawn `tool_overrides[tool-bash].allow_net =
+/// Some(allow_net)` wins over the built-in default-deny fallback in
+/// `SandboxConfig::net_allowed_for`.
 fn build_bash_command(
     command: &Path,
     args: &[String],
@@ -1287,7 +1290,7 @@ fn build_bash_command(
     sandbox_template: &SandboxConfig,
     env: &HashMap<String, String>,
     allow_net: bool,
-) -> tokio::process::Command {
+) -> (tokio::process::Command, std::process::Stdio) {
     let mut cmd = tokio::process::Command::new(command);
     cmd.args(args);
     cmd.env("OTTO_TOOL_FS_ROOT", project_root);
@@ -1318,8 +1321,8 @@ fn build_bash_command(
     // The bash spawn path uses the merged-with-override `sandbox` config,
     // so its `is_enabled()` reflects the actual state for this spawn.
     log_sandbox_wrapper(&label, &wrapper, allow_net, sandbox.is_enabled());
-    redirect_tool_stderr(&mut cmd, command);
-    cmd
+    let stderr = redirect_tool_stderr(command);
+    (cmd, stderr)
 }
 
 /// Log the resolved sandbox wrapper for a freshly built tool command.
@@ -1361,20 +1364,41 @@ fn log_sandbox_wrapper(
     }
 }
 
-/// Redirect a tool subprocess's stderr to a per-tool append log file under
-/// `~/.otto/logs/tools/`. Falls back to `Stdio::null()` if the file
-/// can't be opened — the invariant is "never inherit the TUI's terminal",
-/// not "must log everything".
-///
-/// Must be called *after* [`apply_sandbox`] (which can replace the whole
-/// `Command` with a `bwrap`/`sandbox-exec` wrapper and would otherwise drop
-/// our stderr configuration).
-fn redirect_tool_stderr(cmd: &mut tokio::process::Command, command: &Path) {
-    let stderr = match tool_stderr_log_file(command) {
+/// Resolve the `Stdio` a tool subprocess's stderr should be redirected to: a
+/// per-tool append log file under `~/.otto/logs/tools/`. Falls back to
+/// `Stdio::null()` if the file can't be opened — the invariant is "never
+/// inherit the TUI's terminal", not "must log everything".
+fn redirect_tool_stderr(command: &Path) -> std::process::Stdio {
+    match tool_stderr_log_file(command) {
         Ok(file) => std::process::Stdio::from(file),
         Err(_) => std::process::Stdio::null(),
-    };
-    cmd.stderr(stderr);
+    }
+}
+
+/// Spawn `cmd` as an MCP stdio child process with `stderr` honored exactly
+/// as given — never `rmcp`'s own `Stdio::inherit()` default.
+///
+/// `TokioChildProcess::new(cmd)` (the plain convenience constructor) always
+/// wins the stdio race against any `cmd.stderr(...)` the caller already
+/// set: `TokioChildProcessBuilder::new`'s own default triple (`stdin`/
+/// `stdout` piped, `stderr` **inherited**) is unconditionally re-applied to
+/// the `Command` inside `.spawn()`, discarding whatever the caller
+/// configured (confirmed against the pinned `rmcp` 1.6.0 source —
+/// `TokioChildProcessBuilder::spawn`'s `self.cmd.command_mut().stdin(..)
+/// .stdout(..).stderr(..)` call). Every otto stdio-tool spawn site must
+/// therefore go through `TokioChildProcess::builder(cmd).stderr(stderr)
+/// .spawn()` — this is the one place that does it, so a future spawn site
+/// cannot silently regress back to inheriting the TUI's real terminal.
+///
+/// Returns the `Option<ChildStderr>` `rmcp` hands back (`Some` only when
+/// spawned with `Stdio::piped()`) so callers/tests that need to observe
+/// stderr directly can; production call sites pass a file or
+/// `Stdio::null()` and discard it.
+fn spawn_tool_transport(
+    cmd: tokio::process::Command,
+    stderr: std::process::Stdio,
+) -> std::io::Result<(TokioChildProcess, Option<tokio::process::ChildStderr>)> {
+    TokioChildProcess::builder(cmd).stderr(stderr).spawn()
 }
 
 /// Normalize the shape of an MCP tool result into a single `String` payload
@@ -2576,5 +2600,42 @@ mod tests {
             .await;
         assert!(outcome.is_ok(), "call_in_process returned: {outcome:?}");
         assert_eq!(outcome.unwrap(), json!({"hi": 1}));
+    }
+
+    #[tokio::test]
+    async fn tool_child_process_honors_explicit_stderr_redirect() {
+        use tokio::io::AsyncReadExt;
+
+        let cmd = if cfg!(windows) {
+            let mut c = tokio::process::Command::new("cmd");
+            c.args(["/C", "echo REGRESSION_MARKER_TOOL_STDERR 1>&2"]);
+            c
+        } else {
+            let mut c = tokio::process::Command::new("sh");
+            c.arg("-c").arg("echo REGRESSION_MARKER_TOOL_STDERR 1>&2");
+            c
+        };
+        // TokioChildProcess::new(cmd) (the buggy path this test guards against)
+        // would silently force Stdio::inherit() here regardless of what we ask
+        // for — see redirect_tool_stderr's doc comment and the design spec's
+        // root-cause section. spawn_tool_transport must make our explicit
+        // Stdio::piped() win instead.
+        let (_transport, stderr) =
+            spawn_tool_transport(cmd, std::process::Stdio::piped()).expect("spawn should succeed");
+        let mut stderr = stderr.expect(
+            "stderr must be piped back when the caller explicitly requests \
+             Stdio::piped() — if this is None, the child's stderr silently \
+             inherited the test process's own stderr instead",
+        );
+        let mut buf = String::new();
+        stderr
+            .read_to_string(&mut buf)
+            .await
+            .expect("read piped stderr");
+        assert!(
+            buf.contains("REGRESSION_MARKER_TOOL_STDERR"),
+            "expected the child's stderr output to be captured via the piped \
+             handle, got: {buf:?}"
+        );
     }
 }
