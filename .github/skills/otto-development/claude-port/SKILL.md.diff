@@ -304,7 +304,7 @@
  number `<N>` and the source ref.
  
  ### Step 10: PR review loop
-@@ -1023,12 +1062,12 @@
+@@ -1025,12 +1064,12 @@
  | Plan critique                                              | 1 reviewer dispatch                                                                                 | **Only** when the plan is fast-pathed (trivial task)   |
  | Worktree at start                                          | `git worktree add .claude/worktrees/<branch> -b <branch> origin/main`                                | NEVER (never code on main)                             |
  | Main-branch writes                                         | reviewed, merged PR (squash) — incl. record-as-shipped and the release-bump PR                       | NEVER (no direct push/hand-merge)                       |
