@@ -192,7 +192,7 @@ DIFF_SUBDIR="claude-port"
 # Adding a genuinely native skill means adding its name here. That is the point:
 # it is one reviewable line, and it is the only way a directory under
 # `.claude/skills/` is allowed to exist with nothing checking it.
-NATIVE_SKILLS="rust-engineer tui-engineer otto-scanner"
+NATIVE_SKILLS="rust-engineer tui-engineer otto-scanner otto-worker"
 UPDATE_CMD="bash .github/scripts/check-claude-skill-ports.sh --update"
 
 failures=0

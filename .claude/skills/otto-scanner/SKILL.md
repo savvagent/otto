@@ -1,6 +1,6 @@
 ---
 name: otto-scanner
-description: Use when scanning open GitHub issues in savvagent/otto and enqueuing eligible ones into the otto-factory job queue — checking each issue against creating-github-issues' compliance requirements first, bringing non-compliant issues into compliance in place, then queueing it. Trigger on "scan issues", "sync issues to otto-factory", "queue open issues", "run otto-scanner", or a scheduled/periodic invocation of this skill. Not for creating a brand-new issue (creating-github-issues) or for working an issue once it is claimed (otto-development).
+description: Use when scanning open GitHub issues in savvagent/otto and enqueuing eligible ones into the otto-factory job queue — checking each issue against creating-github-issues' compliance requirements first, bringing non-compliant issues into compliance in place, then queueing it. Trigger on "scan issues", "sync issues to otto-factory", "queue open issues", "run otto-scanner", or a scheduled/periodic invocation of this skill. Not for creating a brand-new issue (creating-github-issues) or for claiming and working a queued job (otto-worker, which dispatches otto-development for the per-job mechanics).
 ---
 
 # Otto Scanner
@@ -15,8 +15,9 @@ no equivalent in this repo's Copilot-CLI-flavored canonical skills, so unlike
 counterpart to stay in sync with (see `CLAUDE.md`'s `NATIVE_SKILLS` section).
 
 This skill only **queues** work. It never implements an issue, opens a PR, or
-claims a job itself — that is `otto-development`'s job once some agent claims
-what this skill queues.
+claims a job itself — that is `otto-worker`'s job once it claims what this
+skill queues (which in turn dispatches `otto-development` for the actual
+implementation).
 
 ## The Iron Law
 
@@ -158,7 +159,7 @@ Job list possibly truncated at Step 1 — dedup may be incomplete for older jobs
 ```
 
 Then STOP. Do not start implementing any queued issue — claiming and working
-a job is `otto-development`'s job, done by whichever agent picks it up next.
+a job is `otto-worker`'s job, done by whichever agent picks it up next.
 
 ## Common Rationalizations (all are violations)
 
@@ -189,6 +190,9 @@ Each = stop, do the step correctly, continue.
 - `creating-github-issues` — the compliance authority this skill checks
   existing issues against; also owns the type-label mapping and body-shape
   rules referenced in Step 2.
-- `otto-development` — claims and implements a queued job end-to-end (spec →
-  plan → implement → PR → review → merge → release). This skill only gets an
-  issue onto the queue; it never claims or works one.
+- `otto-development` — the spec → plan → implement → PR → review → merge →
+  release mechanics that actually implement a queued job, run by a subagent
+  `otto-worker` dispatches. This skill only gets an issue onto the queue; it
+  never claims or works one.
+- `otto-worker` — claims a job this skill queued and dispatches a subagent to
+  work it via `otto-development`. This skill never claims a job itself.
