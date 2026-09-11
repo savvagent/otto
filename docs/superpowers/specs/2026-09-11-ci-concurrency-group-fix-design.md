@@ -72,16 +72,6 @@ behavior:
    on GitHub's synthetic, recomputed-per-push merge ref in favor of the actual named branch, which is
    the formulation GitHub's own docs and the wider ecosystem recommend specifically because the merge
    ref is an internal implementation detail subject to recomputation.
-**This fix does not explain or prevent the second anomaly (the zero-job `push` run).** Both the old
-predicate (`github.event_name == 'pull_request'`) and the new one (`github.ref != 'refs/heads/main'
-&& github.ref != 'refs/heads/master'`) evaluate identically and deterministically `false` for every
-run in a `push`-to-`main` group — there was never a cross-run predicate-disagreement axis for that
-group under either formula, so items 1–3 below cannot be the fix for it. A `push` run cancelled with
-zero jobs (i.e., never entering the queue at all) is a different failure shape from "queued, then
-cancelled 33 seconds into `in_progress`," and is not addressed by any change in this spec. This is
-recorded explicitly here — see Risks & Open Questions — rather than implied to be covered by the
-group-key/predicate rewrite below.
-
 3. **Bound every job's wall-clock time with `timeout-minutes`.** Independent of the group-key/predicate
    fix, nothing in `ci.yml` today prevents a genuinely wedged run (stuck past any concurrency
    arbitration entirely — e.g., a hung step) from occupying its group's "in progress" slot for GitHub
@@ -91,6 +81,16 @@ group-key/predicate rewrite below.
    should not be able to starve every subsequent run indefinitely) has a bound even in the pathological
    case the YAML-level predicate fix does not itself address (a run that never receives an update at
    all — no new push, no cancellation signal, just hung).
+
+**This fix does not explain or prevent the second anomaly (the zero-job `push` run).** Both the old
+predicate (`github.event_name == 'pull_request'`) and the new one (`github.ref != 'refs/heads/main'
+&& github.ref != 'refs/heads/master'`) evaluate identically and deterministically `false` for every
+run in a `push`-to-`main` group — there was never a cross-run predicate-disagreement axis for that
+group under either formula, so items 1–3 above cannot be the fix for it. A `push` run cancelled with
+zero jobs (i.e., never entering the queue at all) is a different failure shape from "queued, then
+cancelled 33 seconds into `in_progress`," and is not addressed by any change in this spec. This is
+recorded explicitly here — see Risks & Open Questions — rather than implied to be covered by the
+group-key/predicate rewrite above.
 
 ## Approach
 
