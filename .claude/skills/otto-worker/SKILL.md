@@ -21,13 +21,19 @@ subagent this skill dispatches.
 
 ## The Iron Law
 
-**Every job this skill claims is either `complete_job`'d or `fail_job`'d
+**Every job this skill claims ends up resolved — `complete_job`'d,
+`fail_job`'d, or (only when the dispatched subagent complied with an
+external cancellation request) `cancel_job`'d by that subagent itself —
 before this skill finishes, and exactly one job is claimed per run.** A job
 left claimed with no resolution blocks it from ever being retried or reported
 on; claiming a second job "while you're at it" doubles the blast radius of a
-single run going wrong. If the run is interrupted after claiming but before
-resolving, resolving that job is the first thing the next invocation must do
-before claiming anything new.
+single run going wrong. If this skill's own run is interrupted after claiming
+but before resolving, don't hunt for and guess at reclaiming that orphaned
+claim on the next invocation — a claim's TTL (kept alive by the subagent's
+own `renew_claim` calls, Step 3, for as long as real work is happening) is
+what protects against a truly abandoned claim: once it lapses, `ready`
+surfaces the job as claimable again on its own, with no need for this skill
+to guess which in-flight claim is actually dead.
 
 ## Context discipline: the real work happens in one subagent
 
@@ -44,24 +50,13 @@ subagent. (Step 5's one-time `gh pr view` call, made after the subagent has
 already finished to verify its report, is the sole exception — it is not
 progress-watching.)
 
-## Step 1 — Identify the repo, then resolve any orphaned claim from a prior run
+## Step 1 — Identify the repo
 
 1. Call `whoami` to confirm which organization this token opens.
 2. Call `resolve_repo` with `remote` set to the output of
    `git remote get-url origin` (`https://github.com/savvagent/otto.git`).
 3. If that fails to resolve, call `list_repos`; if `savvagent/otto` is truly
    unregistered, `register_repo` it before continuing.
-4. Call `list_jobs` for the resolved repo slug with `status: "in-progress"`
-   (and separately `"active"`). If a prior interrupted run of this skill left
-   a job claimed with no dispatched subagent still working it, it shows up
-   here rather than in `ready` (an unexpired claim doesn't appear as
-   claimable). You have no way to tell "genuinely still being worked by
-   another agent" from "orphaned by a crashed run" except staleness — if one
-   looks clearly abandoned (age, no corresponding branch/PR activity),
-   `fail_job` it with a reason noting it was found orphaned, before doing
-   anything else. Don't guess aggressively: if it's ambiguous, leave it and
-   move on to Step 2 — a live claim held by another agent must never be
-   touched.
 
 Keep the resolved repo slug — every following otto-factory call needs it.
 
@@ -79,7 +74,9 @@ Keep the resolved repo slug — every following otto-factory call needs it.
    any was set), not re-fetched or re-summarized later.
 
 If claiming fails (another agent took it first), go back to `ready` and try
-the next candidate rather than giving up immediately.
+the next candidate rather than giving up immediately — but if that retry
+`ready` call itself now comes back empty, that's the same "nothing is ready"
+case as Step 2.1: report it (Step 6) and stop, don't keep polling.
 
 ## Step 3 — The subagent keeps both the claim and the branch lease alive
 
