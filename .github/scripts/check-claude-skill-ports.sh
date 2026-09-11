@@ -536,8 +536,6 @@ for dir in "$CANONICAL_ROOT"/*/; do
         port="$port_dir/$rel"
         expected="$diff_dir/$rel.diff"
 
-        checked=$((checked + 1))
-
         reject_symlink "$canonical" || continue
 
         if [ -e "$port" ] || [ -L "$port" ]; then
@@ -547,6 +545,8 @@ for dir in "$CANONICAL_ROOT"/*/; do
             fail "skill '$name': no Claude Code port of $rel. Create $port as an adapted copy of $canonical, then record the divergence by running, from the repo root: $UPDATE_CMD"
             continue
         fi
+
+        checked=$((checked + 1))
 
         # 4. The note, asserted here because this loop is already reading every
         #    port. One `grep` per port file. Nothing else verifies it, and three
