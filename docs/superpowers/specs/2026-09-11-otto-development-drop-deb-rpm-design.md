@@ -1,7 +1,7 @@
 # Drop stale `.deb`/`.rpm` verification from `otto-development` — design
 
 Date: 2026-09-11
-Status: approved
+Status: IMPLEMENTED
 Source: savvagent/otto#141
 Related: `01bb3f1` ("release: drop the .deb/.rpm Linux packages (#109)"), `RELEASING.md:78-80`
 
