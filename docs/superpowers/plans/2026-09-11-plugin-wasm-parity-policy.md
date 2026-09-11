@@ -132,9 +132,11 @@ run anyway per house style).
   ```bash
   cargo build
   cargo test --workspace
+  cargo clippy --workspace --all-targets
   ```
-  Expect both to pass unchanged — this task touches only `CLAUDE.md`, so this step's purpose is
-  confirming the acceptance criterion literally, not catching a regression this task could cause.
+  Expect all three to pass unchanged — this task touches only `CLAUDE.md`, so this step's purpose
+  is confirming the acceptance criterion literally, not catching a regression this task could
+  cause.
 
 - [ ] **Step 8: Format and commit.** No Rust changed, so `cargo fmt --all` is a no-op here but run
   it anyway for consistency with house style:
