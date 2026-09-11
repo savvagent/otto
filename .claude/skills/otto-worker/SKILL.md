@@ -39,15 +39,29 @@ release lifecycle happens inside a single `Agent` tool call to a subagent that
 was handed everything it needs up front — the orchestrator does not watch it
 work, does not re-read its intermediate output, and does not do any of that
 work itself. If you find yourself about to open a file, run `cargo`, or call
-`gh pr` directly in the orchestrator, stop — that belongs in the subagent.
+`gh pr` to watch progress in the orchestrator, stop — that belongs in the
+subagent. (Step 5's one-time `gh pr view` call, made after the subagent has
+already finished to verify its report, is the sole exception — it is not
+progress-watching.)
 
-## Step 1 — Identify the repo
+## Step 1 — Identify the repo, then resolve any orphaned claim from a prior run
 
 1. Call `whoami` to confirm which organization this token opens.
 2. Call `resolve_repo` with `remote` set to the output of
    `git remote get-url origin` (`https://github.com/savvagent/otto.git`).
 3. If that fails to resolve, call `list_repos`; if `savvagent/otto` is truly
    unregistered, `register_repo` it before continuing.
+4. Call `list_jobs` for the resolved repo slug with `status: "in-progress"`
+   (and separately `"active"`). If a prior interrupted run of this skill left
+   a job claimed with no dispatched subagent still working it, it shows up
+   here rather than in `ready` (an unexpired claim doesn't appear as
+   claimable). You have no way to tell "genuinely still being worked by
+   another agent" from "orphaned by a crashed run" except staleness — if one
+   looks clearly abandoned (age, no corresponding branch/PR activity),
+   `fail_job` it with a reason noting it was found orphaned, before doing
+   anything else. Don't guess aggressively: if it's ambiguous, leave it and
+   move on to Step 2 — a live claim held by another agent must never be
+   touched.
 
 Keep the resolved repo slug — every following otto-factory call needs it.
 
@@ -61,26 +75,39 @@ Keep the resolved repo slug — every following otto-factory call needs it.
 3. Note the job's id, title, description, `ticketRef` (if any — this is
    normally `savvagent/otto#<n>` when the job came from `otto-scanner`), and
    any `metadata`. This is the only job content the orchestrator holds onto;
-   it gets handed to the subagent whole in Step 4, not re-fetched or
-   re-summarized later.
+   it gets handed to the subagent whole in Step 4 (including `metadata`, if
+   any was set), not re-fetched or re-summarized later.
 
 If claiming fails (another agent took it first), go back to `ready` and try
 the next candidate rather than giving up immediately.
 
-## Step 3 — The subagent owns its own branch lease
+## Step 3 — The subagent keeps both the claim and the branch lease alive
 
 The orchestrator dispatches the subagent in Step 4 with a single `Agent`
 call, which blocks until the subagent's entire run is finished and returns
-only once, at the end — there is no channel for the orchestrator to learn the
-branch name mid-run or to interleave `renew_lease` calls while that one call
-is still outstanding. So leasing is not something the orchestrator does at
-all: the subagent itself acquires `branch:<name>` (`acquire_lease`, for this
-repo) as its own first action once it knows the branch name, renews it
-periodically over the course of its own long-running work, and releases it
-right before it reports back to the orchestrator — a self-contained step,
-same as everything else in its prompt (Step 4 spells this out). Leases are
-advisory (see the otto-factory server instructions) — this makes a collision
-with another agent visible, it doesn't prevent one.
+only once, at the end — there is no channel for the orchestrator to
+interleave `renew_claim` or `renew_lease` calls, or learn the branch name,
+while that one call is still outstanding. Two things need keeping alive
+during that long single call, and the subagent is the only one that can do
+either:
+
+- **The job claim itself.** `claim_jobs` (Step 2) expires after its TTL
+  (900s by default) if never renewed, and a real spec → plan → implement →
+  review → merge → release run routinely runs longer than that — an
+  unrenewed claim expiring mid-run would let a second invocation of this
+  skill claim and dispatch a duplicate subagent for the same job. So the
+  subagent calls `renew_claim` on `<job-id>` periodically throughout its own
+  work, not the orchestrator.
+- **The branch lease.** Once the subagent knows its branch name
+  (`otto-development`'s Phase 0), it acquires `branch:<name>`
+  (`acquire_lease`, for this repo), renews it (`renew_lease`) periodically
+  alongside the claim renewal, and releases it (`release_lease`) right before
+  it reports back to the orchestrator. Leases are advisory (see the
+  otto-factory server instructions) — this makes a collision with another
+  agent visible, it doesn't prevent one.
+
+Both are self-contained steps in the subagent's own prompt (Step 4 spells
+them out) — the orchestrator does neither.
 
 ## Step 4 — Dispatch one subagent to do the actual work
 
@@ -99,31 +126,42 @@ GitHub issue: <ticketRef, if present, e.g. "savvagent/otto#123" — use this as
   the issue to work from in otto-development's intake step. If no ticketRef
   is present, treat the title/description above as the plain task brief
   otto-development also accepts.>
+Job metadata: <the job's metadata object, verbatim, if any was set — otherwise
+  omit this line entirely>
 
 Requirements:
 - Work in your own isolated worktree per otto-development's own Phase 0
   worktree convention (`.claude/worktrees/<branch>`) — never the shared main
   checkout.
 - Use `otto-development` for the full lifecycle: spec, plan, implementation,
-  PR, the mandatory review loop, fixing findings, merge, and — per this
-  repo's normal cadence — cutting a release, unless otto-development's own
-  rules say a release isn't warranted for this change.
-- As soon as your branch name is decided (otto-development's Phase 0), call
-  the otto-factory MCP tool `acquire_lease` on `branch:<name>` for the
-  savvagent/otto repo (resolve the repo slug yourself via `whoami`/
-  `resolve_repo` first, same as the orchestrator did). Renew it
-  (`renew_lease`) periodically over the course of your work, and
-  `release_lease` as your very last action before you report back — you are
-  the only one who can interleave lease calls with your own long-running
-  work, so this whole lifecycle is yours, not the orchestrator's.
-- Use `git-expert` for multi-step git/GitHub mechanics (branch, commit, push,
-  PR, merge) per this repo's CLAUDE.md.
-- Do not add any attribution to commits or the PR description — no
-  Co-Authored-By trailer, no "Generated with" footer, no bot marker. Omit it
-  silently.
-- When you finish (lease already released), report: outcome (shipped and
-  merged / blocked / failed and why), the PR URL, whether a release was cut
-  and its version, and the branch name.
+  PR, the mandatory review loop, fixing findings, merge, and cutting a
+  release. Cutting a release is otto-development's Non-Negotiable Rule 8 —
+  every merge to main gets one, no size or scope carve-out, so do not skip it.
+- You are responsible for two otto-factory keep-alive calls throughout your
+  run, since only you can interleave them with your own long-running work:
+  call `renew_claim` on job `<job-id>` periodically so the claim doesn't
+  expire out from under you (resolve the repo slug yourself via `whoami`/
+  `resolve_repo` first); and, as soon as your branch name is decided
+  (otto-development's Phase 0), `acquire_lease` on `branch:<name>`, renew it
+  (`renew_lease`) on the same cadence, and `release_lease` as your very last
+  action before you report back.
+- Follow otto-development's own git/GitHub mechanics directly (worktree add,
+  commit, push, `gh pr create`/`gh pr merge`) — it already specifies these in
+  full; do not route them through any other tool.
+- Do not add any attribution anywhere — not in commit messages, PR bodies,
+  code comments, or docs. No Co-Authored-By trailer, no "Generated with"
+  footer, no bot marker. Omit it silently.
+- If, at any point, you notice the job's cancellation was requested by
+  someone else (checking `get_job`), stop your work and call `cancel_job`
+  yourself before reporting back — you are the claim holder, only you can
+  finalize it that way. If you decide to stop for your own reasons (e.g. the
+  job turns out to be already done or a duplicate), do not call
+  `cancel_job` or `request_cancel` — just say so plainly in your final
+  report and let the orchestrator `fail_job` it.
+- When you finish (claim renewed throughout, lease already released), report:
+  outcome (shipped and merged / blocked / failed and why / stopped on request
+  and already called cancel_job), the PR URL, whether a release was cut and
+  its version, and the branch name.
 ```
 
 Wait for this subagent to finish. Do not poll it while it's running, do not
@@ -146,16 +184,29 @@ Based on the subagent's final report:
   doesn't exist), treat this the same as **Blocked or failed** below rather
   than completing it. Once verified, `complete_job` with a `result` string
   naming the PR URL and release version (if any).
-- **Blocked or failed** → `fail_job` with the subagent's stated reason. Do not
-  silently retry it in the same run — a failed job needs a human look, the
-  same convention `otto-scanner` applies to failed/cancelled jobs it finds
+- **Already stopped and finalized by the subagent itself** (it reported it
+  called `cancel_job` after noticing an external cancellation request) →
+  nothing to do here; the job is already resolved. Skip straight to Step 6.
+- **Blocked, failed, or the subagent stopped for its own reasons** (including
+  "already done" / "duplicate") → `fail_job` with the subagent's stated
+  reason, worded so a human can tell a real failure from a redundant job.
+  `request_cancel`/`cancel_job` are not the orchestrator's tools here: the
+  orchestrator holds the claim, and per otto-factory's own tool
+  descriptions, `request_cancel` on a job you already hold doesn't finalize
+  anything (it only flags a cancellation for the holder to notice), and
+  `cancel_job` requires that someone else requested the stop. A holder
+  stopping for its own reasons calls `fail_job`, full stop. Do not silently
+  retry it in the same run — a failed job needs a human look, the same
+  convention `otto-scanner` applies to failed/cancelled jobs it finds
   already on the queue.
-- **The subagent asked to cancel** (e.g. the job turned out to be already
-  done, or a duplicate) → `request_cancel` with the reason instead of forcing
-  a `fail_job`.
+- **The `Agent` call itself errored, or the subagent produced no parseable
+  final report** (crashed mid-run) → `fail_job` with a reason noting the
+  subagent did not report back. Never leave the job claimed with nothing
+  called — that violates the Iron Law regardless of why the subagent didn't
+  finish cleanly.
 
-The subagent already released its own lease (Step 3/4) before reporting back,
-so there is nothing left to release here.
+The subagent already released its own lease and renewed its own claim
+throughout (Step 3/4), so there is nothing left to release or renew here.
 
 ## Step 6 — Report
 
@@ -165,7 +216,7 @@ If a job was claimed and worked, output:
 Otto Worker — savvagent/otto
 
 Job <job-id> — <title>
-Outcome: shipped (PR #<n>, released as v<x.y.z>) | failed (<reason>) | cancelled (<reason>)
+Outcome: shipped (PR #<n>, released as v<x.y.z>) | failed (<reason>) | cancelled on request (<reason>)
 Branch: <name>
 ```
 
@@ -190,20 +241,25 @@ invocation of this skill.
 | "It said 'shipped and merged', that's good enough for `complete_job`" | Verify it with `gh pr view --json state,mergedAt` first (Step 5). A subagent reporting success on a PR that was never actually merged is a known failure mode here — `complete_job` is not reversible. |
 | "It failed, but I can see the fix, let me just patch it here" | The orchestrator does not touch code. Either dispatch a follow-up subagent or `fail_job` it for a human. |
 | "I'll acquire the lease myself once the subagent tells me the branch name" | The `Agent` call blocks until the subagent's entire run finishes — there's no point where the orchestrator can act on a mid-run report. The subagent leases its own branch. |
+| "I'll renew the job claim myself from the orchestrator too" | Same blocking-call problem as the lease. The subagent renews its own claim throughout its run — the orchestrator never gets a chance to. |
+| "The job's redundant, I'll `request_cancel` it to close it out" | The orchestrator holds this claim; `request_cancel` on a job you already hold doesn't finalize anything. Use `fail_job` with a reason explaining it's redundant. |
 | "No `ticketRef` on this job, I'll invent one so otto-development has an issue to close" | Don't fabricate a tracker reference. Pass the job's title/description as a plain task brief — otto-development accepts that too. |
+| "The job's tiny, no need to make the subagent cut a release for it" | Non-Negotiable Rule 8 in `otto-development` has no size carve-out. The dispatch prompt says so — don't soften it. |
 
 ## Red Flags — STOP
 
 - About to claim a second job before the first is resolved
 - About to run `cargo`, `gh`, or edit a file directly in the orchestrator
   instead of inside the dispatched subagent
-- About to leave a claimed job without calling `complete_job`, `fail_job`, or
-  `request_cancel`
-- About to try acquiring or renewing a lease from the orchestrator instead of
-  telling the subagent to own its own lease lifecycle
+- About to leave a claimed job without calling `complete_job` or `fail_job`
+  (or confirming the subagent already called `cancel_job` itself)
+- About to try acquiring/renewing a lease, or renewing the job claim, from
+  the orchestrator instead of telling the subagent to own both lifecycles
 - About to dispatch more than one subagent for a single job
 - About to call `complete_job` on a "shipped and merged" report without
   first confirming it with `gh pr view --json state,mergedAt`
+- About to call `request_cancel` or `cancel_job` from the orchestrator on a
+  job it holds — that's `fail_job`'s job
 
 Each = stop, do the step correctly, continue.
 
