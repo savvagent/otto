@@ -413,6 +413,16 @@ for a gated, not-yet-trusted skill, the tool can only refuse and tell the
 model to point the user at `/skills <name>` instead; it can never pop the
 modal itself.
 
+Unlike user-defined commands, where "trust this session only" still blocks
+`!shell` execution inside the expanded body, a skill has no equivalent
+partial-trust mode: its body is either withheld entirely or released in
+full, since there is no template-expansion step to intercept a bundled
+script reference the way command expansion can. Choosing "session only" for
+a skill therefore releases its complete body for the rest of the session —
+functionally the same as "always trust", except the decision is not written
+to `~/.otto/trusted-projects.json` and so does not carry over to the next
+session.
+
 #### Tool-name divergence
 
 Claude Code's own commands, agents, and skills name Claude Code's tools
