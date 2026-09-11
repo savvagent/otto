@@ -27,6 +27,24 @@ boundary changes and PATCH captures fixes).
   `skill` tool against the refreshed set, and pushes the updated catalog into a running session's
   system prompt — previously that catalog was only ever set once, at startup. (#83)
 
+## 0.30.1 - 2026-09-11
+
+### Fixed
+
+- The `otto-development` Claude Code skill port's Code Quality Review and Final Code Review dispatch
+  templates now carry an explicit read-only, high-confidence-only constraint, restoring the
+  independence guarantee the port's own text already claimed for them (mirroring the treatment
+  already used for the security-review template). Previously, a `general-purpose` subagent dispatched
+  for either review retained its full write toolset with no textual constraint, contradicting three
+  places in the skill that asserted otherwise. (#137)
+- Corrected several smaller documentation drifts in the same skill body: a `TodoWrite` status
+  vocabulary mismatch (`done` vs. the port's own `completed`), an inaccurate claim about `/clear`
+  availability in Claude Code, a diff-delivery contradiction in the security-review prompt's prose,
+  and two stale "ignored by design" claims in the skill-porting design spec that predated the shipped
+  `NATIVE_SKILLS`-declaration check. (#137)
+- `check-claude-skill-ports.sh` now increments its `checked` counter only after a file survives the
+  symlink and missing-port rejection checks, correcting the bookkeeping order. (#137)
+
 ## 0.30.0 - 2026-09-11
 
 ### Added
