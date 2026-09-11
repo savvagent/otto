@@ -37,7 +37,7 @@ change → PATCH per `CHANGELOG.md`'s convention.
 - `.github/workflows/ci.yml` — `concurrency:` block rewritten (group key + cancel predicate);
   `timeout-minutes:` added to all four jobs.
 - `CHANGELOG.md` — a `Fixed` entry under `## [Unreleased]` (added in the dedicated release PR per
-  Phase 4 step 12, not in this PR — see Task 2).
+  Phase 4 step 12, not in this PR — see Task 3).
 
 ## Task 1: Fix the concurrency block and bound job wall-clock time
 
