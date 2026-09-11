@@ -128,8 +128,10 @@ impl GrokMcpServer {
     }
 
     /// SPP `list_models` tool. Queries Grok's `/models` endpoint and
-    /// returns every listed model — Grok's catalog has no non-chat
-    /// clutter to filter out, unlike OpenAI's `/v1/models`.
+    /// returns every chat-capable listed model — unlike DeepSeek's
+    /// unfiltered catalog, Grok's `/models` mixes in non-chat (image/
+    /// imagine/voice) model ids, which `GrokProvider::list_models`
+    /// filters out before returning.
     #[tool(
         name = "list_models",
         description = "List models this provider can serve."
@@ -235,7 +237,10 @@ mod mcp_tests {
     /// `list_models_tool` is the MCP wrapper around `GrokProvider::list_models`.
     /// Stand up a tiny axum mock for `/models` and verify the wrapper
     /// returns a structured `ListModelsResponse` payload with every listed
-    /// id present (Grok's catalog has no non-chat clutter to filter).
+    /// (chat-capable) id present — this mock only serves chat ids, so the
+    /// image/imagine/voice filter has nothing to exclude here; that
+    /// filter's own behavior is covered separately in `lib.rs`'s
+    /// `list_models_filters_image_imagine_and_voice_ids` test.
     #[tokio::test]
     async fn list_models_tool_returns_structured_set() {
         let app = Router::new().route(
