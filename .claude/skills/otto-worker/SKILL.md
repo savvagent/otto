@@ -126,16 +126,26 @@ Requirements:
   and its version, and the branch name.
 ```
 
-Wait for this subagent to finish. Do not poll it, do not re-derive its
-progress from `gh` calls in the orchestrator — its final report is the only
-thing Step 5 needs.
+Wait for this subagent to finish. Do not poll it while it's running, do not
+re-derive its progress from `gh` calls in the orchestrator mid-run — its
+final report is what drives Step 5. Step 5 below does make exactly one
+verification call against that report before trusting it, which is not
+polling: it happens once, after the subagent has already finished.
 
 ## Step 5 — Resolve the job on otto-factory
 
 Based on the subagent's final report:
 
-- **Shipped and merged** → `complete_job` with a `resultSummary` naming the PR
-  URL and release version (if any).
+- **Shipped and merged** → before calling `complete_job`, independently
+  verify the claim with `gh pr view <PR-number> --repo savvagent/otto --json
+  state,mergedAt` and confirm `state` is `MERGED`. Do not take "shipped and
+  merged" on the subagent's word alone — a subagent reporting success on a PR
+  that was never actually merged is a known failure mode in this repo's own
+  history, and `complete_job` on an unmerged job is exactly the wrong
+  resolution to make irreversible. If verification fails (PR open, or
+  doesn't exist), treat this the same as **Blocked or failed** below rather
+  than completing it. Once verified, `complete_job` with a `result` string
+  naming the PR URL and release version (if any).
 - **Blocked or failed** → `fail_job` with the subagent's stated reason. Do not
   silently retry it in the same run — a failed job needs a human look, the
   same convention `otto-scanner` applies to failed/cancelled jobs it finds
@@ -176,7 +186,8 @@ invocation of this skill.
 |---|---|
 | "I'll claim two jobs since I'm already here" | Exactly one job per run. A second claimed job with no subagent working it is an orphaned claim. |
 | "I'll just read the job description myself to see if it's worth doing" | The description goes straight into the subagent's prompt. Reading it to decide isn't the orchestrator's job — claiming already committed you to it. |
-| "The subagent's taking a while, let me check `gh pr view` on its branch" | That's re-deriving progress in the orchestrator. Wait for its final report. |
+| "The subagent's taking a while, let me check `gh pr view` on its branch" | That's re-deriving progress *while it's still running*. Wait for its final report — the one `gh pr view` call Step 5 makes happens only after that report, to verify it, not to watch progress. |
+| "It said 'shipped and merged', that's good enough for `complete_job`" | Verify it with `gh pr view --json state,mergedAt` first (Step 5). A subagent reporting success on a PR that was never actually merged is a known failure mode here — `complete_job` is not reversible. |
 | "It failed, but I can see the fix, let me just patch it here" | The orchestrator does not touch code. Either dispatch a follow-up subagent or `fail_job` it for a human. |
 | "I'll acquire the lease myself once the subagent tells me the branch name" | The `Agent` call blocks until the subagent's entire run finishes — there's no point where the orchestrator can act on a mid-run report. The subagent leases its own branch. |
 | "No `ticketRef` on this job, I'll invent one so otto-development has an issue to close" | Don't fabricate a tracker reference. Pass the job's title/description as a plain task brief — otto-development accepts that too. |
@@ -191,6 +202,8 @@ invocation of this skill.
 - About to try acquiring or renewing a lease from the orchestrator instead of
   telling the subagent to own its own lease lifecycle
 - About to dispatch more than one subagent for a single job
+- About to call `complete_job` on a "shipped and merged" report without
+  first confirming it with `gh pr view --json state,mergedAt`
 
 Each = stop, do the step correctly, continue.
 

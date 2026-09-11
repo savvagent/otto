@@ -1,6 +1,6 @@
 ---
 name: otto-scanner
-description: Use when scanning open GitHub issues in savvagent/otto and enqueuing eligible ones into the otto-factory job queue — checking each issue against creating-github-issues' compliance requirements first, bringing non-compliant issues into compliance in place, then queueing it. Trigger on "scan issues", "sync issues to otto-factory", "queue open issues", "run otto-scanner", or a scheduled/periodic invocation of this skill. Not for creating a brand-new issue (creating-github-issues) or for working an issue once it is claimed (otto-development).
+description: Use when scanning open GitHub issues in savvagent/otto and enqueuing eligible ones into the otto-factory job queue — checking each issue against creating-github-issues' compliance requirements first, bringing non-compliant issues into compliance in place, then queueing it. Trigger on "scan issues", "sync issues to otto-factory", "queue open issues", "run otto-scanner", or a scheduled/periodic invocation of this skill. Not for creating a brand-new issue (creating-github-issues) or for claiming and working a queued job (otto-worker, which dispatches otto-development for the per-job mechanics).
 ---
 
 # Otto Scanner
@@ -15,8 +15,9 @@ no equivalent in this repo's Copilot-CLI-flavored canonical skills, so unlike
 counterpart to stay in sync with (see `CLAUDE.md`'s `NATIVE_SKILLS` section).
 
 This skill only **queues** work. It never implements an issue, opens a PR, or
-claims a job itself — that is `otto-development`'s job once some agent claims
-what this skill queues.
+claims a job itself — that is `otto-worker`'s job once it claims what this
+skill queues (which in turn dispatches `otto-development` for the actual
+implementation).
 
 ## The Iron Law
 
