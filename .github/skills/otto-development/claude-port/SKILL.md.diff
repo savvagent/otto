@@ -12,7 +12,7 @@
  # Otto-CLI Development — Autonomous End-to-End
  
  Autonomous, plan-driven feature/fix workflow for the **otto** repository (a Rust-only,
-@@ -76,8 +81,8 @@
+@@ -77,8 +82,8 @@
     otherwise-perfect commit that carries attribution is rejected and rewritten.
  4. **Every PR is reviewed by a Rust-expert pass, an architecture pass, and an independent security
     pass.** No PR opens, merges, or is pushed through the review loop without a dedicated Rust-review
@@ -23,7 +23,7 @@
     on record. Fast-path and trivial PRs included — there is no size-based carve-out. All three must
     pass (or their issues resolved) before merge. See "How dispatch works in this environment" below
     for exactly how each is invoked.
-@@ -304,11 +309,12 @@
+@@ -320,11 +325,12 @@
  Intake reads ("what does this work want?") get corrupted by prior conversation cruft — stale paths,
  abandoned plans, half-finished refactors. **Note:** `README.md`'s `/clear` documents a slash command
  in the *otto product being developed* (resets its own TUI conversation) — it is not a tool
@@ -40,7 +40,7 @@
  prompt, not from whatever has accumulated in the orchestrating session. The orchestrating session
  itself stays fresh by never doing the reviewing/implementing work inline — it reads sources, writes
  the spec/plan, dispatches, and aggregates results.
-@@ -346,72 +352,102 @@
+@@ -362,72 +368,102 @@
     commit, or the release version bump), it does so through its own worktree + PR like everything
     else.
  
@@ -193,7 +193,7 @@
  
  ## Phase 1 — Intake + spec
  
-@@ -470,7 +506,7 @@
+@@ -486,7 +522,7 @@
  
  Dispatch using the **`Spec Critique`** template in [`agent-prompts.md`](agent-prompts.md) — **read
  that file now and paste the template verbatim; do not improvise the prompt body.**
@@ -202,7 +202,7 @@
  source ref. In the Repo Profile placeholder, paste the "Load-Bearing Invariants" section above and
  the relevant Repository Conventions.
  
-@@ -529,7 +565,7 @@
+@@ -551,7 +587,7 @@
  ### Step 6: Plan critique subagent
  
  Dispatch using the **`Plan Critique`** template in [`agent-prompts.md`](agent-prompts.md) — **read
@@ -211,7 +211,7 @@
  PLAN TEXT>`, `<PASTE FULL SPEC TEXT>`, and the Repo Profile (Load-Bearing Invariants + conventions +
  test/lint commands).
  
-@@ -542,7 +578,7 @@
+@@ -564,7 +600,7 @@
  ## Phase 3 — Implement
  
  Read the plan ONCE, then extract every task's full text + context into your own working memory.
@@ -220,7 +220,7 @@
  provide them the full task text inline.
  
  **Sequential, not parallel.** Implementer subagents on the same branch will conflict on the working
-@@ -554,7 +590,7 @@
+@@ -576,7 +612,7 @@
  
  Dispatch using the **`Implementer Dispatch`** template in [`agent-prompts.md`](agent-prompts.md) —
  **read that file now and paste the template verbatim** (the `## AUTONOMOUS MODE` block and `## Report
@@ -229,7 +229,7 @@
  (include the relevant Load-Bearing Invariants + the repo's test/lint commands), the source ref, and
  the worktree path.
  
-@@ -578,7 +614,7 @@
+@@ -600,7 +636,7 @@
  Dispatch using the **`Spec Compliance Review`** template in [`agent-prompts.md`](agent-prompts.md) —
  **read that file now and paste the template verbatim** (the `## CRITICAL: Do Not Trust The Report`
  block is load-bearing — the reviewer must read the actual commits, not the implementer's claims).
@@ -238,7 +238,7 @@
  
  ### D. Spec fix loop (max 2 fix dispatches)
  
-@@ -595,12 +631,14 @@
+@@ -617,12 +653,14 @@
  - `HEAD_SHA = git rev-parse HEAD`
  
  Dispatch using the **`Code Quality Review`** template in [`agent-prompts.md`](agent-prompts.md) —
@@ -256,7 +256,7 @@
  - Critical/Important → re-dispatch fixer with those specific findings. Re-run quality review.
  - **Three failed quality reviews in a row → escalate.**
  
-@@ -619,7 +657,8 @@
+@@ -641,7 +679,8 @@
  > fast-path tickets where E flagged issues, H still runs.
  
  Dispatch using the **`Final Code Review`** template in [`agent-prompts.md`](agent-prompts.md) —
@@ -266,7 +266,7 @@
  plan + spec text inline (never just their repo paths — every dispatch prompt must be fully
  self-contained), branch name, and diff range.
  
-@@ -679,20 +718,20 @@
+@@ -701,20 +740,20 @@
  automated reviewer is configured, skip this and rely on the agent reviews below.
  
  **Mandatory review trio (no exceptions, no fast-path carve-out — Non-Negotiable Rules 4–5):** every
@@ -295,7 +295,7 @@
  rendering-focused pass for `otto-canvas`/Blitz changes). The independent security pass above
  already covers every PR; for changes touching the keyring, `tool-bash`, `tool-web`, or the plugin
  ABI, give it the extra instruction to scrutinize those surfaces hardest.
-@@ -707,7 +746,7 @@
+@@ -729,7 +768,7 @@
  
  Dispatch using the **`Review-Response Subagent`** template in [`agent-prompts.md`](agent-prompts.md)
  — **read that file now and paste the template verbatim** (the fix-or-dismiss + thread-resolve
@@ -304,7 +304,7 @@
  number `<N>` and the source ref.
  
  ### Step 10: PR review loop
-@@ -990,12 +1029,12 @@
+@@ -1026,12 +1065,12 @@
  | Plan critique                                              | 1 reviewer dispatch                                                                                 | **Only** when the plan is fast-pathed (trivial task)   |
  | Worktree at start                                          | `git worktree add .claude/worktrees/<branch> -b <branch> origin/main`                                | NEVER (never code on main)                             |
  | Main-branch writes                                         | reviewed, merged PR (squash) — incl. record-as-shipped and the release-bump PR                       | NEVER (no direct push/hand-merge)                       |

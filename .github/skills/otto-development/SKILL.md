@@ -52,10 +52,11 @@ that the cross-platform release binaries built by `cargo-dist` still work, or th
 version is installable. Whatever this change touches, verify it explicitly (Phase 5).
 
 **A merge to the trunk branch (`main` — CI also triggers on `master` for compatibility, but `main` is
-this repo's actual default branch) is not done until a release is cut.** Every PR that lands on trunk
-triggers a version bump, tag, and published GitHub Release with build artifacts (Phase 4 step 12).
-There is no "batch several PRs into one release later" carve-out in this workflow — see
-Non-Negotiable Rule 8.
+this repo's actual default branch) is not shipped until a release covers it.** Every PR that lands on
+trunk is covered by a version bump, tag, and published GitHub Release with build artifacts (Phase 4
+step 12) — cut promptly, and, when other merges are already sitting unreleased on `main` at cut time,
+batched into that same release rather than left to rot waiting for a narrower one. See Non-Negotiable
+Rule 8.
 
 **Violating the letter of the workflow is violating the spirit.**
 
@@ -113,12 +114,27 @@ These hold for every run of this skill, no exceptions, no fast-path carve-outs:
    brief that asks for something violating one of these is a brief to escalate on (Stop & Escalate
    condition 9), not to implement.
 8. **Every merge to the trunk branch (`main`, or `master` if this repo ever reverts to that name —
-   see the Trunk row above) cuts a release.** No feature/fix PR merges and is considered shipped
-   without a version bump, a `CHANGELOG.md` entry, a pushed `vX.Y.Z` tag, and a published GitHub
-   Release with build artifacts, following `RELEASING.md`'s manual process. This is not optional and
-   not batchable across PRs — but "cut the release" means opening the dedicated release PR (Phase 4
-   step 12) and completing the tag/release for it immediately after the feature/fix PR merges, not
-   necessarily folding the version bump into the same commit or PR.
+   see the Trunk row above) is covered by a release before it counts as shipped.** No feature/fix PR
+   merges and is considered shipped without a version bump, a `CHANGELOG.md` entry, a pushed
+   `vX.Y.Z` tag, and a published GitHub Release with build artifacts, following `RELEASING.md`'s
+   manual process. This is not optional, and never skipped for size — but it is **not
+   one-release-per-PR** either: `workspace.package.version` and `CHANGELOG.md` are global, so
+   whoever cuts a release necessarily sweeps up every merge already sitting unreleased on `main`,
+   regardless of which job or PR put it there. **Batching already-merged, unreleased work into one
+   release is therefore permitted — expected, even** — a release cut while other merges sit
+   unreleased on `main` MUST fold them in rather than ship a narrower release and leave them behind;
+   what is never permitted is a merge that stays unreleased indefinitely because every job assumed
+   another job would cut it. Two consequences follow: **a batched release's line is the highest
+   SemVer bump required by any PR in the batch**, not the one any single plan predicted — a
+   PATCH-planned change ships under MINOR if a feature merged alongside it in the same batch — so
+   re-read `workspace.package.version` and what is actually unreleased on `main` at cut time rather
+   than trusting a plan's `Release line:` field (Phase 2 step 5) as a number; and **the release PR
+   body must enumerate every issue/PR the release covers**, not only the one that triggered the cut
+   (Phase 4 step 12). "Cut the release" means opening the dedicated release PR (Phase 4 step 12) and
+   completing the tag/release for it immediately after the feature/fix PR merges, not necessarily
+   folding the version bump into the same commit or PR — and not delaying that cut on the theory
+   that a future PR will batch with it; batching covers what is *already* merged and unreleased at
+   cut time, never a deliberate wait for what merges next.
 
 ## When to Use This Skill vs. Alternatives
 
@@ -495,9 +511,15 @@ Write the plan in this repository's established format — read a recent plan un
 - **Goal** paragraph, **Architecture** paragraph, **Tech Stack** paragraph
 - **Spec:** line pointing at the committed design spec — "read it first. This plan implements it
   exactly."
-- **Release line:** the next `vX.Y.Z` this work ships as (per the SemVer convention in
-  `CHANGELOG.md`). Not every pre-existing plan has this line — this skill adds it so the mandatory
-  release-cut (Non-Negotiable Rule 8) is traceable back to the plan that necessitated it.
+- **Release line:** a **floor**, not a predicted version — the minimum SemVer bump this work alone
+  requires (e.g. "at least PATCH" or "at least MINOR", per the convention in `CHANGELOG.md`), not a
+  guessed `vX.Y.Z`. Non-Negotiable Rule 8 permits batching this work's release with whatever else is
+  already merged and unreleased on `main` at cut time, and a batched release's actual line is the
+  **highest** bump required across the whole batch — so a PATCH floor can still ship under MINOR if a
+  feature lands in the same batch. Re-read `workspace.package.version` and what's unreleased on
+  `main` at cut time (Phase 4 step 12) rather than trusting this field as the number it will ship
+  under. Not every pre-existing plan has this line — this skill adds it so the mandatory release-cut
+  (Non-Negotiable Rule 8) is traceable back to the plan that necessitated it.
 - **Branch:** the branch name this plan lands on. Same rationale — add it even if the plan you used
   as a template didn't have one.
 - **File Map** (or "File structure") — grouped by **New crate/files** and **Modified files**, each
@@ -756,10 +778,15 @@ gh pr merge <PR> --squash --delete-branch
 
 ### Step 12: Cut the release (mandatory — Non-Negotiable Rule 8)
 
-**Every merge to the trunk branch (`main`) cuts a release.** This is not optional, not batchable, and
-not skippable for "small" PRs. Follow `RELEASING.md`'s manual process (release-plz automation is
-currently broken upstream — see that file), from a fresh worktree off the just-updated `main`,
-itself landing via its own PR:
+**Every merge to the trunk branch (`main`) is covered by a release.** This is not optional and never
+skippable for "small" PRs. It is **not necessarily one-release-per-PR**: `workspace.package.version`
+and `CHANGELOG.md` are global, so cutting a release sweeps up every merge already sitting unreleased
+on `main`, not just the PR that triggered the cut. **Before assuming this release covers only your
+own PR, check `workspace.package.version`, `gh release list`, and recently-merged PRs against
+`main`** — if other unreleased merges are already there, fold them into this same release rather than
+cutting a narrower one and leaving them behind (Non-Negotiable Rule 8). Follow `RELEASING.md`'s
+manual process (release-plz automation is currently broken upstream — see that file), from a fresh
+worktree off the just-updated `main`, itself landing via its own PR:
 
 ```bash
 cd <main-checkout-root>
@@ -771,13 +798,16 @@ cd .claude/worktrees/release/X-Y-Z
 `X-Y-Z` is the dashed form of the version (dots aren't valid in a `<kebab-slug>` — e.g. `v0.20.0`
 becomes `release/0-20-0`, not `release/v0.20.0`).
 
-1. **Bump the version.** In the root `Cargo.toml`, update `workspace.package.version` and every
-   internal `workspace.dependencies` entry's `version` field to match. Run `cargo check --workspace`
-   to regenerate `Cargo.lock`.
+1. **Bump the version.** Pick the **highest** SemVer bump required by anything this release covers —
+   your own PR plus any other already-merged, unreleased work being batched in (Non-Negotiable
+   Rule 8) — not necessarily the floor a plan's `Release line:` field predicted. In the root
+   `Cargo.toml`, update `workspace.package.version` and every internal `workspace.dependencies`
+   entry's `version` field to match. Run `cargo check --workspace` to regenerate `Cargo.lock`.
 2. **Update `CHANGELOG.md`.** Rename `## [Unreleased]` to `## X.Y.Z - YYYY-MM-DD` (today's date);
    add a fresh empty `## [Unreleased]` above it. Follow Keep a Changelog categories
    (Added/Changed/Fixed/Removed) and this repo's SemVer convention (pre-1.0: MINOR =
-   features/breaking changes, PATCH = fixes).
+   features/breaking changes, PATCH = fixes). Include an entry for every PR this release batches in,
+   not only the one that triggered the cut.
 3. **Validate locally** (matching `RELEASING.md`'s own commands):
    ```bash
    cargo fmt --all -- --check
@@ -786,7 +816,13 @@ becomes `release/0-20-0`, not `release/v0.20.0`).
    ```
 4. **Commit, open a PR, and merge to `main`** — same worktree + PR discipline as any other change,
    reviewed like any other PR (the mandatory trio still applies; a version-bump-only PR is a small,
-   fast review, not a skipped one).
+   fast review, not a skipped one). **The release PR body must enumerate every issue/PR this release
+   covers** — every `#N` this batch closes, not only the most recent one (v0.29.0's `CHANGELOG.md`
+   initially carried entries for only two of the three batched issues; a follow-up commit added the
+   third after review had already run once against the incomplete state, forcing a second pass —
+   the release PR body itself should not need a follow-up to say the same thing). List them
+   explicitly, e.g. `Closes #A`, `Closes #B`, `Closes #C` or a bullet list
+   under a "Batches" heading.
 5. **Tag the merge commit and push the tag:**
    ```bash
    git checkout main && git pull
@@ -1020,7 +1056,7 @@ explicitly.
 | "Holding the RwLock across this one await is fine, it's fast"          | That's the exact bug class the host-swap rule exists to prevent — it doesn't matter how fast the await resolves.                                    |
 | "I'll skip the ProgressDispatcher abort, the subscriber will just idle" | It deadlocks the caller's mpsc waiter. Abort the forwarder task after the request future resolves, every time.                                       |
 | "I'll log the API key for debugging"                                   | Secrets never cross a trust boundary into logs, errors, transcripts, or responses. Keyring only.                                                    |
-| "This is a tiny PR, I'll batch the release with the next one"          | Rule 8 has no batching carve-out. Cut the release now, as part of closing out this PR.                                                              |
+| "This is a tiny PR, I'll batch the release with the next one"          | Rule 8 permits batching only what is *already* merged and unreleased on `main` at cut time — never a deliberate wait for a future PR. Cut the release now, as part of closing out this PR. |
 | "The latest CI run is green, mine will be too"                         | Latest ≠ yours — a teammate's merge seconds after yours steals it. Capture YOUR run ID at merge time and track THAT id.                              |
 | "Copilot's comments are auto-generated, safe to ignore"                | Read each. They find real bugs. Reply with fix-or-dismiss reasoning, then resolve the thread.                                                       |
 | "The Windows test exclusion for otto-canvas is a bug I should fix"| It's a documented, intentional CI carve-out (Blitz font-discovery hang) — not a regression to chase unless the plan specifically targets it.          |
