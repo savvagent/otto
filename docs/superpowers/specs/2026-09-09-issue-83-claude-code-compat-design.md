@@ -455,7 +455,7 @@ them makes the security review (Non-Negotiable Rule 5) unreviewable.
 
 ## Acceptance criteria
 
-1. `/skills` lists every skill found under all four tiers plus enabled
+1. `/skills` lists every skill found under all five tiers plus enabled
    plugins, with name, description, source, and scope.
 2. `/skills <name>` and the model-invoked `skill` tool both inject the full
    `SKILL.md` body and expose the skill root for level-3 reads.
