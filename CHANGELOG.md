@@ -8,6 +8,15 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.30.0 - 2026-09-11
+
+### Added
+
+- xAI Grok is now a sixth built-in provider (`crates/provider-grok`), selectable from `/connect`,
+  `/model`, `/use`, and the `@provider:model` routing prefix. Targets xAI's OpenAI-compatible Chat
+  Completions endpoint, with a `grok-4` (default) and `grok-4-fast` model catalog, full SSE
+  streaming, and a standalone `otto-grok` binary alongside the existing provider MCP servers. (#103)
+
 ## 0.29.1 - 2026-09-11
 
 ### Fixed
