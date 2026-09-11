@@ -11,11 +11,11 @@ how to extend it. End users wanting to install Otto can skip to
 
 Precompiled binaries for Linux (x86_64 / aarch64), macOS (Apple Silicon),
 and Windows (x86_64) are published to GitHub Releases on every tag. Each
-release ships one archive per platform containing ten binaries — the
+release ships one archive per platform containing eleven binaries — the
 `otto` TUI plus five bundled tool servers (`otto-tool-fs`,
 `otto-tool-bash`, `otto-tool-grep`, `otto-tool-lsp`,
-`otto-tool-web`) and four standalone provider MCP servers
-(`otto-anthropic`, `otto-gemini`, `otto-openai`, `otto-deepseek`) —
+`otto-tool-web`) and five standalone provider MCP servers
+(`otto-anthropic`, `otto-gemini`, `otto-openai`, `otto-deepseek`, `otto-grok`) —
 installed to your Cargo bin directory. Local (Ollama) is linked into the
 TUI and has no standalone shim.
 
@@ -53,7 +53,7 @@ The workspace is a small set of focused crates:
 
 | Crate | Purpose |
 |---|---|
-| [`crates/otto`](crates/otto) | All ten shipping binaries (`otto` TUI plus the `otto-tool-{fs,bash,grep,lsp,web}` tool shims and the `otto-{anthropic,gemini,openai,deepseek}` provider shims). Owns `/connect`, `/mcp`, file picker, transcript persistence, the plugin runtime. |
+| [`crates/otto`](crates/otto) | All eleven shipping binaries (`otto` TUI plus the `otto-tool-{fs,bash,grep,lsp,web}` tool shims and the `otto-{anthropic,gemini,openai,deepseek,grok}` provider shims). Owns `/connect`, `/mcp`, file picker, transcript persistence, the plugin runtime. |
 | [`crates/otto-host`](crates/otto-host) | Agent engine consumed as a library. Drives the tool-use loop, manages provider/tool sessions, owns the OS-level sandbox and per-tool stderr capture, exposes `Host::run_turn` and `run_turn_streaming`. |
 | [`crates/otto-protocol`](crates/otto-protocol) | Pure-types crate: `CompleteRequest`, `CompleteResponse`, `StreamEvent`, content blocks, `ListModelsResponse`. SPP wire spec in [`SPEC.md`](crates/otto-protocol/SPEC.md). |
 | [`crates/otto-mcp`](crates/otto-mcp) | The `ProviderClient` / `ProviderHandler` traits and the `InProcessProviderClient` bridge that makes provider crates linkable as libraries. |
@@ -62,6 +62,7 @@ The workspace is a small set of focused crates:
 | [`crates/provider-gemini`](crates/provider-gemini) | Google Gemini, same shape. Includes a JSON-Schema → OpenAPI-subset sanitizer for tool params. |
 | [`crates/provider-openai`](crates/provider-openai) | OpenAI Chat Completions, same shape. |
 | [`crates/provider-deepseek`](crates/provider-deepseek) | DeepSeek Chat Completions (OpenAI-compatible), same shape. |
+| [`crates/provider-grok`](crates/provider-grok) | xAI Grok Chat Completions, same shape (OpenAI-compatible wire format). |
 | [`crates/provider-local`](crates/provider-local) | Ollama (local) over its native HTTP API. Keyless; linked into the TUI only — no standalone shim. |
 | [`crates/tool-fs`](crates/tool-fs) | `read_file` / `write_file` / `list_dir` / `glob` / `insert` / `replace` / `multi_edit` library plus `tool_fs::run` (the entry point the `otto-tool-fs` shim calls). |
 | [`crates/tool-bash`](crates/tool-bash) | Sandboxed `bash` execution. The tool with the trickiest spawn lifecycle — see `otto-host::tools` for the lazy-spawn + `allow_net` resolver. |
@@ -587,6 +588,9 @@ OPENAI_API_KEY=…           cargo run -p otto --bin otto-openai
 
 # DeepSeek — defaults to 127.0.0.1:8790
 DEEPSEEK_API_KEY=…         cargo run -p otto --bin otto-deepseek
+
+# xAI Grok — defaults to 127.0.0.1:8791
+XAI_API_KEY=…              cargo run -p otto --bin otto-grok
 ```
 
 Ollama (local) only runs as an in-process provider; there's no
@@ -675,7 +679,7 @@ shutdown.
        health_check: None,
    }
    ```
-   …and a `build_foo` factory next to the existing four. Set
+   …and a `build_foo` factory next to the existing five. Set
    `api_key_required: false` for keyless providers (the Local/Ollama
    entry is the reference); set `health_check: Some(check_foo)` if
    the provider has a reachability probe (also see Local/Ollama).
@@ -962,6 +966,9 @@ args = []
 | `DEEPSEEK_API_KEY` | `otto-deepseek` | — | Same idea. |
 | `DEEPSEEK_BASE_URL` | `otto-deepseek` | `https://api.deepseek.com` | For local mocks. |
 | `OTTO_DEEPSEEK_LISTEN` | `otto-deepseek` | `127.0.0.1:8790` | Bind address. |
+| `XAI_API_KEY` | `otto-grok` | — | Same idea. |
+| `GROK_BASE_URL` | `otto-grok` | `https://api.x.ai/v1` | For local mocks. |
+| `OTTO_GROK_LISTEN` | `otto-grok` | `127.0.0.1:8791` | Bind address. |
 | `OLLAMA_HOST` | `otto` (Local provider) | `http://127.0.0.1:11434` | URL of the local Ollama HTTP server. |
 | `RUST_LOG` | all binaries | `warn` (TUI), `warn` (tool servers) | Standard `tracing-subscriber` env filter. Tool servers' stderr is captured to `~/.otto/logs/tools/`, the TUI's tracing lands in `~/.otto/logs/otto.log`. |
 

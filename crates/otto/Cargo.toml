@@ -51,6 +51,10 @@ path = "src/bin/otto-openai.rs"
 name = "otto-deepseek"
 path = "src/bin/otto-deepseek.rs"
 
+[[bin]]
+name = "otto-grok"
+path = "src/bin/otto-grok.rs"
+
 [dependencies]
 otto-host = { workspace = true }
 otto-plugin = { workspace = true }
@@ -61,6 +65,7 @@ otto-mcp = { workspace = true }
 provider-anthropic = { workspace = true }
 provider-deepseek = { workspace = true }
 provider-gemini = { workspace = true }
+provider-grok = { workspace = true }
 provider-local = { workspace = true }
 provider-openai = { workspace = true }
 tool-fs = { workspace = true }

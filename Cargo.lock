@@ -4107,6 +4107,7 @@ dependencies = [
  "provider-anthropic",
  "provider-deepseek",
  "provider-gemini",
+ "provider-grok",
  "provider-local",
  "provider-openai",
  "ratatui 0.30.0",
@@ -4816,6 +4817,29 @@ dependencies = [
 
 [[package]]
 name = "provider-gemini"
+version = "0.29.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "bytes",
+ "dotenvy",
+ "futures",
+ "otto-fence",
+ "otto-mcp",
+ "otto-protocol",
+ "reqwest 0.13.3",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "provider-grok"
 version = "0.29.1"
 dependencies = [
  "anyhow",

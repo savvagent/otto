@@ -128,6 +128,9 @@ pub mod provider_gemini;
 /// DeepSeek provider shim: keyring-backed `internal:provider-deepseek`.
 pub mod provider_deepseek;
 
+/// xAI Grok provider shim: keyring-backed `internal:provider-grok`.
+pub mod provider_grok;
+
 /// Local (Ollama) provider shim: keyless `internal:provider-local`.
 pub mod provider_local;
 
