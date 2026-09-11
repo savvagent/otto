@@ -1,7 +1,7 @@
 # Stop stdio tool child processes from inheriting the TUI's terminal — design
 
 Date: 2026-09-11
-Status: pending review
+Status: IMPLEMENTED
 Source: savvagent/otto#146
 
 ## Problem

@@ -48,7 +48,7 @@ moves while this branch is open). Internal bug fix, no public-interface change â
 **Files:**
 - Modify: `crates/otto-host/src/tools.rs`
 
-- [ ] **Step 1: Write the failing regression test first.** Add a new test to
+- [x] **Step 1: Write the failing regression test first.** Add a new test to
   `crates/otto-host/src/tools.rs` (in the existing `#[cfg(test)] mod tests` if one exists in this
   file, else a new `#[cfg(test)] mod tests` block near the bottom of the file, matching this crate's
   existing test-module convention â€” check with `grep -n "mod tests" crates/otto-host/src/tools.rs`
@@ -96,13 +96,13 @@ moves while this branch is open). Internal bug fix, no public-interface change â
   This will not compile yet (`spawn_tool_transport` doesn't exist) â€” that's the expected
   failing-first state; proceed to Step 2.
 
-- [ ] **Step 2: Confirm the test fails to compile.**
+- [x] **Step 2: Confirm the test fails to compile.**
   ```bash
   cargo test -p otto-host tool_child_process_honors_explicit_stderr_redirect
   ```
   Expect a compile error: `cannot find function 'spawn_tool_transport' in this scope`.
 
-- [ ] **Step 3: Add the `spawn_tool_transport` helper.** In `crates/otto-host/src/tools.rs`, near
+- [x] **Step 3: Add the `spawn_tool_transport` helper.** In `crates/otto-host/src/tools.rs`, near
   `redirect_tool_stderr` (currently around line 1372), add:
 
   ```rust
@@ -139,7 +139,7 @@ moves while this branch is open). Internal bug fix, no public-interface change â
   adding the helper (another agent may be working concurrently in this repo); if a `ChildStderr`
   import has since been added, reuse it instead of the fully-qualified form.
 
-- [ ] **Step 4: Run the test again â€” it should now compile and pass.**
+- [x] **Step 4: Run the test again â€” it should now compile and pass.**
   ```bash
   cargo test -p otto-host tool_child_process_honors_explicit_stderr_redirect
   ```
@@ -149,7 +149,7 @@ moves while this branch is open). Internal bug fix, no public-interface change â
   piped back" panic message, then restore the real `.builder(cmd).stderr(stderr).spawn()` body
   before continuing. This throwaway revert is not committed.)
 
-- [ ] **Step 5: Change `redirect_tool_stderr` to return `Stdio` instead of mutating `cmd`.** Current
+- [x] **Step 5: Change `redirect_tool_stderr` to return `Stdio` instead of mutating `cmd`.** Current
   signature (around line 1372):
   ```rust
   fn redirect_tool_stderr(cmd: &mut tokio::process::Command, command: &Path) {
@@ -179,7 +179,7 @@ moves while this branch is open). Internal bug fix, no public-interface change â
   `apply_sandbox` has already finished mutating `cmd` at each call site) still holds structurally;
   it just isn't this function's concern to document anymore.
 
-- [ ] **Step 6: Update the three call sites.**
+- [x] **Step 6: Update the three call sites.**
 
   **6a â€” `build_bash_command`** (currently around line 1283-1323, calls `apply_sandbox` then
   `redirect_tool_stderr(&mut cmd, command); cmd` returning a bare `Command`): change its return type
@@ -265,7 +265,7 @@ moves while this branch is open). Internal bug fix, no public-interface change â
   In all four spots, keep every other line (error messages, `label`, status pushes) unchanged â€”
   only the `Command`-building/spawning lines move.
 
-- [ ] **Step 7: Run the full otto-host test suite.**
+- [x] **Step 7: Run the full otto-host test suite.**
   ```bash
   cargo test -p otto-host
   ```
@@ -275,7 +275,7 @@ moves while this branch is open). Internal bug fix, no public-interface change â
   `redirect_tool_stderr(&mut cmd, ...)` signature or on `build_bash_command` returning a bare
   `Command`.
 
-- [ ] **Step 8: Full workspace build and lint.**
+- [x] **Step 8: Full workspace build and lint.**
   ```bash
   cargo build --workspace --all-targets
   cargo clippy --workspace --all-targets
@@ -285,19 +285,19 @@ moves while this branch is open). Internal bug fix, no public-interface change â
   production call sites; the plan's `_stderr_handle` naming above already suppresses the "unused"
   lint, but re-check after the real edit.
 
-- [ ] **Step 9: Public-interface note.** No SPP wire type, `ProviderHandler`/`ProviderClient` method,
+- [x] **Step 9: Public-interface note.** No SPP wire type, `ProviderHandler`/`ProviderClient` method,
   tool MCP schema, plugin ABI surface, slash command, env var, or on-disk transcript/keyring format
   touched â€” Non-Negotiable Rule 6 is not engaged. `spawn_tool_transport` and the changed
   `redirect_tool_stderr`/`build_bash_command` signatures are all private (non-`pub`) to
   `crates/otto-host/src/tools.rs`.
 
-- [ ] **Step 10: Host-swap / streaming invariants â€” vacuously satisfied.** No
+- [x] **Step 10: Host-swap / streaming invariants â€” vacuously satisfied.** No
   `crates/otto/src/app.rs` or `crates/otto/src/tui.rs` touched, so the host-swap `RwLock` rule is not
   engaged. No streaming provider path touched, so the `ProgressDispatcher` forwarder-abort pattern is
   not engaged. Confirmed by the spec's "Why the TUI then froze" section and independently verified
   during spec review.
 
-- [ ] **Step 11: Format and commit.**
+- [x] **Step 11: Format and commit.**
   ```bash
   cargo fmt --all
   git add crates/otto-host/src/tools.rs
@@ -308,7 +308,7 @@ moves while this branch is open). Internal bug fix, no public-interface change â
 
 **Files:** none in this PR.
 
-- [ ] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
+- [x] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
   `CHANGELOG.md` section â€” that happens in the dedicated release PR after this merges, per
   Non-Negotiable Rule 8 / Phase 4 step 12. Re-read `workspace.package.version` at cut time (it may
   have moved past `0.30.2` if another PR merges first) and cut the next PATCH from whatever it then
