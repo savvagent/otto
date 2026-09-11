@@ -44,7 +44,11 @@ use crate::plugin::builtin::user_skills::discovery::discover;
 use crate::plugin::builtin::user_skills::trust::SkillTrust;
 
 pub use index::SkillIndex;
-#[allow(unused_imports)] // Consumed by the picker in Task 3.
+// Not consumed outside this module yet (no interactive picker was built —
+// see the E1 design spec's corrected Invocation section). Kept `pub` for
+// E2, which needs `SkillScope::Plugin` to register plugin-bundled skills
+// from outside this module.
+#[allow(unused_imports)]
 pub use spec::{SkillScope, SkillSpec, ToolScope};
 
 /// Stable id for the level-1 catalog's system-prompt segment. `None`
