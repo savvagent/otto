@@ -1,7 +1,7 @@
 # Porting this repo's `.github/skills/` skills to Claude Code — design
 
 Date: 2026-09-10
-Status: pending review
+Status: IMPLEMENTED
 Source: savvagent/otto#128
 Related: savvagent/otto#23 (decided the *policy* for `.claude/skills/`; this closes the content gap it left), `CLAUDE.md:87-95` ("Claude Code skills")
 
@@ -249,6 +249,15 @@ command, no env var, and no on-disk transcript/keyring format is added, renamed,
 - **Release line is a PATCH.** Per `CHANGELOG.md`'s convention (MINOR for features and breaking
   boundary changes, PATCH for fixes), contributor-facing tooling and docs with no runtime behaviour
   change is a PATCH: `v0.28.2` from the current `0.28.1`.
+
+  **This assumption did not survive the cut, in the way assumptions usually don't — it was right
+  about this change and wrong about the world around it.** The reasoning holds: these ports are
+  contributor-facing with no runtime behaviour change, and taken alone they are a PATCH. But a
+  release line is a property of the *batch*, not of one change. By cut time #118 had also merged,
+  adding a defaulted method to the public `Screen` trait, and one feature in the batch forces MINOR.
+  This shipped in `v0.29.0`; `v0.28.2` will never exist. The lesson worth carrying to the next spec
+  is that "release line" is not knowable at design time and should be written as a floor rather
+  than a number.
 
 ## Goal & Success Criteria
 

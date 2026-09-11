@@ -18,7 +18,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-10-claude-skill-parity-design.md` — read it first. This plan implements it exactly.
 
-**Release line:** `v0.28.2` (PATCH — contributor-facing tooling and docs, no runtime behaviour change; trunk is at `0.28.1` as of the rebase — re-read `workspace.package.version` at cut time, since trunk moves while this branch is open).
+**Release line:** planned as `v0.28.2` (PATCH — contributor-facing tooling and docs, no runtime behaviour change; trunk was at `0.28.1` as of the rebase). **Shipped in `v0.29.0`.** The plan's own instruction to re-read `workspace.package.version` at cut time is what caught this: by the time the release was cut, #118 had also merged, adding a defaulted method to the public `Screen` trait. A feature in the batch forces MINOR, so the line escalated PATCH → MINOR. `v0.28.2` will never exist.
 
 **Branch:** `docs/claude-skills-parity`
 
@@ -176,8 +176,64 @@
 
 - [x] **Step 1: Release line.** Cut in a **dedicated release PR after this merges**, per `RELEASING.md` and the canonical Phase 4 step 12. This PR must **not** bump `workspace.package.version` and must **not** add the `CHANGELOG.md` section — that would collide with the release PR. The release PR bumps `workspace.package.version` and every internal `workspace.dependencies` version from `0.28.1` to `0.28.2`, adds the `## 0.28.2` section describing the ports and the parity check, tags `v0.28.2`, and pushes the tag so `release.yml` publishes the release. **Re-read `workspace.package.version` at cut time** — `origin/main` moves while this branch is open.
 
-- [ ] **Step 2: Out-of-band verification (Phase 5, post-merge).** One success criterion cannot run on this branch:
+  **Shipped as `v0.29.0` (PR #135, merged `af7cf75`), not the planned `v0.28.2`.** The prediction above is left as written, since the point of a plan step is to record what was predicted. Two things it could not know: `origin/main` gained #118 and #81 while this branch was open, and the jobs owning those two were abandoned mid-workflow with expired claims, leaving both merged and unreleased. Since `workspace.package.version` and `CHANGELOG.md` are global, the next cut necessarily batched all three — and #118's new defaulted method on the public `Screen` trait is a feature, which forces MINOR. The re-read instruction above is what caught it.
+
+  Two things about that cut worth recording rather than smoothing over. **The release PR initially shipped this work with no changelog entry at all** — it described only #118 and #81, and the #128 entry was added afterwards in `2176a58`, once the omission was noticed. A batched release makes this failure mode structural: whoever cuts it writes entries for the merges they were watching, and a third job's work is the easy one to miss. And **batching contradicts Non-Negotiable Rule 8 as written** ("not batchable across PRs"); it happened under standing owner approval and because the alternative was leaving two abandoned jobs' work unreleased indefinitely, but the rule and the practice disagree. Tracked in savvagent/otto#138.
+
+- [x] **Step 2: Out-of-band verification (Phase 5, post-merge).** One success criterion cannot run on this branch:
   - `git clone` the merged trunk into a fresh directory — not this worktree, not the main checkout — so discovery is exercised as a new contributor would experience it.
   - Confirm all four skills are discovered: `otto-development`, `creating-github-issues`, `rust-engineer`, `tui-engineer`.
   - Confirm **execution**: trigger `otto-development` and check the run follows the ported workflow using Claude Code's own dispatch mechanics. The port is self-sufficient by design, so this is now a check that the adaptation is *correct*, not that a pointer gets followed.
   - This result is what justifies closing #128.
+
+  **Result (2026-09-10 local; the merge itself is `2026-09-11T00:54Z`).** Verified in two parts,
+  and they are not equally strong — the distinction matters, so it is recorded rather than
+  averaged.
+
+  *Presence, in a fresh clone — observed.* A shallow clone of
+  `https://github.com/savvagent/otto.git` into a scratch directory carries all four skill
+  directories — `otto-development` (`SKILL.md` 86,468 bytes plus `agent-prompts.md` 23,801),
+  `creating-github-issues` (7,608), `rust-engineer` (7,651) and `tui-engineer` (9,833) — with
+  frontmatter intact, and `bash .github/scripts/check-claude-skill-ports.sh` exits 0 in the clone
+  with no local state to lean on. Note this is *presence plus parity*, not host discovery: nothing
+  in the clone was loaded by Claude Code. Discovery of the 86KB `SKILL.md` is separately known to
+  work — the session doing this verification lists both ported skills — but that session read them
+  from the worktree, so the clone result and the discovery result come from different trees. They
+  are byte-identical (the parity check is what says so), which makes the composition a sound
+  inference rather than a single observation.
+
+  *Execution — partial, and narrower than "the workflow ran".* The session that shipped #131's
+  review round did run the ported `otto-development` out of `.claude/skills/`, from the Phase 4
+  review loop through merge and this verification. Exercised for real: the `task`→`Agent` mapping,
+  `mode: "background"` → several calls in one message (the mandatory trio, dispatched in parallel
+  with the security pass blind to the diff), `read_agent` → task-completion notifications,
+  `ask_user` → the autonomy override, model selection, the review-response dispatch, and the
+  fix-loop caps. **Not exercised:** the Phase 1 and Phase 2 critique dispatches, the Phase 3
+  implementer and spec-compliance dispatches, the Code Quality Review (step E), and the `Explore`
+  row — all of which sit before Phase 4 and could not have run, since the port did not exist until
+  partway through #131. So roughly four of the translation table's rows were executed and the rest
+  are read-verified only.
+
+  Two further limits on what this proves. First, **the run changed the artifact it was running**:
+  `8e545cf`, `3d75894` and `f977e28` all landed as consequences of it, so the mechanics exercised
+  are in part the pre-fix ones, and the exact bytes in `46a216c` have not themselves been run
+  end-to-end. Second, the session grading the port is the session that authored it — the
+  independence this skill requires of its own review passes does not hold for this verification.
+
+  What the run *does* establish is that the adaptation is load-bearing rather than cosmetic: it
+  surfaced two false-green holes in the check (a symlinked `claude-port/` and the unasserted
+  "Ported for Claude Code" note), a spec row that would have instructed the next re-porter to undo
+  this design's own security fix, and four documents — one a ticked checkbox — asserting no
+  canonical had been edited when one had.
+
+  **The criterion is met except for Phase 3 steps E and H, and that exception is not cosmetic.**
+  Those two templates lost the canonical `code-review` agent type's read-only-by-construction
+  property when mapped onto `general-purpose`, and three places in the port still **assert** the
+  template supplies it — the assertion is currently false, in a file agents execute, so a "review"
+  dispatch can write to the tree it is auditing. The security template got an explicit constraint;
+  these two did not. The step H dispatch on #131 behaved read-only only because the orchestrator
+  hand-added a line the template does not supply — which is a capable session compensating for the
+  port, the opposite of the spec's "executes correctly from the ported text alone". Tracked in
+  savvagent/otto#137; that issue also records two inaccuracies in this spec's own failure-mode
+  enumerations, so the `IMPLEMENTED` status above means "the design shipped", not "every sentence
+  of it is accurate".
