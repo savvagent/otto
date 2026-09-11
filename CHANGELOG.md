@@ -25,6 +25,19 @@ boundary changes and PATCH captures fixes).
   plugin ABI's WIT interface, so third-party WASM plugins inherit the default (no ghost text) for
   now. (#118)
 
+- This repo's own `otto-development` and `creating-github-issues` workflow skills are now
+  discoverable by Claude Code, as adapted ports under `.claude/skills/` alongside the existing
+  `rust-engineer` and `tui-engineer`. Claude Code reads project skills from `.claude/skills/` only,
+  so both were previously invisible to it while living solely in `.github/skills/` in the Copilot
+  CLI's format. They are ports rather than symlinks or verbatim copies because the canonical bodies
+  name Copilot-specific dispatch mechanics at every step; the adaptation touches only those
+  host-mechanism references, leaving every Non-Negotiable Rule, phase gate, fix-loop cap and repo
+  convention byte-identical — about 8% of the canonical text, recorded exactly as a committed
+  `diff -u` per ported file. A new `.github/scripts/check-claude-skill-ports.sh`, run by CI's `lint`
+  job, recomputes each diff and fails the build if the two copies drift, if a port or record is
+  missing or orphaned, or if a port's `name`/`description` frontmatter diverges from its canonical.
+  Contributor-facing only — no runtime behaviour change. (#128)
+
 ### Fixed
 
 - DeepSeek's `/connect` no longer swallows a rejected (or later, corrected) API key when no host
