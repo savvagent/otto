@@ -121,7 +121,12 @@ precedent set by `provider-deepseek`'s PR #58, not the `<area>/<slug>` form; do 
 - [ ] Add `crates/provider-grok` to root `Cargo.toml`'s `[workspace] members` (alphabetical slot:
       after `crates/provider-gemini`, before `crates/provider-local`) and to
       `workspace.dependencies` (`provider-grok = { path = "crates/provider-grok", version =
-      "0.30.0" }`, same alphabetical slot).
+      "0.29.1" }` — matching every other workspace-dependency entry's *current* pinned version, not
+      the next release's; `provider-grok/Cargo.toml`'s own `[package] version.workspace = true`
+      also resolves to `0.29.1` at this point, so `path` + `version` stay consistent. The bump to
+      `0.30.0` happens workspace-wide in Task 5's follow-up release PR, not here — pinning this one
+      new entry ahead of that bump would be a `path`+`version` mismatch Cargo rejects at resolve
+      time), same alphabetical slot.
 - [ ] Run targeted validation: `cargo test -p provider-grok`. Expect all unit + integration tests
       to pass.
 - [ ] Run `cargo build -p provider-grok --all-targets` to confirm the new crate compiles cleanly on
@@ -211,12 +216,16 @@ precedent set by `provider-deepseek`'s PR #58, not the `<area>/<slug>` form; do 
       currently registers every other built-in — insert it immediately after the
       `provider_deepseek` entry.
 - [ ] In that same file's `register_builtins_pr8_complete` test, update the hardcoded counts this
-      new entry invalidates: add `"internal:provider-grok"` to the expected-id array; bump the
-      provider-count assertion (`set.providers.len()`) and the total-registration-count assertion
-      (`reg.len()`) by 1 each from whatever `provider-deepseek`'s addition left them at (read the
-      current values from the live file first — do not assume the counts named in the
-      `provider-deepseek` plan are still current after five other PRs have landed since); update the
-      accompanying comment's arithmetic; bump `reg.provider_count()`'s expected value by 1.
+      new entry invalidates (confirmed current values by reading the live file at plan time):
+      add `"internal:provider-grok"` to the `provider_ids` expected-id array (alongside
+      `"internal:provider-anthropic"`, `"internal:provider-openai"`, `"internal:provider-gemini"`,
+      `"internal:provider-local"`, `"internal:provider-deepseek"`); change
+      `assert_eq!(set.providers.len(), 5)` to `6`; change `assert_eq!(reg.len(), 35, "registry
+      should have 29 non-provider + 5 provider + 1 hook plugin")` to `36` with the message updated
+      to "29 non-provider + 6 provider + 1 hook plugin"; change `assert_eq!(reg.provider_count(), 5,
+      "registry should have 5 provider plugins")` to `6` with the message updated to "6 provider
+      plugins"; append a line to the preceding comment block noting "the Grok provider shim adds a
+      6th provider plugin; total registry size is 29 + 6 + 1 = 36."
 - [ ] In `crates/otto/src/main.rs`'s `bootstrap_pool_host`, add `provider_grok::ProviderGrokPlugin`
       to the `use crate::plugin::builtin::{...}` import list and add
       `try_provider!(ProviderGrokPlugin::new(), "xAI Grok", "grok");` immediately after the
@@ -272,10 +281,17 @@ precedent set by `provider-deepseek`'s PR #58, not the `<area>/<slug>` form; do 
 **Files:**
 - Modify: `README.md`
 
-- [ ] Update the provider-count prose (currently reflecting five standalone provider MCP servers)
-      to reflect six.
-- [ ] Update the `crates/otto` workspace-map table row to include `otto-grok` in the list of
-      bundled binaries.
+- [ ] Update the Install section's provider-count prose (README lines ~14-19 at plan time): "Each
+      release ships one archive per platform containing ten binaries ... and four standalone
+      provider MCP servers (`otto-anthropic`, `otto-gemini`, `otto-openai`, `otto-deepseek`)" becomes
+      "... containing **eleven** binaries ... and **five** standalone provider MCP servers
+      (`otto-anthropic`, `otto-gemini`, `otto-openai`, `otto-deepseek`, `otto-grok`)". Confirm the
+      exact current wording by reading the live file first — do not assume it still says "ten"/"four"
+      if an intervening change has already shifted the count.
+- [ ] Update the `crates/otto` workspace-map table row (README ~line 56 at plan time): "All ten
+      shipping binaries (`otto` TUI plus the `otto-tool-{fs,bash,grep,lsp,web}` tool shims and the
+      `otto-{anthropic,gemini,openai,deepseek}` provider shims)" becomes "All **eleven** shipping
+      binaries (... and the `otto-{anthropic,gemini,openai,deepseek,grok}` provider shims)".
 - [ ] Add a `crates/provider-grok` row to the workspace-map table immediately after the
       `crates/provider-deepseek` row: `| [\`crates/provider-grok\`](crates/provider-grok) | xAI Grok
       Chat Completions, same shape (OpenAI-compatible wire format). |`.

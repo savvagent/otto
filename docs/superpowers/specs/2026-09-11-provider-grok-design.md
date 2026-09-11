@@ -1,6 +1,6 @@
 # provider-grok Design
 
-> **Status:** pending review
+> **Status:** approved
 
 **Ref:** savvagent/otto#103 — "Add Grok as a provider" (issue body empty; scope established by this
 spec per the otto-factory job brief for job-29)
@@ -132,9 +132,10 @@ Mirrors `crates/provider-deepseek` file-for-file (itself a mirror of `provider-o
 ### Workspace wiring
 
 - `Cargo.toml` (root): add `crates/provider-grok` to `[workspace] members` and
-  `workspace.dependencies` (`provider-grok = { path = "crates/provider-grok", version = "0.30.0" }`
-  — matching the MINOR bump this feature ships as, see Release below), alphabetical slot after
-  `provider-gemini`, before `provider-local`.
+  `workspace.dependencies` (`provider-grok = { path = "crates/provider-grok", version = "0.29.1" }`
+  — matching every other workspace-dependency entry's current pinned version; the MINOR bump to
+  `0.30.0` happens workspace-wide in the follow-up release PR, see Release below, not in this one),
+  alphabetical slot after `provider-gemini`, before `provider-local`.
 - `crates/otto/Cargo.toml`: add `provider-grok = { workspace = true }` dependency (alphabetical
   slot) and a new `[[bin]] name = "otto-grok" path = "src/bin/otto-grok.rs"` target. (No
   `cargo-deb`/`cargo-generate-rpm` asset-list edits — that packaging metadata was removed from this
