@@ -1,7 +1,7 @@
 # Reconcile Rule 8's batching prohibition with actual release practice — design
 
 Date: 2026-09-11
-Status: pending review
+Status: IMPLEMENTED
 Source: savvagent/otto#138
 Related: v0.29.0 (#135, batches #118/#81/#128); #128/#131 (the plan whose predicted release line
 changed at cut time). Distinct from #133 (untrusted-input hardening) and #137 (the ported
