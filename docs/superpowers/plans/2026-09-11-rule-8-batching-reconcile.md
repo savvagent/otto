@@ -56,7 +56,7 @@ No Rust, so no `cargo test` step in this task. Verification is
 `bash .github/scripts/check-claude-skill-ports.sh`, run before and after, plus targeted `grep`
 checks confirming old text is gone and new text is present.
 
-- [ ] **Step 1: Confirm the current state.** From the worktree root:
+- [x] **Step 1: Confirm the current state.** From the worktree root:
   ```bash
   bash .github/scripts/check-claude-skill-ports.sh
   ```
@@ -69,7 +69,7 @@ checks confirming old text is gone and new text is present.
   numbers may drift slightly if the working tree has moved since this plan was written; match by
   content, not line number).
 
-- [ ] **Step 2: Reword the Iron Law's release-mandatory paragraph — canonical.** In
+- [x] **Step 2: Reword the Iron Law's release-mandatory paragraph — canonical.** In
   `.github/skills/otto-development/SKILL.md`, find:
   ```
   **A merge to the trunk branch (`main` — CI also triggers on `master` for compatibility, but `main` is
@@ -88,7 +88,7 @@ checks confirming old text is gone and new text is present.
   Rule 8.
   ```
 
-- [ ] **Step 3: Reword Non-Negotiable Rule 8 — canonical.** In the same file, find:
+- [x] **Step 3: Reword Non-Negotiable Rule 8 — canonical.** In the same file, find:
   ```
   8. **Every merge to the trunk branch (`main`, or `master` if this repo ever reverts to that name —
      see the Trunk row above) cuts a release.** No feature/fix PR merges and is considered shipped
@@ -124,7 +124,7 @@ checks confirming old text is gone and new text is present.
      cut time, never a deliberate wait for what merges next.
   ```
 
-- [ ] **Step 4: Reframe the `Release line:` plan-format bullet as a floor — canonical.** In the same
+- [x] **Step 4: Reframe the `Release line:` plan-format bullet as a floor — canonical.** In the same
   file, Phase 2 step 5, find:
   ```
   - **Release line:** the next `vX.Y.Z` this work ships as (per the SemVer convention in
@@ -144,7 +144,7 @@ checks confirming old text is gone and new text is present.
     (Non-Negotiable Rule 8) is traceable back to the plan that necessitated it.
   ```
 
-- [ ] **Step 5: Add batching mechanics to Phase 4 step 12 — canonical.** In the same file, find the
+- [x] **Step 5: Add batching mechanics to Phase 4 step 12 — canonical.** In the same file, find the
   step 12 intro:
   ```
   ### Step 12: Cut the release (mandatory — Non-Negotiable Rule 8)
@@ -169,7 +169,7 @@ checks confirming old text is gone and new text is present.
   worktree off the just-updated `main`, itself landing via its own PR:
   ```
 
-- [ ] **Step 6: Update the three numbered sub-steps — canonical.** In the same file's Phase 4 step
+- [x] **Step 6: Update the three numbered sub-steps — canonical.** In the same file's Phase 4 step
   12 numbered list, find sub-step 1:
   ```
   1. **Bump the version.** In the root `Cargo.toml`, update `workspace.package.version` and every
@@ -215,7 +215,7 @@ checks confirming old text is gone and new text is present.
      `Closes #B`, `Closes #C` or a bullet list under a "Batches" heading.
   ```
 
-- [ ] **Step 7: Update the rationalization-table entry — canonical.** In the same file's "Common
+- [x] **Step 7: Update the rationalization-table entry — canonical.** In the same file's "Common
   Rationalizations" table, find:
   ```
   | "This is a tiny PR, I'll batch the release with the next one"          | Rule 8 has no batching carve-out. Cut the release now, as part of closing out this PR.                                                              |
@@ -225,7 +225,7 @@ checks confirming old text is gone and new text is present.
   | "This is a tiny PR, I'll batch the release with the next one"          | Rule 8 permits batching only what is *already* merged and unreleased on `main` at cut time — never a deliberate wait for a future PR. Cut the release now, as part of closing out this PR. |
   ```
 
-- [ ] **Step 8: Verify Steps 2-7 landed correctly in the canonical.**
+- [x] **Step 8: Verify Steps 2-7 landed correctly in the canonical.**
   ```bash
   grep -n "not batchable\|no \"batch several\|no batching carve-out" .github/skills/otto-development/SKILL.md
   ```
@@ -243,7 +243,7 @@ checks confirming old text is gone and new text is present.
   ```
   Expect 1 match (Phase 2 step 5).
 
-- [ ] **Step 9: Repeat Steps 2-7 verbatim in the port.** In
+- [x] **Step 9: Repeat Steps 2-7 verbatim in the port.** In
   `.claude/skills/otto-development/SKILL.md`, apply the identical seven edits (same old-text /
   new-text pairs from Steps 2-7) to the port's copies of the same seven passages. The port's line
   numbers differ (offset +5 for the Iron Law/Rule 8 edits, +39 for the Phase 4 step 12/
@@ -252,11 +252,11 @@ checks confirming old text is gone and new text is present.
   sites (none names `agent_type`, `mode: "sync"`, `read_agent`, `ask_user`, or a `todos` table) —
   the text is copied across exactly as written in Steps 2-7.
 
-- [ ] **Step 10: Verify Step 9 landed correctly in the port.** Re-run the same four `grep` checks
+- [x] **Step 10: Verify Step 9 landed correctly in the port.** Re-run the same four `grep` checks
   from Step 8 against `.claude/skills/otto-development/SKILL.md` instead of the canonical path.
   Same expected results.
 
-- [ ] **Step 11: Confirm no other passage in either file still contains stale wording.**
+- [x] **Step 11: Confirm no other passage in either file still contains stale wording.**
   ```bash
   grep -n "batch" .github/skills/otto-development/SKILL.md
   grep -n "batch" .claude/skills/otto-development/SKILL.md
@@ -264,7 +264,7 @@ checks confirming old text is gone and new text is present.
   Every hit in both files must now read as one of the reworded passages (spot-check by eye) — none
   should still say "not batchable" or "no ... carve-out."
 
-- [ ] **Step 12: Regenerate the port-parity record.**
+- [x] **Step 12: Regenerate the port-parity record.**
   ```bash
   bash .github/scripts/check-claude-skill-ports.sh --update
   ```
@@ -272,13 +272,13 @@ checks confirming old text is gone and new text is present.
   `.github/skills/otto-development/claude-port/SKILL.md.diff` (the only port file changed; no
   other skill's record should be touched — `agent-prompts.md.diff` must be unaffected).
 
-- [ ] **Step 13: Verify the check passes.**
+- [x] **Step 13: Verify the check passes.**
   ```bash
   bash .github/scripts/check-claude-skill-ports.sh
   ```
   Must exit 0.
 
-- [ ] **Step 14: Eyeball the regenerated record.**
+- [x] **Step 14: Eyeball the regenerated record.**
   ```bash
   git diff --stat .github/skills/otto-development/claude-port/
   grep -c "highest SemVer bump\|enumerate every issue\|a \*\*floor\*\*, not a predicted version" .github/skills/otto-development/claude-port/SKILL.md.diff
@@ -288,16 +288,16 @@ checks confirming old text is gone and new text is present.
   that no unrelated hunk appears (only `SKILL.md.diff` should show a diff — `agent-prompts.md.diff`
   untouched).
 
-- [ ] **Step 15: Public-interface note.** No SPP wire type, tool schema, plugin ABI, slash command,
+- [x] **Step 15: Public-interface note.** No SPP wire type, tool schema, plugin ABI, slash command,
   env var, or on-disk format touched — Non-Negotiable Rule 6 is not engaged. No `CHANGELOG.md`
   interface note owed by this task.
 
-- [ ] **Step 16: Host-swap / streaming invariants — vacuously satisfied.** No
+- [x] **Step 16: Host-swap / streaming invariants — vacuously satisfied.** No
   `crates/otto/src/app.rs` or `tui.rs` touched, so the host-swap `RwLock` rule is not engaged. No
   streaming provider path touched, so the `ProgressDispatcher` forwarder-abort pattern is not
   engaged.
 
-- [ ] **Step 17: Format and commit.** No Rust changed, so `cargo fmt --all` is a no-op here but run
+- [x] **Step 17: Format and commit.** No Rust changed, so `cargo fmt --all` is a no-op here but run
   it anyway for consistency with house style:
   ```bash
   cargo fmt --all
@@ -311,7 +311,7 @@ checks confirming old text is gone and new text is present.
 
 **Files:** none in this PR.
 
-- [ ] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
+- [x] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
   `CHANGELOG.md` section — that happens in the dedicated release PR after this merges, per
   Non-Negotiable Rule 8 / Phase 4 step 12 (the very rule this PR is rewording — its mandatory-
   release-cut requirement still applies to this PR itself). Re-read `workspace.package.version` at
