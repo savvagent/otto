@@ -8,6 +8,24 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.30.5 - 2026-09-11
+
+### Fixed
+
+- Stdio tool child processes (`tool-fs`, `tool-web`, `tool-bash`, etc.) no longer inherit the TUI's
+  terminal stderr. `rmcp`'s `TokioChildProcess::new(cmd)` convenience constructor silently
+  re-applies its own default `Stdio::inherit()` for stderr at spawn time, discarding whatever
+  otto's own stderr redirection had already configured on the `Command` — a pre-existing defect in
+  every stdio tool spawn that could corrupt the TUI's rendered screen the first time a tool server
+  was spawned after the terminal entered raw/alternate-screen mode, most visibly on a mid-session
+  `/connect` that builds a fresh host on demand (e.g. connecting to DeepSeek). All three spawn sites
+  now route through a dedicated helper that honors the caller's stderr `Stdio` explicitly. (#146)
+
+### Changed
+
+- `otto-development`'s Non-Negotiable Rule 8 documentation record-as-shipped update (no functional
+  change). (#164)
+
 ## 0.30.4 - 2026-09-11
 
 ### Changed
