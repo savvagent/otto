@@ -136,8 +136,11 @@ Mirrors `crates/provider-deepseek` file-for-file (itself a mirror of `provider-o
   — matching the MINOR bump this feature ships as, see Release below), alphabetical slot after
   `provider-gemini`, before `provider-local`.
 - `crates/otto/Cargo.toml`: add `provider-grok = { workspace = true }` dependency (alphabetical
-  slot), a new `[[bin]] name = "otto-grok" path = "src/bin/otto-grok.rs"` target, and add
-  `otto-grok` rows to both the `cargo deb` and `cargo generate-rpm` asset lists.
+  slot) and a new `[[bin]] name = "otto-grok" path = "src/bin/otto-grok.rs"` target. (No
+  `cargo-deb`/`cargo-generate-rpm` asset-list edits — that packaging metadata was removed from this
+  repo per `docs/superpowers/plans/otto-development-drop-deb-rpm`; confirmed absent from
+  `crates/otto/Cargo.toml` at spec time. `provider-deepseek`'s original spec predates that removal
+  and is stale on this point — the code wins per this repo's own precedence rule.)
 - `crates/otto/src/bin/otto-grok.rs`: 10-line shim calling `provider_grok::run()`, copied from
   `otto-deepseek.rs`.
 
