@@ -8,6 +8,18 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.30.3 - 2026-09-11
+
+### Fixed
+
+- `ci.yml`'s concurrency group no longer cancels the wrong run: `cancel-in-progress` is now a pure
+  function of `github.ref` instead of `github.event_name`, so it can no longer disagree across two
+  runs sharing a group, and a push to `main`/`master` is now structurally guaranteed non-cancellable
+  by the group rather than only incidentally so. The group key moved to the standard
+  `github.head_ref || github.ref` formulation. Every CI job now has an explicit `timeout-minutes`
+  ceiling (with a longer allowance for the Windows leg of the test matrix) so a wedged run can no
+  longer starve subsequent pushes to the same PR indefinitely. (#139)
+
 ## 0.30.2 - 2026-09-11
 
 ### Added
