@@ -309,9 +309,10 @@ record. `T_*` timestamps are still captured at phase boundaries to feed it.
 Intake reads ("what does this work want?") get corrupted by prior conversation cruft — stale paths,
 abandoned plans, half-finished refactors. **Note:** `README.md`'s `/clear` documents a slash command
 in the *otto product being developed* (resets its own TUI conversation) — it is not a tool
-available to the orchestrating agent running this skill. This orchestrating CLI has no
-`/clear`-and-reinvoke primitive of its own within a session, so the only fresh-context mechanism
-available to it is dispatching isolated subagents via the `Agent` tool (see "How dispatch works in
+available to the orchestrating agent running this skill. Claude Code ships a user-facing `/clear`
+command, but a running agent cannot invoke it on itself mid-run to reset its own context — `/clear`
+is not a tool call this session can make. So the only fresh-context mechanism available to a
+dispatched step is the isolated subagent context created by the `Agent` tool (see "How dispatch works in
 this environment" below) — every reviewer, critique, and implementer step in this skill runs as its
 own `Agent` dispatch specifically so it gets a clean context window built from a self-contained
 prompt, not from whatever has accumulated in the orchestrating session. The orchestrating session
@@ -637,7 +638,7 @@ same range is an acceptable substitute. Fill `<BASE_SHA>`/`<HEAD_SHA>` and the t
 
 ### F. Quality fix loop (max 2 fix dispatches)
 
-- No Critical/Important → mark the task's todo `done`; record any Minor issues in per-task ledger.
+- No Critical/Important → mark the task's todo `completed`; record any Minor issues in per-task ledger.
 - Critical/Important → re-dispatch fixer with those specific findings. Re-run quality review.
 - **Three failed quality reviews in a row → escalate.**
 

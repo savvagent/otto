@@ -225,6 +225,12 @@ Either invoke that skill on `<BASE_SHA>..<HEAD_SHA>`, or dispatch `general-purpo
 below verbatim — the body is what constrains a general-purpose agent to a read-only,
 high-confidence-only diff review.
 
+**READ-ONLY, HARD CONSTRAINT.** Do not modify, create or delete any file. Do not commit, push,
+stage, stash, or run any command that writes — to the worktree, to git, or to GitHub. `git log`,
+`git diff`, `git show` and other read commands are fine. If you believe a fix is needed, describe
+it in your findings with a file:line ref and the concrete change — do not apply it. Report only
+high-confidence bugs and logic errors; skip low-confidence stylistic guesses.
+
 Capture commit boundaries first (SKILL.md step E owns this):
 `BASE_SHA = git rev-parse HEAD~<N>` (N = commits this task produced), `HEAD_SHA = git rev-parse HEAD`.
 
@@ -233,6 +239,12 @@ Agent tool:
   subagent_type: general-purpose
   description: "Quality: Task N"
   prompt: |
+    READ-ONLY, HARD CONSTRAINT. Do not modify, create or delete any file. Do not commit, push, stage,
+    stash, or run any command that writes — to the worktree, to git, or to GitHub. Read commands (git
+    log, git diff, git show) are fine. If you believe a fix is needed, describe it in your findings
+    with a file:line ref and the concrete change — do not apply it. Report only high-confidence bugs
+    and logic errors.
+
     Review the code changes between <BASE_SHA> and <HEAD_SHA>.
 
     Plan/requirements: Task N (full text inline):
@@ -257,11 +269,23 @@ Agent tool:
 Same substitution as Step E: the built-in `/code-review` skill, or `general-purpose` with this body
 verbatim.
 
+**READ-ONLY, HARD CONSTRAINT.** Do not modify, create or delete any file. Do not commit, push,
+stage, stash, or run any command that writes — to the worktree, to git, or to GitHub. `git log`,
+`git diff`, `git show` and other read commands are fine. If you believe a fix is needed, describe
+it in your findings with a file:line ref and the concrete change — do not apply it. Report only
+high-confidence bugs and logic errors; skip low-confidence stylistic guesses.
+
 ```
 Agent tool:
   subagent_type: general-purpose
   description: "Final review: <slug>"
   prompt: |
+    READ-ONLY, HARD CONSTRAINT. Do not modify, create or delete any file. Do not commit, push, stage,
+    stash, or run any command that writes — to the worktree, to git, or to GitHub. Read commands (git
+    log, git diff, git show) are fine. If you believe a fix is needed, describe it in your findings
+    with a file:line ref and the concrete change — do not apply it. Report only high-confidence bugs
+    and logic errors.
+
     Final review of the complete implementation.
 
     Plan (committed at docs/superpowers/plans/<file>, full text inline):
@@ -359,8 +383,9 @@ task brief, no PR-body summary, no implementer report (Non-Negotiable Rule 5). T
 `general-purpose` subagent and **not** the built-in `security-review` skill: a `Skill` invocation
 runs in the orchestrating session, which by this point holds all of the above, so the blindness
 would be a promise rather than a fact. A fresh subagent context makes it structural. Pass the diff
-by writing `gh pr diff <N>` to a file and naming that path in the prompt, or inline it — but never
-pass the spec, the plan, the brief, the PR body or an implementer report. The dispatched agent is
+by having the dispatched agent run `gh pr diff <N>` itself, exactly as the prompt body below
+instructs — but never pass the spec, the plan, the brief, the PR body or an implementer report. The
+dispatched agent is
 free to invoke the `security-review` skill itself inside its own fresh context; that is where the
 skill form is safe.
 

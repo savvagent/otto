@@ -273,7 +273,9 @@ port's divergence from the canonical recorded exactly and enforced by CI.
 - `.github/scripts/check-claude-skill-ports.sh` exits 0 on the committed tree and exits non-zero for
   each failure mode: canonical edited without mirroring, port edited directly, missing port, missing
   or orphaned record, orphaned port, empty record, verbatim-copy port, unreadable file, symlinked or
-  ill-named input, and `name`/`description` drift. Its `--update` mode is the only record generator,
+  ill-named input, `name`/`description` drift, a port missing its "Ported for Claude Code" note, and
+  an undeclared `.claude/skills/` entry that is neither a port nor named in `NATIVE_SKILLS`. Its
+  `--update` mode is the only record generator,
   writing through the same function the verifier compares against, and is never the default.
 - CI's `lint` job runs the check.
 - `CLAUDE.md` documents the layout, the port mechanism, the edit-canonical-then-re-port workflow,
@@ -306,7 +308,7 @@ port's divergence from the canonical recorded exactly and enforced by CI.
 - **A port `*.md` with no canonical counterpart *inside a ported skill*** → fails. It is a rule
   Claude Code would execute that the source of truth does not contain, which is the precedence rule
   read backwards. (This is distinct from a whole `.claude/skills/` entry with no canonical
-  directory, below, which is ignored by design.)
+  directory, below, which fails unless declared in `NATIVE_SKILLS`, see below.)
 - **A record that is empty, or a port byte-identical to its canonical** → fails. Zero divergence
   asserts a verbatim copy, the one arrangement this design exists to avoid, and an empty record
   would also compare equal to a diff that could not be computed.
@@ -330,8 +332,10 @@ port's divergence from the canonical recorded exactly and enforced by CI.
 - **A canonical skill directory containing a companion file the port omits** → fails: a companion
   the port lacks is a companion Claude Code can never read, and `agent-prompts.md` holds the
   dispatch templates `otto-development` requires be pasted verbatim.
-- **`.claude/skills/` entry with no canonical counterpart** → ignored by design; the check iterates
-  `.github/skills/`, so `rust-engineer` and `tui-engineer` are untouched.
+- **`.claude/skills/` entry with no canonical counterpart** → fails unless the entry is named in the
+  script's `NATIVE_SKILLS` allowlist, a deliberate, reviewable declaration; `rust-engineer` and
+  `tui-engineer` pass because they are listed there, matching how `CLAUDE.md`'s "Claude Code skills"
+  section documents this behavior.
 
 ## Risks & Open Questions
 

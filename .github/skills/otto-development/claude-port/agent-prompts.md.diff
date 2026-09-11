@@ -107,7 +107,7 @@
    description: "Spec compliance: Task N"
    prompt: |
      You are reviewing whether an implementation matches its specification.
-@@ -211,15 +218,19 @@
+@@ -211,17 +218,33 @@
  
  ---
  
@@ -118,6 +118,12 @@
 +Either invoke that skill on `<BASE_SHA>..<HEAD_SHA>`, or dispatch `general-purpose` with the body
 +below verbatim — the body is what constrains a general-purpose agent to a read-only,
 +high-confidence-only diff review.
++
++**READ-ONLY, HARD CONSTRAINT.** Do not modify, create or delete any file. Do not commit, push,
++stage, stash, or run any command that writes — to the worktree, to git, or to GitHub. `git log`,
++`git diff`, `git show` and other read commands are fine. If you believe a fix is needed, describe
++it in your findings with a file:line ref and the concrete change — do not apply it. Report only
++high-confidence bugs and logic errors; skip low-confidence stylistic guesses.
  
  Capture commit boundaries first (SKILL.md step E owns this):
  `BASE_SHA = git rev-parse HEAD~<N>` (N = commits this task produced), `HEAD_SHA = git rev-parse HEAD`.
@@ -130,8 +136,16 @@
 +  subagent_type: general-purpose
    description: "Quality: Task N"
    prompt: |
++    READ-ONLY, HARD CONSTRAINT. Do not modify, create or delete any file. Do not commit, push, stage,
++    stash, or run any command that writes — to the worktree, to git, or to GitHub. Read commands (git
++    log, git diff, git show) are fine. If you believe a fix is needed, describe it in your findings
++    with a file:line ref and the concrete change — do not apply it. Report only high-confidence bugs
++    and logic errors.
++
      Review the code changes between <BASE_SHA> and <HEAD_SHA>.
-@@ -241,12 +252,14 @@
+ 
+     Plan/requirements: Task N (full text inline):
+@@ -241,14 +264,28 @@
  
  ---
  
@@ -140,6 +154,12 @@
 +
 +Same substitution as Step E: the built-in `/code-review` skill, or `general-purpose` with this body
 +verbatim.
++
++**READ-ONLY, HARD CONSTRAINT.** Do not modify, create or delete any file. Do not commit, push,
++stage, stash, or run any command that writes — to the worktree, to git, or to GitHub. `git log`,
++`git diff`, `git show` and other read commands are fine. If you believe a fix is needed, describe
++it in your findings with a file:line ref and the concrete change — do not apply it. Report only
++high-confidence bugs and logic errors; skip low-confidence stylistic guesses.
  
  ```
 -task tool:
@@ -149,8 +169,16 @@
 +  subagent_type: general-purpose
    description: "Final review: <slug>"
    prompt: |
++    READ-ONLY, HARD CONSTRAINT. Do not modify, create or delete any file. Do not commit, push, stage,
++    stash, or run any command that writes — to the worktree, to git, or to GitHub. Read commands (git
++    log, git diff, git show) are fine. If you believe a fix is needed, describe it in your findings
++    with a file:line ref and the concrete change — do not apply it. Report only high-confidence bugs
++    and logic errors.
++
      Final review of the complete implementation.
-@@ -274,15 +287,15 @@
+ 
+     Plan (committed at docs/superpowers/plans/<file>, full text inline):
+@@ -274,15 +311,15 @@
  
  ## Mandatory Review Trio — Phase 4 Step 8
  
@@ -172,7 +200,7 @@
    description: "Rust review: PR #<N>"
    prompt: |
      Review the Rust in PR #<N> of savvagent/otto (`gh pr diff <N>`), for ref <ref>.
-@@ -306,12 +319,11 @@
+@@ -306,12 +343,11 @@
      Report: Strengths, Issues (Critical / Important / Minor), Assessment.
  ```
  
@@ -188,7 +216,7 @@
    description: "Architecture review: PR #<N>"
    prompt: |
      Review PR #<N> of savvagent/otto (`gh pr diff <N>`) for architectural consistency, for
-@@ -340,23 +352,51 @@
+@@ -340,23 +376,52 @@
      Report: Strengths, Issues (Critical / Important / Minor), Assessment.
  ```
  
@@ -205,8 +233,9 @@
 +`general-purpose` subagent and **not** the built-in `security-review` skill: a `Skill` invocation
 +runs in the orchestrating session, which by this point holds all of the above, so the blindness
 +would be a promise rather than a fact. A fresh subagent context makes it structural. Pass the diff
-+by writing `gh pr diff <N>` to a file and naming that path in the prompt, or inline it — but never
-+pass the spec, the plan, the brief, the PR body or an implementer report. The dispatched agent is
++by having the dispatched agent run `gh pr diff <N>` itself, exactly as the prompt body below
++instructs — but never pass the spec, the plan, the brief, the PR body or an implementer report. The
++dispatched agent is
 +free to invoke the `security-review` skill itself inside its own fresh context; that is where the
 +skill form is safe.
 +
@@ -249,7 +278,7 @@
      Read ONLY the diff: `gh pr diff <N>`.
      Do NOT read the PR description, the issue, the spec, the plan, or any summary of intent. Your
      findings must come from the code as written, so they cannot be steered by the author's framing.
-@@ -380,19 +420,18 @@
+@@ -380,19 +445,18 @@
      After your investigation, present findings as the standard severity table (🔴 CRITICAL / 🟠 HIGH
      / 🟡 MEDIUM / ⚪ LOW) with file:line refs and a concrete fix each, then an overall assessment.
  
