@@ -857,9 +857,10 @@ becomes `release/0-20-0`, not `release/v0.20.0`).
    reviewed like any other PR (the mandatory trio still applies; a version-bump-only PR is a small,
    fast review, not a skipped one). **The release PR body must enumerate every issue/PR this release
    covers** — every `#N` this batch closes, not only the most recent one (v0.29.0's `CHANGELOG.md`
-   initially carried entries for only two of the three batched issues, fixed by a follow-up commit
-   before the PR was reviewed — the release PR body itself should not need a follow-up to say the
-   same thing). List them explicitly, e.g. `Closes #A`, `Closes #B`, `Closes #C` or a bullet list
+   initially carried entries for only two of the three batched issues; a follow-up commit added the
+   third after review had already run once against the incomplete state, forcing a second pass —
+   the release PR body itself should not need a follow-up to say the same thing). List them
+   explicitly, e.g. `Closes #A`, `Closes #B`, `Closes #C` or a bullet list
    under a "Batches" heading.
 5. **Tag the merge commit and push the tag:**
    ```bash
