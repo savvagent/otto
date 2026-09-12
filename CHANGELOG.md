@@ -8,6 +8,14 @@ boundary changes and PATCH captures fixes).
 
 ## [Unreleased]
 
+## 0.30.7 - 2026-09-11
+
+### Changed
+
+- `plugin-wasm-parity-policy` record-as-shipped update: the design spec's `Status:` is flipped to
+  `IMPLEMENTED` and the plan's remaining checkboxes are ticked for the plugin-ABI native-vs-WASM
+  parity policy shipped in 0.30.6 (no functional change). (#173)
+
 ## 0.30.6 - 2026-09-11
 
 ### Added
