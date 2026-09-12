@@ -52,7 +52,7 @@ No Rust in this task, so no `cargo test -p <crate>` step. Verification is a targ
 manual read, plus the repo-wide `cargo build`/`test`/`clippy` acceptance criterion (vacuous here,
 run anyway per house style).
 
-- [ ] **Step 1: Confirm the current state.** From the worktree root:
+- [x] **Step 1: Confirm the current state.** From the worktree root:
   ```bash
   grep -n "otto-plugin" CLAUDE.md
   ```
@@ -60,7 +60,7 @@ run anyway per house style).
   absent from `CLAUDE.md`'s Workspace map table and everywhere else in the file (confirmed while
   writing the spec). This is the baseline the edit below changes.
 
-- [ ] **Step 2: Add three rows to the Workspace map table.** In `CLAUDE.md`, find the existing
+- [x] **Step 2: Add three rows to the Workspace map table.** In `CLAUDE.md`, find the existing
   table under `## Workspace map (for navigation)`:
   ```
   | `crates/tool-fs` | `read_file` / `write_file` / `list_dir` / `glob` as a stdio MCP server. |
@@ -72,7 +72,7 @@ run anyway per house style).
   | `crates/otto-plugin-wasm` | Host-side `wasmtime::component::bindgen!` adapters (`adapter/{static_,interactive,provider}.rs`) that load a `.wasm` component and present it as a `Box<dyn Plugin>`/`Box<dyn Screen>` to the rest of the host. |
   ```
 
-- [ ] **Step 3: Add the "Plugin ABI (native vs. WASM parity)" subsection.** In the same file,
+- [x] **Step 3: Add the "Plugin ABI (native vs. WASM parity)" subsection.** In the same file,
   immediately after the existing `### \`rmcp\` ProgressDispatcher gotcha` subsection (the last
   subsection under `## Architecture`) and before `## Workspace map (for navigation)`, insert:
   ```markdown
@@ -107,7 +107,7 @@ run anyway per house style).
   issue for the WASM gap it opens, rather than "for now."
   ```
 
-- [ ] **Step 4: Verify the edit landed.**
+- [x] **Step 4: Verify the edit landed.**
   ```bash
   grep -n "Plugin ABI (native vs. WASM parity)\|#165\|#166\|#167" CLAUDE.md
   ```
@@ -117,18 +117,18 @@ run anyway per house style).
   ```
   Expect the three new Workspace map rows plus every reference inside the new subsection.
 
-- [ ] **Step 5: Public-interface note.** No SPP wire type, `ProviderHandler`/`ProviderClient`
+- [x] **Step 5: Public-interface note.** No SPP wire type, `ProviderHandler`/`ProviderClient`
   method, tool MCP schema, plugin ABI surface, slash command, env var, or on-disk transcript/
   keyring format is added, renamed, or removed by this task — it documents a policy about future
   changes to the plugin ABI, it does not change the ABI itself. Non-Negotiable Rule 6 is not
   engaged.
 
-- [ ] **Step 6: Host-swap / streaming invariants — vacuously satisfied.** No
+- [x] **Step 6: Host-swap / streaming invariants — vacuously satisfied.** No
   `crates/otto/src/app.rs` or `crates/otto/src/tui.rs` touched, so the host-swap `RwLock` rule is
   not engaged. No streaming provider path touched, so the `ProgressDispatcher` forwarder-abort
   pattern is not engaged.
 
-- [ ] **Step 7: Repo-wide clean-build check (vacuous, run anyway).**
+- [x] **Step 7: Repo-wide clean-build check (vacuous, run anyway).**
   ```bash
   cargo build
   cargo test --workspace
@@ -138,7 +138,7 @@ run anyway per house style).
   is confirming the acceptance criterion literally, not catching a regression this task could
   cause.
 
-- [ ] **Step 8: Format and commit.** No Rust changed, so `cargo fmt --all` is a no-op here but run
+- [x] **Step 8: Format and commit.** No Rust changed, so `cargo fmt --all` is a no-op here but run
   it anyway for consistency with house style:
   ```bash
   cargo fmt --all
@@ -150,7 +150,7 @@ run anyway per house style).
 
 **Files:** none in this PR.
 
-- [ ] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
+- [x] **Step 1:** This PR does **not** bump `workspace.package.version` and does **not** add a
   `CHANGELOG.md` section — that happens in the dedicated release PR after this merges, per
   Non-Negotiable Rule 8 / Phase 4 step 12. Re-read `workspace.package.version` at cut time (it may
   have moved past `0.30.4` if another PR merges first — check `gh release list` and recently-merged
