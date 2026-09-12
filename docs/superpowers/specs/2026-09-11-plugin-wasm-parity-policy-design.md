@@ -1,7 +1,7 @@
 # Record a native-vs-WASM plugin ABI parity policy and enumerate the current gap — design
 
 Date: 2026-09-11
-Status: approved
+Status: IMPLEMENTED
 Source: savvagent/otto#140
 Related: v0.28.0 (#117, `StyledSpan`/`StyledLine` constructors), v0.29.0 (#118,
 `Screen::ghost_completion`) — the two "for now" changelog entries this issue is about. Surfaced by
